@@ -26,7 +26,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -X github.com/somaz94/plainbucket/internal/version.Version=${VERSION} \
       -X github.com/somaz94/plainbucket/internal/version.GitCommit=${GIT_COMMIT} \
       -X github.com/somaz94/plainbucket/internal/version.BuildDate=${BUILD_DATE}" \
-    -o plainbucket ./cmd/
+    -o plainbucket ./cmd/ && \
+    mkdir -p /out/data
 
 # Pinned by Debian release and digest: the unversioned static tag moves to a new Debian
 # release silently, and Dependabot can only bump what is pinned.
@@ -46,8 +47,9 @@ LABEL org.opencontainers.image.title="plainbucket" \
 
 WORKDIR /
 COPY --from=builder /workspace/plainbucket .
+# Owned by the runtime user: an unmounted VOLUME would otherwise be created root-owned.
+COPY --from=builder --chown=65532:65532 /out/data /data
 
-# Bucket root: every bucket is a directory here
 VOLUME ["/data"]
 EXPOSE 9000
 
