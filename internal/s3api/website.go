@@ -79,13 +79,17 @@ func (h *Handler) policy(bucket string) *BucketPolicy {
 // applyCORS adds the CORS response headers for an allowed cross-origin request. It
 // answers a preflight itself and reports whether it did.
 func (h *Handler) applyCORS(req *request) (bool, error) {
-	origin := req.r.Header.Get("Origin")
 	c := h.policy(req.bucket).CORS
-	if origin == "" || c == nil {
+	if c == nil {
 		return false, nil
 	}
 	hdr := req.w.Header()
+	// Also without an Origin: a cache must not serve this response to another origin.
 	hdr.Add("Vary", "Origin")
+	origin := req.r.Header.Get("Origin")
+	if origin == "" {
+		return false, nil
+	}
 	preflight := req.r.Method == http.MethodOptions && req.r.Header.Get("Access-Control-Request-Method") != ""
 	if !c.allowsOrigin(origin) {
 		if preflight {
@@ -140,7 +144,7 @@ func (h *Handler) websiteNotFound(req *request, err error) error {
 	w := h.policy(req.bucket).Website
 	if !strings.HasSuffix(req.key, "/"+w.Index) && req.key != w.Index {
 		if _, ierr := h.store.HeadObject(req.bucket, req.key+"/"+w.Index); ierr == nil {
-			http.Redirect(req.w, req.r, req.r.URL.Path+"/", http.StatusFound)
+			http.Redirect(req.w, req.r, req.r.URL.EscapedPath()+"/", http.StatusFound)
 			return nil
 		}
 	}

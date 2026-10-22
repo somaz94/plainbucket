@@ -658,7 +658,7 @@ func TestUploadPartCopyAPI(t *testing.T) {
 	}
 
 	_ = xml.Unmarshal(x.mustDo(http.MethodPost, "/bkt/dst?uploads", nil, nil, http.StatusOK).Body.Bytes(), &up)
-	for rng, code := range map[string]string{"bytes=5-10": "InvalidRange", "bytes=5": "InvalidArgument", "0-4": "InvalidArgument", "bytes=4-1": "InvalidArgument"} {
+	for rng, code := range map[string]string{"bytes=5-10": "InvalidArgument", "bytes=5": "InvalidArgument", "0-4": "InvalidArgument", "bytes=4-1": "InvalidArgument"} {
 		if got := errCode(part(1, rng)); got != code {
 			t.Errorf("range %q: %s, want %s", rng, got, code)
 		}

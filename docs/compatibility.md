@@ -28,7 +28,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 | Bucket | `CreateBucket`, `HeadBucket`, `DeleteBucket` (must be empty), `GetBucketLocation`, `GetBucketVersioning` (always unversioned) |
 | Listing | `ListObjectsV2` and `ListObjects` with `prefix`, `delimiter`, `max-keys`, `start-after`, `continuation-token` / `marker`, `fetch-owner`, `encoding-type=url` |
 | Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectTagging` (always an empty tag set) |
-| Multipart | `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy` (with `x-amz-copy-source-range`), `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` |
+| Multipart | `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy` (with `x-amz-copy-source-range`; a range outside the source is `400 InvalidArgument`, as on S3), `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` |
 
 Object details:
 

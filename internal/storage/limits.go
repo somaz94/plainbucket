@@ -34,7 +34,14 @@ func (s *Store) SetLimits(limits map[string]Limit) { s.limits = limits }
 // that would pass a refusing limit. commit checks again with the real figures.
 func (s *Store) fits(bucket, key string, size int64) error {
 	l := s.limits[bucket]
-	if l.MaxSize == 0 || l.Evict {
+	if l.MaxSize == 0 {
+		return nil
+	}
+	if l.Evict {
+		// Accepted, it would evict everything else and then itself.
+		if size > l.MaxSize {
+			return ErrQuotaExceeded
+		}
 		return nil
 	}
 	if fi, err := s.r.Lstat(s.rel(s.dataPath(bucket, key))); err == nil && fi.Mode().IsRegular() {
@@ -58,10 +65,30 @@ func (s *Store) account(bucket string, objects, bytes int64) (over bool, err err
 	if bytes > 0 && l.MaxSize > 0 && !l.Evict && u.Bytes+bytes > l.MaxSize {
 		return false, ErrQuotaExceeded
 	}
+	s.addUsage(bucket, objects, bytes)
+	return l.evicts() && s.bucketUsage[bucket].Bytes > l.MaxSize, nil
+}
+
+// adjust records a change that no limit may refuse: a delete, or undoing an account.
+func (s *Store) adjust(bucket string, objects, bytes int64) {
+	s.usageMu.Lock()
+	defer s.usageMu.Unlock()
+	s.addUsage(bucket, objects, bytes)
+}
+
+// addUsage applies a change, and keeps it for replay if a measurement is running, whose
+// result would otherwise overwrite it. The caller holds usageMu.
+func (s *Store) addUsage(bucket string, objects, bytes int64) {
+	u := s.bucketUsage[bucket]
 	u.Objects += objects
 	u.Bytes += bytes
 	s.bucketUsage[bucket] = u
-	return l.evicts() && u.Bytes > l.MaxSize, nil
+	if s.measuring != nil {
+		d := s.measuring[bucket]
+		d.Objects += objects
+		d.Bytes += bytes
+		s.measuring[bucket] = d
+	}
 }
 
 // wake asks the janitor to apply the limits without waiting for its next round.
@@ -73,7 +100,7 @@ func (s *Store) wake() {
 }
 
 // BucketUsage returns the tracked usage of the buckets that have limits. Writes and
-// deletes update it as they happen; the janitor re-measures it hourly.
+// deletes update it as they happen; each janitor round re-measures it.
 func (s *Store) BucketUsage() map[string]Usage {
 	s.usageMu.Lock()
 	defer s.usageMu.Unlock()
@@ -91,12 +118,17 @@ func (s *Store) Removed() (expired, evicted int64) { return s.expired.Load(), s.
 // once per touchInterval. The sidecar is trusted by the size and mtime it records, not
 // by its own mtime, so this does not invalidate it.
 func (s *Store) touch(bucket, key string) {
+	every := touchInterval
+	// A short expiry needs finer records, or an object read all along would expire.
+	if e := s.limits[bucket].ExpireAfter; e > 0 && e/4 < every {
+		every = e / 4
+	}
 	p := s.metaPath(bucket, key)
 	fi, err := os.Stat(p)
 	if err != nil {
 		return
 	}
-	if now := s.now(); now.Sub(fi.ModTime()) >= touchInterval {
+	if now := s.now(); now.Sub(fi.ModTime()) >= every {
 		_ = os.Chtimes(p, now, now)
 	}
 }
@@ -123,7 +155,7 @@ func (s *Store) enforceLimits(ctx context.Context) (expired, evicted int) {
 		if ctx.Err() != nil {
 			return
 		}
-		if l.ExpireAfter == 0 && !l.evicts() || s.requireBucket(bucket) != nil {
+		if (l.ExpireAfter == 0 && !l.evicts()) || s.requireBucket(bucket) != nil {
 			continue
 		}
 		objs := s.scanBucket(ctx, bucket)
@@ -147,8 +179,8 @@ func (s *Store) enforceLimits(ctx context.Context) (expired, evicted int) {
 				if total <= l.MaxSize || ctx.Err() != nil {
 					break
 				}
-				// An object rewritten since the scan stays; the next pass sees its new size.
-				if s.removeIfUnused(bucket, c, time.Time{}) {
+				// An object rewritten or read since the scan stays; the next pass sees it again.
+				if s.removeIfUnused(bucket, c, c.used.Add(time.Nanosecond)) {
 					total -= c.size
 					evicted++
 				}
@@ -183,8 +215,8 @@ func (s *Store) scanBucket(ctx context.Context, bucket string) []candidate {
 	return out
 }
 
-// removeIfUnused deletes c unless it changed since the scan or, with a non-zero
-// usedBefore, was used at or after it.
+// removeIfUnused deletes c unless it changed since the scan or was used at or after
+// usedBefore.
 func (s *Store) removeIfUnused(bucket string, c candidate, usedBefore time.Time) bool {
 	bl := s.bucketLock(bucket)
 	bl.RLock()
@@ -196,7 +228,7 @@ func (s *Store) removeIfUnused(bucket string, c candidate, usedBefore time.Time)
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() != c.size || fi.ModTime().UnixNano() != c.mtimeNs {
 		return false
 	}
-	if !usedBefore.IsZero() && !s.lastUse(bucket, c.key, fi).Before(usedBefore) {
+	if !s.lastUse(bucket, c.key, fi).Before(usedBefore) {
 		return false
 	}
 	return s.removeFile(bucket, c.key, p, fi) == nil

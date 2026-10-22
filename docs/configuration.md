@@ -111,16 +111,16 @@ Signed requests keep S3 semantics, so clients and the aws cli still list the buc
 
 ### CORS
 
-`cors` lets pages on other origins use the bucket from a browser. An allowed origin gets `Access-Control-Allow-Origin` (and `Access-Control-Expose-Headers`) on every response, errors included. A preflight `OPTIONS` request is answered without a signature: `200` when the origin, the method and every requested header are allowed, `403` otherwise. Origins and headers may hold one `*` wildcard; header names compare case-insensitively. A browser that uploads with signed requests needs `PUT` in `allowed-methods` and the signing headers (`Authorization`, `X-Amz-*`, `Content-Type`) in `allowed-headers`.
+`cors` lets pages on other origins use the bucket from a browser. An allowed origin gets `Access-Control-Allow-Origin` (and `Access-Control-Expose-Headers`) on every response, errors included, and every response from the bucket carries `Vary: Origin` so caches keep origins apart. A preflight `OPTIONS` request is answered without a signature: `200` when the origin, the method and every requested header are allowed, `403` otherwise. Origins and headers may hold one `*` wildcard; header names compare case-insensitively. A browser that uploads with signed requests needs `PUT` in `allowed-methods` and the signing headers (`Authorization`, `X-Amz-*`, `Content-Type`) in `allowed-headers`.
 
 ### Expiry and Size Limits
 
-An object's last use is the later of its last write and its last `GET` or `HEAD`. A read records itself at most once an hour, by moving the modification time of the object's metadata file; the data file is never touched.
+An object's last use is the later of its last write and its last `GET` or `HEAD`. A read records itself by moving the modification time of the object's metadata file, at most once an hour, or once a quarter of `expire-after` when that is shorter; the data file is never touched.
 
 - `expire-after` removes objects not used for that long. It suits caches: the GitLab Runner does not re-upload an unchanged cache, so expiring by upload time would remove caches in daily use.
-- `max-size` caps the bucket's bytes. By default a write that would pass it is refused with `403 QuotaExceeded`. With `evict: true` the write is accepted and the least recently used objects are removed until the bucket fits again.
+- `max-size` caps the bucket's bytes. By default a write that would pass it is refused with `403 QuotaExceeded`. With `evict: true` the write is accepted and the least recently used objects are removed until the bucket fits again; only an object larger than the whole limit is refused.
 
-The background job applies both hourly, and at once when a write takes an evicting bucket over its limit. Object usage per bucket is tracked as objects are written and deleted, and re-measured hourly to include files changed outside the server; between measurements a limit is approximate. An object rewritten or read between the scan and its removal is kept. Incomplete multipart uploads do not count until they are completed.
+The background job applies both hourly, and at once when a write takes an evicting bucket over its limit, so expiry is as precise as an hour. The server measures the buckets before it starts serving, then tracks usage as objects are written and deleted and re-measures hourly to include files changed outside the server; a file changed outside the server counts only from the next measurement. An object rewritten or read between the scan and its removal is kept. Incomplete multipart uploads do not count until they are completed, and files whose names cannot be keys are not counted against a limit.
 
 <br/>
 
@@ -159,7 +159,7 @@ Once an hour the server removes staging files left by interrupted uploads, multi
 
 ## Access Log
 
-With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in the format `PLAINBUCKET_LOG_FORMAT` selects, with `method`, `host`, `path`, `query`, `bucket`, `key`, `status`, `bytes` (sent), `duration_ms`, `remote`, `access_key` (empty for unsigned requests), `user_agent` and `request_id`, which is also the `x-amz-request-id` response header. `/healthz` and `/metrics` are not logged.
+With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in the format `PLAINBUCKET_LOG_FORMAT` selects, with `method`, `host`, `path`, `query`, `bucket`, `key`, `status`, `bytes` (sent), `duration_ms`, `remote`, `access_key` (empty for unsigned requests), `user_agent` and `request_id`, which is also the `x-amz-request-id` response header. The signature of a presigned URL is logged as `REDACTED`, so the log cannot be used to replay requests. `/healthz` and `/metrics` are not logged.
 
 <br/>
 

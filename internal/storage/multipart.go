@@ -123,6 +123,15 @@ func (s *Store) PutPart(bucket, key, id string, n int, body io.Reader, size int6
 	return s.placePart(bucket, key, id, dir, n, tmp, sum, size, checks)
 }
 
+// RangeError rejects a copy range that does not fit the source object.
+type RangeError struct{ Size int64 }
+
+func (e *RangeError) Error() string {
+	return fmt.Sprintf("range not valid for a source object of %d bytes", e.Size)
+}
+
+func (e *RangeError) Is(target error) bool { return target == ErrInvalidRange }
+
 // ByteRange is an inclusive byte range, as in x-amz-copy-source-range.
 type ByteRange struct{ Start, End int64 }
 
@@ -153,7 +162,7 @@ func (s *Store) PutPartCopy(ctx context.Context, srcBucket, srcKey string, rng *
 	start, length := int64(0), src.Size
 	if rng != nil {
 		if rng.Start > rng.End || rng.End >= src.Size {
-			return PartInfo{}, ErrInvalidRange
+			return PartInfo{}, &RangeError{Size: src.Size}
 		}
 		start, length = rng.Start, rng.End-rng.Start+1
 	}

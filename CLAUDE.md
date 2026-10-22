@@ -37,7 +37,8 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - New operations return `501` until implemented, never a silent success.
 - The Helm chart runs exactly one pod with `Recreate`: locks are in-process. Keep `values.schema.json` closed and in step with `values.yaml` and every `.Values` path the templates read; credentials only ever reach the pod through Secrets.
 - One process per root: the server and fsck take `storage.Lock` (flock on `.plainbucket/lock`), because object locks live in the process.
-- Expiry and eviction go through `removeIfUnused`, which re-checks size, mtime and last use under the key lock, so a scan never deletes an object rewritten or read after it. Last use is the sidecar mtime (moved by reads at most hourly), never the data file's.
+- Expiry and eviction go through `removeIfUnused`, which re-checks size, mtime and last use under the key lock, so a scan never deletes an object rewritten or read after it. Last use is the later of the data file's mtime (write) and the sidecar's (read); reads move only the sidecar's, never the data file's.
+- Bucket usage changes go through `account` (writes, may refuse) or `adjust` (deletes and rollbacks, never refuse); both record into `measuring` while `MeasureUsage` walks, so its swap does not drop them.
 - `hack/bump-version.sh` moves the Makefile image tag, Chart `version` / `appVersion` and `values.yaml` `image.tag` together.
 
 <br/>

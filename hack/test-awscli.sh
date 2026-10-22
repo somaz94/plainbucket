@@ -92,11 +92,11 @@ s3 s3 sync "${WORK}/www" s3://e2e-site >/dev/null || fail "sync e2e-site"
     [ "$(cat "${WORK}/404.out")" = "gone" ] && ok "website error document" || fail "website error document"
 curl -fsS -o /dev/null -D "${WORK}/cors.h" -X OPTIONS -H "Origin: https://app.example.com" \
     -H "Access-Control-Request-Method: GET" "${ENDPOINT}/e2e-site/index.html" &&
-    grep -qi "^access-control-allow-origin: https://app.example.com" "${WORK}/cors.h" && ok "CORS preflight" || fail "CORS preflight"
+    tr -d '\r' <"${WORK}/cors.h" | grep -qixF "access-control-allow-origin: https://app.example.com" && ok "CORS preflight" || fail "CORS preflight"
 s3 s3 rb s3://e2e-site --force >/dev/null || fail "rb e2e-site"
 
-s3 s3 rm s3://e2e --recursive >/dev/null && ok "rm --recursive"
-s3 s3 rb s3://e2e >/dev/null && ok "rb"
+s3 s3 rm s3://e2e --recursive >/dev/null && ok "rm --recursive" || fail "rm --recursive"
+s3 s3 rb s3://e2e >/dev/null && ok "rb" || fail "rb"
 [ ! -e "${DATA}/e2e" ] && ok "bucket directory removed" || fail "bucket directory left"
 
 echo "all ${PASS} checks passed"

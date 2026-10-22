@@ -346,7 +346,7 @@ func (c *Config) validateBuckets() error {
 				w.Index = "index.html"
 			}
 			for _, doc := range []string{w.Index, w.Error} {
-				if strings.HasPrefix(doc, "/") || strings.HasSuffix(doc, "/") {
+				if doc != "" && (!storage.ValidKey(doc) || strings.HasPrefix(doc, "/") || strings.HasSuffix(doc, "/")) {
 					return fmt.Errorf("%s.website: %q must be an object key, without a leading or trailing /", where, doc)
 				}
 			}

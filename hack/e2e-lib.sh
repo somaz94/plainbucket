@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared by the client end-to-end scripts: starts bin/plainbucket on a temporary root and
 # provides check helpers. Source it; it sets WORK, DATA, ENDPOINT and an EXIT trap.
 

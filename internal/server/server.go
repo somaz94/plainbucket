@@ -63,7 +63,11 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 	} else if err != nil {
 		logger.Warn("could not lock the root; make sure no other plainbucket uses it", "err", err)
 	}
-	store.SetLimits(bucketLimits(cfg))
+	if limits := bucketLimits(cfg); len(limits) > 0 {
+		store.SetLimits(limits)
+		// A refusing limit checks writes against this, so it must be real before the first one.
+		store.MeasureUsage(ctx)
+	}
 	if store.CaseInsensitive() {
 		logger.Warn("the root filesystem is case-insensitive: keys differing only in case refer to the same file", "root", store.Root())
 	}

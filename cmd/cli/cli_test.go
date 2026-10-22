@@ -75,11 +75,11 @@ func TestVersion(t *testing.T) {
 
 func TestHealthURL(t *testing.T) {
 	for addr, want := range map[string]string{
-		":9000":          "http://127.0.0.1:9000/healthz",
-		"0.0.0.0:9000":   "http://127.0.0.1:9000/healthz",
-		"[::]:9000":      "http://127.0.0.1:9000/healthz",
-		"10.1.2.3:9100":  "http://10.1.2.3:9100/healthz",
-		"localhost:9000": "http://localhost:9000/healthz",
+		":9000":           "http://127.0.0.1:9000/healthz",
+		"0.0.0.0:9000":    "http://127.0.0.1:9000/healthz",
+		"[::]:9000":       "http://127.0.0.1:9000/healthz",
+		"192.0.2.10:9100": "http://192.0.2.10:9100/healthz",
+		"localhost:9000":  "http://localhost:9000/healthz",
 	} {
 		cfg := config.Default()
 		cfg.Address = addr
@@ -162,5 +162,23 @@ func TestFsckCommand(t *testing.T) {
 	reset(t, "fsck")
 	if err := Execute(); err == nil || !strings.Contains(err.Error(), "stop the server") {
 		t.Errorf("fsck under a running server: %v", err)
+	}
+}
+
+func TestFsckLockError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	root := t.TempDir()
+	t.Setenv("PLAINBUCKET_ACCESS_KEY", "")
+	t.Setenv("PLAINBUCKET_ROOT", root)
+	lock := filepath.Join(root, ".plainbucket", "lock")
+	_ = os.MkdirAll(filepath.Dir(lock), 0o755)
+	if err := os.WriteFile(lock, nil, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	reset(t, "fsck")
+	if err := Execute(); err == nil || !strings.Contains(err.Error(), "locking") {
+		t.Errorf("unlockable root: %v", err)
 	}
 }

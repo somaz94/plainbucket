@@ -225,3 +225,63 @@ func TestJanitorAppliesLimitsWhenWoken(t *testing.T) {
 		t.Errorf("a=%v b=%v", exists(s, "a"), exists(s, "b"))
 	}
 }
+
+func TestEvictRefusesAnObjectLargerThanTheBucket(t *testing.T) {
+	s := newStore(t)
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 4, Evict: true}})
+	if _, err := s.PutObject("bkt", "big", strings.NewReader("12345"), 5, PutOptions{}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Errorf("object over the whole limit: %v", err)
+	}
+}
+
+func TestShortExpiryTouchesMoreOften(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetLimits(map[string]Limit{"bkt": {ExpireAfter: 20 * time.Minute}})
+	put(t, s, "k", "data")
+	age(t, s, "k", c.t.Add(-6*time.Minute))
+	f, _, _ := s.GetObject("bkt", "k")
+	_ = f.Close()
+	if fi, _ := os.Stat(s.metaPath("bkt", "k")); !fi.ModTime().Equal(c.t) {
+		t.Errorf("a read 6m after the last use of a 20m-expiry object was not recorded: %v", fi.ModTime())
+	}
+}
+
+func TestChangesDuringMeasurementAreKept(t *testing.T) {
+	s := newStore(t)
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 100}})
+	s.usageMu.Lock()
+	s.measuring = map[string]Usage{}
+	s.usageMu.Unlock()
+	// A write the walk has not seen yet...
+	if _, err := s.account("bkt", 1, 7); err != nil {
+		t.Fatal(err)
+	}
+	s.adjust("bkt", 0, -2)
+	s.usageMu.Lock()
+	d := s.measuring["bkt"]
+	s.measuring = nil
+	s.usageMu.Unlock()
+	if d.Objects != 1 || d.Bytes != 5 {
+		t.Errorf("recorded during measurement = %+v", d)
+	}
+	put(t, s, "a", "123")
+	s.MeasureUsage(context.Background())
+	if u := s.BucketUsage()["bkt"]; u.Bytes != 3 {
+		t.Errorf("after measurement = %+v", u)
+	}
+}
+
+func TestEvictionKeepsObjectReadAfterScan(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	put(t, s, "k", "data")
+	age(t, s, "k", c.t.Add(-2*time.Hour))
+	cands := s.scanBucket(context.Background(), "bkt")
+	_ = os.Chtimes(s.metaPath("bkt", "k"), c.t, c.t) // read after the scan
+	if s.removeIfUnused("bkt", cands[0], cands[0].used.Add(time.Nanosecond)) {
+		t.Error("an object read after the scan was evicted")
+	}
+}

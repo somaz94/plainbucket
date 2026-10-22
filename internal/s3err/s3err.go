@@ -132,10 +132,6 @@ func QuotaExceeded() *Error {
 	return newErr(http.StatusForbidden, "QuotaExceeded", "The bucket has reached its configured size limit.")
 }
 
-func InvalidRange() *Error {
-	return newErr(http.StatusRequestedRangeNotSatisfiable, "InvalidRange", "The requested range is not satisfiable.")
-}
-
 func NotImplemented() *Error {
 	return newErr(http.StatusNotImplemented, "NotImplemented", "A header or query you provided implies functionality that is not implemented.")
 }

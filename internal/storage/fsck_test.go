@@ -82,3 +82,31 @@ func TestFsck(t *testing.T) {
 		t.Errorf("canceled: %v", err)
 	}
 }
+
+func TestFsckReportsGoneBucketOnce(t *testing.T) {
+	s := newStore(t)
+	put(t, s, "a", "x")
+	put(t, s, "b", "y")
+	if err := os.RemoveAll(filepath.Join(s.root, "bkt")); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	_ = s.Fsck(context.Background(), time.Hour, false, func(f Finding) {
+		if f.Kind == LeftoverMetadata {
+			n++
+		}
+	})
+	if n != 1 {
+		t.Errorf("findings for a deleted bucket's metadata = %d, want 1", n)
+	}
+}
+
+func TestLockTwice(t *testing.T) {
+	s := newStore(t)
+	if err := s.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Lock(); err != nil {
+		t.Errorf("second Lock on the same store: %v", err)
+	}
+}

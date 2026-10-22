@@ -29,8 +29,13 @@ var fsckCmd = &cobra.Command{
 			return err
 		}
 		defer func() { _ = store.Close() }()
-		if err := store.Lock(); errors.Is(err, storage.ErrLocked) {
+		switch err := store.Lock(); {
+		case errors.Is(err, storage.ErrLocked):
 			return fmt.Errorf("%s: %w; stop the server first", cfg.Root, err)
+		case errors.Is(err, errors.ErrUnsupported):
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: cannot lock the root here; make sure no server uses it")
+		case err != nil:
+			return fmt.Errorf("locking %s: %w", cfg.Root, err)
 		}
 		out := cmd.OutOrStdout()
 		var found, unfixed int

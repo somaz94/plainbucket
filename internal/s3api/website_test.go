@@ -53,6 +53,10 @@ func TestWebsite(t *testing.T) {
 	if rec := x.anonHost(http.MethodGet, "www.example.com", "/docs", nil); rec.Code != http.StatusFound || rec.Header().Get("Location") != "/docs/" {
 		t.Errorf("redirect to the prefix: %d %v", rec.Code, rec.Header())
 	}
+	x.mustDo(http.MethodPut, "/www/a%3Fb/index.html", []byte("q"), nil, http.StatusOK)
+	if rec := x.anonHost(http.MethodGet, "www.example.com", "/a%3Fb", nil); rec.Header().Get("Location") != "/a%3Fb/" {
+		t.Errorf("redirect keeps escaping: %d %v", rec.Code, rec.Header())
+	}
 	rec := x.anonHost(http.MethodGet, "www.example.com", "/missing.png", nil)
 	if rec.Code != http.StatusNotFound || rec.Body.String() != "not here" || rec.Header().Get("Content-Type") != "text/html" {
 		t.Errorf("error document: %d %q %v", rec.Code, rec.Body.String(), rec.Header())
@@ -101,6 +105,9 @@ func TestCORS(t *testing.T) {
 	}
 	if rec := x.anonHost(http.MethodGet, "pb.test", "/web/a.txt", map[string]string{"Origin": "https://evil.example"}); rec.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Error("CORS granted to an unlisted origin")
+	}
+	if rec := x.anonHost(http.MethodGet, "pb.test", "/web/a.txt", nil); rec.Header().Get("Vary") != "Origin" {
+		t.Errorf("no Vary: Origin without an Origin: %v", rec.Header())
 	}
 
 	pre := func(bucket, origin, method, headers string) *httptest.ResponseRecorder {

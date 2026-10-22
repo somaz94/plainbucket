@@ -118,7 +118,10 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+            "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+            "not": {
+              "pattern": "\\.\\."
+            }
           },
           "uniqueItems": true
         },
@@ -170,7 +173,10 @@
         "buckets": {
           "type": "object",
           "propertyNames": {
-            "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+            "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+            "not": {
+              "pattern": "\\.\\."
+            }
           },
           "additionalProperties": {
             "type": "object",
@@ -202,7 +208,8 @@
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "minLength": 1
+                      "minLength": 1,
+                      "pattern": "^[^*]*(\\*[^*]*)?$"
                     },
                     "minItems": 1
                   },
@@ -244,12 +251,54 @@
               },
               "max-size": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "maximum": 9007199254740992
               },
               "evict": {
                 "type": "boolean"
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "evict"
+                  ],
+                  "properties": {
+                    "evict": {
+                      "const": true
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "max-size"
+                  ],
+                  "properties": {
+                    "max-size": {
+                      "minimum": 1
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "website"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "public"
+                  ],
+                  "properties": {
+                    "public": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            ]
           }
         },
         "accessLog": {

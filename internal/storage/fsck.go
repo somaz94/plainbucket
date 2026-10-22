@@ -55,8 +55,11 @@ func (s *Store) Fsck(ctx context.Context, uploadExpiry time.Duration, repair boo
 			}
 			f := Finding{Kind: ProblemMetadata, Path: name}
 			if repair {
-				_, err := s.HeadObject(b.Name, key)
-				f.Fixed = err == nil
+				// refresh skips saving when the file changes meanwhile, so check what landed.
+				if _, err := s.HeadObject(b.Name, key); err == nil {
+					m, ok := s.readSidecar(b.Name, key)
+					f.Fixed = ok && m.matches(fi)
+				}
 			}
 			report(f)
 			return nil

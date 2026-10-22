@@ -30,6 +30,8 @@ expect_fail() {
 }
 
 KEY=(--set auth.existingSecret=pb-auth)
+TMP_VALUES="$(mktemp)"
+trap 'rm -f "${TMP_VALUES}"' EXIT
 
 echo "helm chart tests"
 
@@ -143,6 +145,12 @@ expect_fail "port" "${KEY[@]}" --set service.port=99999
 expect_fail "Bad_Name" "${KEY[@]}" --set config.buckets.Bad_Name.public=true
 expect_fail "publik" "${KEY[@]}" --set config.buckets.www.publik=true
 expect_fail "max-size" "${KEY[@]}" --set config.buckets.cache.max-size=-1
+expect_fail "max-size" "${KEY[@]}" --set config.buckets.cache.evict=true
+expect_fail "max-size" "${KEY[@]}" --set config.buckets.cache.max-size=100000000000000000000
+expect_fail "public" "${KEY[@]}" --set config.buckets.www.website.index=index.html
+expect_fail "allowed-origins" "${KEY[@]}" --set "config.buckets.www.cors.allowed-origins={https://*.*.example.com}"
+printf 'config:\n  buckets:\n    a..b: {public: true}\n' >"${TMP_VALUES}"
+expect_fail "a..b" "${KEY[@]}" -f "${TMP_VALUES}"
 expect_fail "expire-after" "${KEY[@]}" --set config.buckets.cache.expire-after=14d
 expect_fail "allowed-methods" "${KEY[@]}" --set "config.buckets.www.cors.allowed-origins={*}" --set "config.buckets.www.cors.allowed-methods={PATCH}"
 ok "schema rejects invalid values"

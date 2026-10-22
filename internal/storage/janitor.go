@@ -107,8 +107,10 @@ func (s *Store) sweep(ctx context.Context, uploadExpiry time.Duration, act func(
 			if ctx.Err() != nil {
 				return removed
 			}
-			if s.sweepGoneBucket(e.Name(), act) {
-				removed++
+			if gone, ok := s.sweepGoneBucket(e.Name(), act); gone {
+				if ok {
+					removed++
+				}
 				continue
 			}
 			removed += s.sweepSidecars(ctx, e.Name(), act)
@@ -125,16 +127,17 @@ func (s *Store) sweep(ctx context.Context, uploadExpiry time.Duration, act func(
 	return removed
 }
 
-// sweepGoneBucket removes the metadata of a bucket that no longer exists, holding the
-// bucket lock so a bucket recreated meanwhile keeps its new sidecars.
-func (s *Store) sweepGoneBucket(bucket string, act func(kind, path string) bool) bool {
+// sweepGoneBucket acts on the metadata of a bucket that no longer exists, holding the
+// bucket lock so a bucket recreated meanwhile keeps its new sidecars. gone reports that
+// the bucket is gone, removed that act removed its metadata.
+func (s *Store) sweepGoneBucket(bucket string, act func(kind, path string) bool) (gone, removed bool) {
 	bl := s.bucketLock(bucket)
 	bl.Lock()
 	defer bl.Unlock()
 	if s.requireBucket(bucket) == nil {
-		return false
+		return false, false
 	}
-	return act(LeftoverMetadata, s.sys("meta", bucket))
+	return true, act(LeftoverMetadata, s.sys("meta", bucket))
 }
 
 // sweepSidecars removes the sidecars of bucket whose data file or directory marker no
@@ -194,16 +197,27 @@ func (s *Store) MeasureUsage(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	s.usageMu.Lock()
+	s.measuring = map[string]Usage{}
+	s.usageMu.Unlock()
 	for _, b := range buckets {
 		var u Usage
-		_ = filepath.WalkDir(s.bucketPath(b.Name), func(_ string, d os.DirEntry, err error) error {
+		root := s.bucketPath(b.Name)
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if ctx.Err() != nil {
 				return filepath.SkipAll
 			}
 			if err != nil || !d.Type().IsRegular() {
 				return nil
 			}
-			if fi, err := d.Info(); err == nil {
+			fi, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			total.Objects++
+			total.Bytes += fi.Size()
+			// Per bucket, only what limits can act on: files whose names are keys.
+			if rel, err := filepath.Rel(root, path); err == nil && checkKey(filepath.ToSlash(rel)) == nil {
 				u.Objects++
 				u.Bytes += fi.Size()
 			}
@@ -211,15 +225,23 @@ func (s *Store) MeasureUsage(ctx context.Context) {
 		})
 		u.At = s.now()
 		per[b.Name] = u
-		total.Objects += u.Objects
-		total.Bytes += u.Bytes
 	}
+	s.usageMu.Lock()
+	defer s.usageMu.Unlock()
+	measuring := s.measuring
+	s.measuring = nil
 	if ctx.Err() != nil {
 		return
 	}
+	// Changes made during the walk may or may not be in it; counting them again errs
+	// toward the limit, and the next measurement corrects it.
+	for b, d := range measuring {
+		u := per[b]
+		u.Objects += d.Objects
+		u.Bytes += d.Bytes
+		per[b] = u
+	}
 	total.At = s.now()
 	s.usage.Store(&total)
-	s.usageMu.Lock()
 	s.bucketUsage = per
-	s.usageMu.Unlock()
 }

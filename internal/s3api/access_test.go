@@ -121,3 +121,13 @@ func TestCanceledCopyIsNotAnError(t *testing.T) {
 		t.Errorf("canceled copy: %d %q\n%s", rec.Code, rec.Body.String(), x.logs.String())
 	}
 }
+
+func TestRedactQuery(t *testing.T) {
+	got := redactQuery("X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AK%2F20260101&X-Amz-Signature=deadbeef&partNumber=1")
+	if strings.Contains(got, "deadbeef") || !strings.Contains(got, "X-Amz-Signature=REDACTED") || !strings.Contains(got, "partNumber=1") {
+		t.Errorf("redacted = %q", got)
+	}
+	if redactQuery("%zz") != "" {
+		t.Error("malformed query not dropped")
+	}
+}

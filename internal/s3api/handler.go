@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -145,7 +146,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.log.LogAttrs(r.Context(), slog.LevelInfo, "request",
 			slog.String("method", r.Method), slog.String("host", r.Host), slog.String("path", r.URL.Path),
-			slog.String("query", r.URL.RawQuery), slog.String("bucket", req.bucket), slog.String("key", req.key),
+			slog.String("query", redactQuery(r.URL.RawQuery)), slog.String("bucket", req.bucket), slog.String("key", req.key),
 			slog.Int("status", rec.Status), slog.Int64("bytes", rec.Bytes),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("remote", r.RemoteAddr),
 			slog.String("access_key", accessKey), slog.String("user_agent", r.UserAgent()), slog.String("request_id", id))
@@ -293,7 +294,6 @@ var storageErrors = map[error]func() *s3err.Error{
 	storage.ErrInvalidPartOrder:   s3err.InvalidPartOrder,
 	storage.ErrEntityTooSmall:     s3err.EntityTooSmall,
 	storage.ErrEntityTooLarge:     s3err.EntityTooLarge,
-	storage.ErrInvalidRange:       s3err.InvalidRange,
 	storage.ErrQuotaExceeded:      s3err.QuotaExceeded,
 	storage.ErrMarkerNotEmpty: func() *s3err.Error {
 		return s3err.InvalidArgument("An object key ending in / is a directory and must have an empty body.")
@@ -308,6 +308,10 @@ func toS3(err error) *s3err.Error {
 	var e *s3err.Error
 	if errors.As(err, &e) {
 		return e
+	}
+	var re *storage.RangeError
+	if errors.As(err, &re) {
+		return s3err.InvalidArgument(fmt.Sprintf("Range specified is not valid for source object of size: %d", re.Size))
 	}
 	for target, mk := range storageErrors {
 		if errors.Is(err, target) {
@@ -370,4 +374,19 @@ func (req *request) url(key string) string {
 		path = "/" + sigv4.URIEncodePath(key)
 	}
 	return scheme + "://" + req.r.Host + path
+}
+
+// redactQuery hides the signature of a presigned URL, which would let anyone reading the
+// log replay the request until the URL expires.
+func redactQuery(raw string) string {
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return ""
+	}
+	for _, k := range []string{"X-Amz-Signature", "X-Amz-Security-Token", "Signature"} {
+		if q.Has(k) {
+			q.Set(k, "REDACTED")
+		}
+	}
+	return q.Encode()
 }

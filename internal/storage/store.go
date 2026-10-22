@@ -118,6 +118,7 @@ type Store struct {
 	limits      map[string]Limit
 	usageMu     sync.Mutex
 	bucketUsage map[string]Usage // tracked between janitor measurements
+	measuring   map[string]Usage // changes made while a measurement runs
 	kick        chan struct{}    // wakes the janitor when an evicting bucket is over its limit
 	expired     atomic.Int64
 	evicted     atomic.Int64
@@ -184,6 +185,9 @@ func (s *Store) CaseInsensitive() bool {
 	_, err = os.Stat(filepath.Join(dir, strings.ToLower(base)))
 	return err == nil
 }
+
+// ValidKey reports whether key can name an object.
+func ValidKey(key string) bool { return checkKey(key) == nil }
 
 // ValidBucketName reports whether name follows the S3 bucket naming rules.
 func ValidBucketName(name string) bool {
@@ -360,7 +364,7 @@ func (s *Store) commit(bucket, key, tmp string, m sidecar, cond Conditions) (Obj
 	committed := false
 	defer func() {
 		if !committed {
-			_, _ = s.account(bucket, oldObjects-1, oldBytes-fi.Size())
+			s.adjust(bucket, oldObjects-1, oldBytes-fi.Size())
 		}
 	}()
 	m.Key, m.Size, m.MtimeNs = key, fi.Size(), fi.ModTime().UnixNano()

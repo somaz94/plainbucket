@@ -246,7 +246,7 @@ func (s *Store) removeFile(bucket, key, p string, fi os.FileInfo) error {
 		return err
 	}
 	if fi.Mode().IsRegular() {
-		_, _ = s.account(bucket, -1, -fi.Size())
+		s.adjust(bucket, -1, -fi.Size())
 	}
 	_ = os.Remove(s.metaPath(bucket, key))
 	s.pruneEmptyParents(bucket, filepath.Dir(p))

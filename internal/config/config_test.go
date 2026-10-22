@@ -224,6 +224,7 @@ func TestBuckets(t *testing.T) {
 		"bad name":        "buckets: {Bad_Name: {public: true}}\n",
 		"private website": "buckets: {www: {website: {}}}\n",
 		"index slash":     "buckets: {www: {public: true, website: {index: /index.html}}}\n",
+		"error dotdot":    "buckets: {www: {public: true, website: {error: ../x.html}}}\n",
 		"no origins":      "buckets: {www: {cors: {allowed-methods: [GET]}}}\n",
 		"two wildcards":   "buckets: {www: {cors: {allowed-origins: [\"https://*.*.example.com\"]}}}\n",
 		"bad method":      "buckets: {www: {cors: {allowed-origins: [\"*\"], allowed-methods: [PATCH]}}}\n",
