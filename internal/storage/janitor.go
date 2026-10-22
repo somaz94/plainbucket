@@ -47,10 +47,24 @@ func (s *Store) applyLimits(ctx context.Context, log *slog.Logger) {
 // metadata whose object or bucket is gone. It returns how many entries it removed and
 // stops early when ctx is cancelled.
 func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
+	return s.sweep(ctx, uploadExpiry, func(_, path string) bool { return os.RemoveAll(path) == nil })
+}
+
+// Leftover kinds reported by sweep.
+const (
+	LeftoverStaging  = "stale staging file"
+	LeftoverUpload   = "expired multipart upload"
+	LeftoverMetadata = "orphaned metadata"
+	LeftoverRecord   = "record of a deleted bucket"
+)
+
+// sweep finds leftovers and passes each to act, which removes it or only reports it and
+// returns whether it is gone. Metadata is acted on under the lock that guards it.
+func (s *Store) sweep(ctx context.Context, uploadExpiry time.Duration, act func(kind, path string) bool) int {
 	now := s.now()
 	removed := 0
-	rm := func(path string) {
-		if os.RemoveAll(path) == nil {
+	rm := func(kind, path string) {
+		if act(kind, path) {
 			removed++
 		}
 	}
@@ -61,7 +75,7 @@ func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
 				return removed
 			}
 			if fi, err := e.Info(); err == nil && now.Sub(fi.ModTime()) > staleTmpAge {
-				rm(s.sys("tmp", e.Name()))
+				rm(LeftoverStaging, s.sys("tmp", e.Name()))
 			}
 		}
 	}
@@ -77,12 +91,12 @@ func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
 			switch {
 			case err == nil && json.Unmarshal(raw, &u) == nil:
 				if now.Sub(u.Initiated) > uploadExpiry {
-					rm(dir)
+					rm(LeftoverUpload, dir)
 				}
 			default:
 				// No readable manifest: a part landed after an abort recreated the directory, or it is corrupt.
 				if fi, err := e.Info(); err == nil && now.Sub(fi.ModTime()) > staleTmpAge {
-					rm(dir)
+					rm(LeftoverUpload, dir)
 				}
 			}
 		}
@@ -93,18 +107,18 @@ func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
 			if ctx.Err() != nil {
 				return removed
 			}
-			if s.sweepGoneBucket(e.Name()) {
+			if s.sweepGoneBucket(e.Name(), act) {
 				removed++
 				continue
 			}
-			removed += s.sweepSidecars(ctx, e.Name())
+			removed += s.sweepSidecars(ctx, e.Name(), act)
 		}
 	}
 
 	if ents, err := os.ReadDir(s.sys("buckets")); err == nil {
 		for _, e := range ents {
 			if name, ok := strings.CutSuffix(e.Name(), ".json"); ok && s.requireBucket(name) != nil {
-				rm(s.sys("buckets", e.Name()))
+				rm(LeftoverRecord, s.sys("buckets", e.Name()))
 			}
 		}
 	}
@@ -113,19 +127,19 @@ func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
 
 // sweepGoneBucket removes the metadata of a bucket that no longer exists, holding the
 // bucket lock so a bucket recreated meanwhile keeps its new sidecars.
-func (s *Store) sweepGoneBucket(bucket string) bool {
+func (s *Store) sweepGoneBucket(bucket string, act func(kind, path string) bool) bool {
 	bl := s.bucketLock(bucket)
 	bl.Lock()
 	defer bl.Unlock()
 	if s.requireBucket(bucket) == nil {
 		return false
 	}
-	return os.RemoveAll(s.sys("meta", bucket)) == nil
+	return act(LeftoverMetadata, s.sys("meta", bucket))
 }
 
 // sweepSidecars removes the sidecars of bucket whose data file or directory marker no
 // longer exists.
-func (s *Store) sweepSidecars(ctx context.Context, bucket string) int {
+func (s *Store) sweepSidecars(ctx context.Context, bucket string, act func(kind, path string) bool) int {
 	removed := 0
 	_ = filepath.WalkDir(s.sys("meta", bucket), func(path string, d os.DirEntry, err error) error {
 		if ctx.Err() != nil {
@@ -137,7 +151,7 @@ func (s *Store) sweepSidecars(ctx context.Context, bucket string) int {
 		var m sidecar
 		raw, err := os.ReadFile(path)
 		if err != nil || json.Unmarshal(raw, &m) != nil || checkKey(m.Key) != nil {
-			if os.Remove(path) == nil {
+			if act(LeftoverMetadata, path) {
 				removed++
 			}
 			return nil
@@ -146,7 +160,7 @@ func (s *Store) sweepSidecars(ctx context.Context, bucket string) int {
 		defer unlock()
 		fi, err := s.r.Stat(s.rel(s.dataPath(bucket, m.Key)))
 		if err != nil || fi.IsDir() != m.Dir || (!m.Dir && !fi.Mode().IsRegular()) {
-			if os.Remove(path) == nil {
+			if act(LeftoverMetadata, path) {
 				removed++
 			}
 		}

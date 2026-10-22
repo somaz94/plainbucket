@@ -116,6 +116,8 @@ spec:
               value: {{ .Values.config.logFormat | quote }}
             - name: PLAINBUCKET_DEBUG
               value: {{ .Values.config.debug | quote }}
+            - name: PLAINBUCKET_ACCESS_LOG
+              value: {{ .Values.config.accessLog | quote }}
             {{- if $tls }}
             - name: PLAINBUCKET_TLS_CERT
               value: /etc/plainbucket/tls/tls.crt

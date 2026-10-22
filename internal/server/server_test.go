@@ -202,3 +202,18 @@ func TestBucketPolicies(t *testing.T) {
 		t.Errorf("policies = %+v", got)
 	}
 }
+
+func TestSecondServerOnTheSameRootFails(t *testing.T) {
+	cfg := testConfig(t)
+	url, stop := start(t, cfg, io.Discard)
+	get(t, http.DefaultClient, url+"/healthz")
+	defer func() { _ = stop() }()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = serve(context.Background(), cfg, NewLogger(io.Discard, cfg), ln)
+	if err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Errorf("second server: %v", err)
+	}
+}

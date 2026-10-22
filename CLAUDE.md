@@ -10,7 +10,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 
 ## Architecture
 
-- `cmd/`, `cmd/cli/` - Cobra entry point; the root command serves.
+- `cmd/`, `cmd/cli/` - Cobra entry point; the root command serves, plus `healthcheck` (Docker HEALTHCHECK, no access key needed) and `fsck` (offline check and repair).
 - `internal/config/` - env (`PLAINBUCKET_*`) > YAML > defaults, `KnownFields`, malformed typed values are errors.
 - `internal/sigv4/` - SigV4 header and presigned verification, aws-chunked decoder with chunk and trailer signatures. `sigv4test/` is an independent signer for tests.
 - `internal/checksum/` - CRC32, CRC32C, CRC64NVME, SHA1, SHA256 on the standard library.
@@ -36,6 +36,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - Anonymous requests may only `GET` / `HEAD` objects of public buckets (website buckets add index and error documents), plus CORS preflights on buckets with a `cors` rule; listing, multipart state, tags and writes always need a key. Bucket policy, ACL, website and CORS APIs stay `501`: behavior is configured in the `buckets` map, not set through the API.
 - New operations return `501` until implemented, never a silent success.
 - The Helm chart runs exactly one pod with `Recreate`: locks are in-process. Keep `values.schema.json` closed and in step with `values.yaml` and every `.Values` path the templates read; credentials only ever reach the pod through Secrets.
+- One process per root: the server and fsck take `storage.Lock` (flock on `.plainbucket/lock`), because object locks live in the process.
 - Expiry and eviction go through `removeIfUnused`, which re-checks size, mtime and last use under the key lock, so a scan never deletes an object rewritten or read after it. Last use is the sidecar mtime (moved by reads at most hourly), never the data file's.
 - `hack/bump-version.sh` moves the Makefile image tag, Chart `version` / `appVersion` and `values.yaml` `image.tag` together.
 

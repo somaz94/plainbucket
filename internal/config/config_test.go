@@ -239,3 +239,19 @@ func TestBuckets(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadUnvalidated(t *testing.T) {
+	t.Setenv("PLAINBUCKET_ACCESS_KEY", "")
+	t.Setenv("PLAINBUCKET_ACCESS_LOG", "true")
+	t.Setenv("PLAINBUCKET_ADDRESS", "127.0.0.1:9100")
+	if _, err := Load(""); err == nil {
+		t.Error("Load accepted a configuration without keys")
+	}
+	cfg, err := LoadUnvalidated("")
+	if err != nil || cfg.Address != "127.0.0.1:9100" || !cfg.AccessLog {
+		t.Errorf("LoadUnvalidated = %+v, %v", cfg, err)
+	}
+	if _, err := LoadUnvalidated(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
+		t.Error("missing file accepted")
+	}
+}

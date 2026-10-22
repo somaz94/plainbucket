@@ -73,6 +73,8 @@ config:
   metrics: false
   logFormat: text
   debug: false
+  # One info-level line per request (method, bucket, key, status, bytes, access key, ...).
+  accessLog: false
   # Secret of type kubernetes.io/tls; when set the server speaks HTTPS.
   tlsSecret: ""
   tlsMinVers: ""

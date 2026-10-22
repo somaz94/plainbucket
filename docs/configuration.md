@@ -23,7 +23,8 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut an upload that delivers less than 32 KiB in this long; `0` disables it |
 | `PLAINBUCKET_METRICS` | `metrics` | `false` | Serve Prometheus metrics at `GET /metrics` |
 | `PLAINBUCKET_LOG_FORMAT` | `log-format` | `text` | `text` or `json` |
-| `PLAINBUCKET_DEBUG` | `debug` | `false` | Log every request and the startup configuration |
+| `PLAINBUCKET_DEBUG` | `debug` | `false` | Log the startup configuration, denied requests and, like `PLAINBUCKET_ACCESS_LOG`, every request |
+| `PLAINBUCKET_ACCESS_LOG` | `access-log` | `false` | Log every request at info level; see [Access Log](#access-log) |
 | `PLAINBUCKET_TLS_CERT` | `tls-cert` | | Certificate file; set with `PLAINBUCKET_TLS_KEY` to serve HTTPS |
 | `PLAINBUCKET_TLS_KEY` | `tls-key` | | Private key file |
 | `PLAINBUCKET_TLS_MIN_VERS` | `tls-min-vers` | `TLS12` | Minimum TLS version: `TLS12` or `TLS13` |
@@ -153,3 +154,18 @@ A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, a
 ## Background Cleanup
 
 Once an hour the server removes staging files left by interrupted uploads, multipart uploads older than `PLAINBUCKET_UPLOAD_EXPIRY`, and metadata whose object was deleted outside the server, and applies the [bucket limits](#expiry-and-size-limits).
+
+<br/>
+
+## Access Log
+
+With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in the format `PLAINBUCKET_LOG_FORMAT` selects, with `method`, `host`, `path`, `query`, `bucket`, `key`, `status`, `bytes` (sent), `duration_ms`, `remote`, `access_key` (empty for unsigned requests), `user_agent` and `request_id`, which is also the `x-amz-request-id` response header. `/healthz` and `/metrics` are not logged.
+
+<br/>
+
+## Commands
+
+- `plainbucket` (no command) serves.
+- `plainbucket healthcheck` exits 0 when the server on this host answers `/healthz`. It reads the same settings to find the address and whether TLS is on, but needs no access key, so the container image uses it as its `HEALTHCHECK`. A server started with `-c` needs the same `-c` here.
+- `plainbucket fsck [--repair]` checks the root while no server runs: objects whose metadata is missing or outdated, file names that cannot be keys, and the leftovers the background cleanup removes. It exits 1 when problems remain. `--repair` rebuilds the metadata (the object then counts as just used) and removes the leftovers; invalid names are only reported. The server holds a lock on the root, so fsck refuses to run beside it, and a second server on the same root refuses to start.
+- `plainbucket version` prints the version.

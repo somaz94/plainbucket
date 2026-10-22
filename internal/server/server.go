@@ -57,6 +57,12 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		return fmt.Errorf("opening %s: %w", cfg.Root, err)
 	}
 	defer func() { _ = store.Close() }()
+	if err := store.Lock(); errors.Is(err, storage.ErrLocked) {
+		_ = ln.Close()
+		return fmt.Errorf("%s: %w", cfg.Root, err)
+	} else if err != nil {
+		logger.Warn("could not lock the root; make sure no other plainbucket uses it", "err", err)
+	}
 	store.SetLimits(bucketLimits(cfg))
 	if store.CaseInsensitive() {
 		logger.Warn("the root filesystem is case-insensitive: keys differing only in case refer to the same file", "root", store.Root())
@@ -80,6 +86,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 			MaxObjectSize: cfg.MaxObjectSize,
 			Logger:        logger,
 			Metrics:       cfg.Metrics,
+			AccessLog:     cfg.AccessLog || cfg.Debug,
 			BodyTimeout:   cfg.BodyTimeout,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,

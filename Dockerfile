@@ -55,4 +55,7 @@ EXPOSE 9000
 
 USER 65532:65532
 
+# Exec form: the image has no shell. healthcheck reads the same PLAINBUCKET_* settings.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD ["/plainbucket", "healthcheck"]
+
 ENTRYPOINT ["/plainbucket"]

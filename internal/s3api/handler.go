@@ -35,6 +35,8 @@ type Options struct {
 	Logger        *slog.Logger // nil = slog.Default()
 	// Metrics serves Prometheus metrics at an unauthenticated GET /metrics.
 	Metrics bool
+	// AccessLog logs every request at info level.
+	AccessLog bool
 	// BodyTimeout is how long an upload may go without delivering minProgress bytes
 	// before the connection is cut; 0 disables it.
 	BodyTimeout time.Duration
@@ -136,11 +138,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.fail(req, err)
 	}
 	h.metrics.record(httpx.MetricMethod(r.Method), rec.Status, rec.Bytes, time.Since(start))
-	if h.log.Enabled(r.Context(), slog.LevelDebug) {
-		h.log.LogAttrs(r.Context(), slog.LevelDebug, "request",
-			slog.String("method", r.Method), slog.String("path", r.URL.Path), slog.String("query", r.URL.RawQuery),
+	if h.opts.AccessLog {
+		accessKey := ""
+		if req.cred != nil {
+			accessKey = req.cred.AccessKey
+		}
+		h.log.LogAttrs(r.Context(), slog.LevelInfo, "request",
+			slog.String("method", r.Method), slog.String("host", r.Host), slog.String("path", r.URL.Path),
+			slog.String("query", r.URL.RawQuery), slog.String("bucket", req.bucket), slog.String("key", req.key),
 			slog.Int("status", rec.Status), slog.Int64("bytes", rec.Bytes),
-			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("request_id", id))
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("remote", r.RemoteAddr),
+			slog.String("access_key", accessKey), slog.String("user_agent", r.UserAgent()), slog.String("request_id", id))
 	}
 }
 

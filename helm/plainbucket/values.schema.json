@@ -251,6 +251,9 @@
               }
             }
           }
+        },
+        "accessLog": {
+          "type": "boolean"
         }
       }
     },

@@ -45,6 +45,7 @@ type Config struct {
 	Metrics       bool          `yaml:"metrics"`
 	LogFormat     string        `yaml:"log-format"`
 	Debug         bool          `yaml:"debug"`
+	AccessLog     bool          `yaml:"access-log"`
 	TLSCert       string        `yaml:"tls-cert"`
 	TLSKey        string        `yaml:"tls-key"`
 	TLSMinVers    string        `yaml:"tls-min-vers"`
@@ -99,8 +100,22 @@ func Default() *Config {
 	}
 }
 
-// Load applies defaults, then the YAML file (if configFile is not empty), then env vars.
+// Load applies defaults, then the YAML file (if configFile is not empty), then env vars,
+// and validates the result.
 func Load(configFile string) (*Config, error) {
+	cfg, err := LoadUnvalidated(configFile)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("config validation: %w", err)
+	}
+	return cfg, nil
+}
+
+// LoadUnvalidated is Load without validation, for commands that need only the root or
+// the address and must work where the access keys are not visible.
+func LoadUnvalidated(configFile string) (*Config, error) {
 	cfg := Default()
 	if configFile != "" {
 		if err := cfg.loadYAML(configFile); err != nil {
@@ -116,9 +131,6 @@ func Load(configFile string) (*Config, error) {
 			return nil, fmt.Errorf("loading credentials file: %w", err)
 		}
 		cfg.Credentials = append(cfg.Credentials, extra...)
-	}
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("config validation: %w", err)
 	}
 	return cfg, nil
 }
@@ -156,6 +168,7 @@ func (c *Config) loadEnv() error {
 	e.bool("METRICS", &c.Metrics)
 	e.string("LOG_FORMAT", &c.LogFormat)
 	e.bool("DEBUG", &c.Debug)
+	e.bool("ACCESS_LOG", &c.AccessLog)
 	e.string("TLS_CERT", &c.TLSCert)
 	e.string("TLS_KEY", &c.TLSKey)
 	e.string("TLS_MIN_VERS", &c.TLSMinVers)
@@ -424,6 +437,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Bool("metrics", c.Metrics),
 		slog.String("log_format", c.LogFormat),
 		slog.Bool("debug", c.Debug),
+		slog.Bool("access_log", c.AccessLog),
 		slog.Bool("tls", c.HasTLS()),
 		slog.String("tls_min_vers", c.TLSMinVers),
 	)

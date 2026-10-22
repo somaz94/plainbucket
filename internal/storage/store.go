@@ -57,6 +57,7 @@ var (
 	ErrMarkerNotEmpty     = errors.New("a key ending in / must have an empty body")
 	ErrEntityTooLarge     = errors.New("object larger than the maximum size")
 	ErrInvalidRange       = errors.New("range outside the source object")
+	ErrLocked             = errors.New("the root is in use by another plainbucket process")
 )
 
 // ObjectInfo describes an object.
@@ -121,6 +122,8 @@ type Store struct {
 	expired     atomic.Int64
 	evicted     atomic.Int64
 
+	lockFile *os.File // held by Lock
+
 	usage atomic.Pointer[Usage]
 }
 
@@ -144,7 +147,12 @@ func New(root string) (*Store, error) {
 }
 
 // Close releases the root directory handle.
-func (s *Store) Close() error { return s.r.Close() }
+func (s *Store) Close() error {
+	if s.lockFile != nil {
+		_ = s.lockFile.Close()
+	}
+	return s.r.Close()
+}
 
 // Root returns the absolute root directory.
 func (s *Store) Root() string { return s.root }

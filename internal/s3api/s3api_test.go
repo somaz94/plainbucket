@@ -246,8 +246,19 @@ func TestPutGetHead(t *testing.T) {
 	if rec.Header().Get("Content-Type") != defaultContentType {
 		t.Errorf("default content type = %q", rec.Header().Get("Content-Type"))
 	}
-	if !strings.Contains(x.logs.String(), "msg=request") {
-		t.Error("request not logged at debug")
+	if strings.Contains(x.logs.String(), "msg=request") {
+		t.Error("request logged without the access log")
+	}
+}
+
+func TestAccessLog(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.AccessLog = true })
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/dir/k", []byte("x"), nil, http.StatusOK)
+	for _, want := range []string{"level=INFO msg=request", "method=PUT", "bucket=bkt", "key=dir/k", "status=200", "access_key=AK", "request_id="} {
+		if !strings.Contains(x.logs.String(), want) {
+			t.Errorf("access log lacks %q:\n%s", want, x.logs.String())
+		}
 	}
 }
 
