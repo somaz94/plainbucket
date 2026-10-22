@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased (2026-10-22)
+## [v0.1.0](https://github.com/somaz94/plainbucket/releases/tag/v0.1.0) (2026-10-22)
 
 ### Features
 
