@@ -6,14 +6,21 @@ plainbucket can hold the distributed cache of GitLab Runner. Cache archives end 
 
 ## Runner Configuration
 
-Give the runner its own key, limited to the cache bucket ([Credentials](configuration.md#credentials)):
+Give the runner its own key, limited to the cache bucket ([Credentials](configuration.md#credentials)), and keep the bucket from growing without bound ([Expiry and Size Limits](configuration.md#expiry-and-size-limits)):
 
 ```yaml
 credentials:
   - access-key: gitlab-runner
     secret-key: change-me
     buckets: [runner-cache]
+buckets:
+  runner-cache:
+    expire-after: 336h
+    max-size: 85899345920
+    evict: true
 ```
+
+Expiry counts from a cache's last download, not its upload, because the runner skips uploading a cache that did not change.
 
 Create the bucket once with any S3 client, then point the runner at it in `config.toml`:
 

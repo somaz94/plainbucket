@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/sigv4"
+	"github.com/somaz94/plainbucket/internal/storage"
 )
 
 func TestMetricsEndpoint(t *testing.T) {
@@ -46,6 +47,25 @@ func TestMetricsEndpoint(t *testing.T) {
 	x.h.store.MeasureUsage(context.Background())
 	if body := scrape(); !strings.Contains(body, "plainbucket_objects 1") || !strings.Contains(body, "plainbucket_stored_bytes 5") {
 		t.Errorf("usage gauges:\n%s", body)
+	}
+	if strings.Contains(body, "plainbucket_bucket_bytes") || !strings.Contains(body, "plainbucket_evicted_objects_total 0") {
+		t.Errorf("limit metrics without limits:\n%s", body)
+	}
+	x.h.store.SetLimits(map[string]storage.Limit{"bkt": {MaxSize: 100}})
+	x.h.store.MeasureUsage(context.Background())
+	if body := scrape(); !strings.Contains(body, `plainbucket_bucket_bytes{bucket="bkt"} 5`) || !strings.Contains(body, `plainbucket_bucket_objects{bucket="bkt"} 1`) {
+		t.Errorf("per-bucket gauges:\n%s", body)
+	}
+}
+
+func TestQuotaExceededAPI(t *testing.T) {
+	x := newHarness(t, nil)
+	x.h.store.SetLimits(map[string]storage.Limit{"bkt": {MaxSize: 4}})
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/a", []byte("1234"), nil, http.StatusOK)
+	rec := x.do(http.MethodPut, "/bkt/b", []byte("5"), nil)
+	if rec.Code != http.StatusForbidden || errCode(rec) != "QuotaExceeded" {
+		t.Errorf("over quota: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

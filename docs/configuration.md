@@ -15,7 +15,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | | `credentials` | | More access keys, each optionally limited; see [Credentials](#credentials) |
 | `PLAINBUCKET_CREDENTIALS_FILE` | `credentials-file` | | YAML file holding a `credentials` list, added to the others |
 | `PLAINBUCKET_PUBLIC_BUCKETS` | `public-buckets` | | Comma-separated buckets whose objects anyone may read; see [Buckets](#buckets) |
-| | `buckets` | | Per-bucket settings: public reads, static website, CORS; see [Buckets](#buckets) |
+| | `buckets` | | Per-bucket settings: public reads, static website, CORS, expiry, size limit; see [Buckets](#buckets) |
 | `PLAINBUCKET_DOMAINS` | `domains` | | Comma-separated domains for virtual-hosted-style requests; see [Virtual-Hosted Addressing](#virtual-hosted-addressing) |
 | `PLAINBUCKET_REGION` | `region` | `us-east-1` | Region reported by `GetBucketLocation` and `HeadBucket` |
 | `PLAINBUCKET_MAX_OBJECT_SIZE` | `max-object-size` | `0` | Largest object or part in bytes; `0` means no limit |
@@ -86,6 +86,10 @@ buckets:
       allowed-headers: ["*"]
       expose-headers: [ETag]
       max-age: 1h
+  runner-cache:
+    expire-after: 336h      # remove objects unused for two weeks
+    max-size: 85899345920   # bytes
+    evict: true             # over max-size, remove the least recently used
 ```
 
 These settings are the only way to change bucket behavior: the bucket policy, ACL, website and CORS APIs are not implemented.
@@ -107,6 +111,15 @@ Signed requests keep S3 semantics, so clients and the aws cli still list the buc
 ### CORS
 
 `cors` lets pages on other origins use the bucket from a browser. An allowed origin gets `Access-Control-Allow-Origin` (and `Access-Control-Expose-Headers`) on every response, errors included. A preflight `OPTIONS` request is answered without a signature: `200` when the origin, the method and every requested header are allowed, `403` otherwise. Origins and headers may hold one `*` wildcard; header names compare case-insensitively. A browser that uploads with signed requests needs `PUT` in `allowed-methods` and the signing headers (`Authorization`, `X-Amz-*`, `Content-Type`) in `allowed-headers`.
+
+### Expiry and Size Limits
+
+An object's last use is the later of its last write and its last `GET` or `HEAD`. A read records itself at most once an hour, by moving the modification time of the object's metadata file; the data file is never touched.
+
+- `expire-after` removes objects not used for that long. It suits caches: the GitLab Runner does not re-upload an unchanged cache, so expiring by upload time would remove caches in daily use.
+- `max-size` caps the bucket's bytes. By default a write that would pass it is refused with `403 QuotaExceeded`. With `evict: true` the write is accepted and the least recently used objects are removed until the bucket fits again.
+
+The background job applies both hourly, and at once when a write takes an evicting bucket over its limit. Object usage per bucket is tracked as objects are written and deleted, and re-measured hourly to include files changed outside the server; between measurements a limit is approximate. An object rewritten or read between the scan and its removal is kept. Incomplete multipart uploads do not count until they are completed.
 
 <br/>
 
@@ -131,6 +144,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - `plainbucket_requests_total{method,status}` and the `plainbucket_request_duration_seconds` histogram.
 - `plainbucket_received_bytes_total` (stored by successful uploads) and `plainbucket_sent_bytes_total`.
 - `plainbucket_objects`, `plainbucket_stored_bytes` and `plainbucket_usage_scan_timestamp_seconds`, measured at startup and then hourly by walking the buckets, so they lag recent uploads.
+- For buckets with `expire-after` or `max-size`: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.
 
 A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, and only unsigned `GET` requests are answered by these endpoints.
 
@@ -138,4 +152,4 @@ A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, a
 
 ## Background Cleanup
 
-Once an hour the server removes staging files left by interrupted uploads, multipart uploads older than `PLAINBUCKET_UPLOAD_EXPIRY`, and metadata whose object was deleted outside the server.
+Once an hour the server removes staging files left by interrupted uploads, multipart uploads older than `PLAINBUCKET_UPLOAD_EXPIRY`, and metadata whose object was deleted outside the server, and applies the [bucket limits](#expiry-and-size-limits).

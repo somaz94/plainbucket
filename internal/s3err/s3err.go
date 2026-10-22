@@ -127,6 +127,11 @@ func PreconditionFailed() *Error {
 	return newErr(http.StatusPreconditionFailed, "PreconditionFailed", "At least one of the pre-conditions you specified did not hold.")
 }
 
+// QuotaExceeded is plainbucket's own: S3 has no bucket size limit.
+func QuotaExceeded() *Error {
+	return newErr(http.StatusForbidden, "QuotaExceeded", "The bucket has reached its configured size limit.")
+}
+
 func InvalidRange() *Error {
 	return newErr(http.StatusRequestedRangeNotSatisfiable, "InvalidRange", "The requested range is not satisfiable.")
 }

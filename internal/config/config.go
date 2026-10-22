@@ -64,6 +64,12 @@ type Bucket struct {
 	Public  bool     `yaml:"public"`
 	Website *Website `yaml:"website"`
 	CORS    *CORS    `yaml:"cors"`
+	// ExpireAfter removes objects neither written nor read for this long.
+	ExpireAfter time.Duration `yaml:"expire-after"`
+	// MaxSize caps the bucket in bytes: writes past it are refused, or with Evict the
+	// least recently used objects are removed.
+	MaxSize int64 `yaml:"max-size"`
+	Evict   bool  `yaml:"evict"`
 }
 
 // Website serves a public bucket as a static site to unsigned requests.
@@ -331,6 +337,14 @@ func (c *Config) validateBuckets() error {
 					return fmt.Errorf("%s.website: %q must be an object key, without a leading or trailing /", where, doc)
 				}
 			}
+		}
+		switch {
+		case b.ExpireAfter < 0:
+			return fmt.Errorf("%s.expire-after must not be negative", where)
+		case b.MaxSize < 0:
+			return fmt.Errorf("%s.max-size must not be negative", where)
+		case b.Evict && b.MaxSize == 0:
+			return fmt.Errorf("%s.evict needs max-size", where)
 		}
 		if cr := b.CORS; cr != nil {
 			if len(cr.AllowedOrigins) == 0 {

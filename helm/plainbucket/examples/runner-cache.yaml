@@ -10,6 +10,11 @@ auth:
   credentialsSecret: plainbucket-credentials
 config:
   uploadExpiry: 24h
+  buckets:
+    runner-cache:
+      expire-after: 336h      # caches no job has read for two weeks
+      max-size: 85899345920   # 80 GiB, then the least recently used caches go
+      evict: true
 persistence:
   storageClass: fast-ssd
   size: 100Gi

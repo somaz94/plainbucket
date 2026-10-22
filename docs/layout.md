@@ -21,7 +21,7 @@ plainbucket keeps the data a client uploads as ordinary files and everything els
 
 ## Metadata and Files Changed Outside the Server
 
-Each object's ETag, content type, user metadata, stored headers and checksums sit in a metadata file under the system directory. That file also records the object's size and modification time, and it is trusted only while both still match the data file.
+Each object's ETag, content type, user metadata, stored headers and checksums sit in a metadata file under the system directory. That file also records the object's size and modification time, and it is trusted only while both still match the data file. The metadata file's own modification time is the object's last read, used by [expiry and size limits](configuration.md#expiry-and-size-limits).
 
 When a file was changed, or added, without the server:
 

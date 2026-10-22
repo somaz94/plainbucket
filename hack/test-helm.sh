@@ -107,6 +107,9 @@ has 'args: ["-c", "/etc/plainbucket/config.yaml"]' "config file argument"
 has "checksum/config:" "config checksum annotation"
 render "${KEY[@]}" --show-only templates/deployment.yaml
 lacks "args:" "no config file without bucket settings"
+render -f "${CHART}/examples/runner-cache.yaml" --show-only templates/configmap.yaml
+has "max-size: 85899345920" "byte size kept as an integer"
+has "expire-after: 336h" "expiry in the config file"
 ok "bucket settings"
 
 render "${KEY[@]}" --show-only templates/tests/test-connection.yaml
@@ -136,6 +139,8 @@ expect_fail "accessMode" "${KEY[@]}" --set persistence.accessMode=RWX
 expect_fail "port" "${KEY[@]}" --set service.port=99999
 expect_fail "Bad_Name" "${KEY[@]}" --set config.buckets.Bad_Name.public=true
 expect_fail "publik" "${KEY[@]}" --set config.buckets.www.publik=true
+expect_fail "max-size" "${KEY[@]}" --set config.buckets.cache.max-size=-1
+expect_fail "expire-after" "${KEY[@]}" --set config.buckets.cache.expire-after=14d
 expect_fail "allowed-methods" "${KEY[@]}" --set "config.buckets.www.cors.allowed-origins={*}" --set "config.buckets.www.cors.allowed-methods={PATCH}"
 ok "schema rejects invalid values"
 

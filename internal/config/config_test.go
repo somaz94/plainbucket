@@ -198,6 +198,10 @@ func TestBuckets(t *testing.T) {
       allowed-origins: ["https://*.example.com"]
       allowed-methods: [get, put]
       max-age: 1h
+  runner-cache:
+    expire-after: 336h
+    max-size: 1073741824
+    evict: true
 `), 0o600)
 	t.Setenv("PLAINBUCKET_PUBLIC_BUCKETS", "assets")
 	cfg, err := Load(path)
@@ -208,6 +212,9 @@ func TestBuckets(t *testing.T) {
 	if !www.Public || www.Website.Index != "index.html" || www.Website.Error != "404.html" ||
 		strings.Join(www.CORS.AllowedMethods, ",") != "GET,PUT" || www.CORS.MaxAge != time.Hour {
 		t.Errorf("www = %+v %+v %+v", www, www.Website, www.CORS)
+	}
+	if rc := cfg.Buckets["runner-cache"]; rc.ExpireAfter != 336*time.Hour || rc.MaxSize != 1<<30 || !rc.Evict {
+		t.Errorf("runner-cache = %+v", rc)
 	}
 	if !cfg.Buckets["assets"].Public {
 		t.Error("PLAINBUCKET_PUBLIC_BUCKETS not merged")
@@ -222,6 +229,9 @@ func TestBuckets(t *testing.T) {
 		"bad method":      "buckets: {www: {cors: {allowed-origins: [\"*\"], allowed-methods: [PATCH]}}}\n",
 		"negative age":    "buckets: {www: {cors: {allowed-origins: [\"*\"], max-age: -1s}}}\n",
 		"unknown key":     "buckets: {www: {publik: true}}\n",
+		"negative expiry": "buckets: {c: {expire-after: -1h}}\n",
+		"negative size":   "buckets: {cache: {max-size: -1}}\n",
+		"evict no size":   "buckets: {cache: {evict: true}}\n",
 	} {
 		_ = os.WriteFile(path, []byte(body), 0o600)
 		if _, err := Load(path); err == nil {

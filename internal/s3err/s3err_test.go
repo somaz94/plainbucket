@@ -33,7 +33,7 @@ func TestConstructorsHaveStatusAndCode(t *testing.T) {
 		InvalidRequest(""), MalformedXML(), IncompleteBody(), MissingContentLength(), EntityTooLarge(), EntityTooSmall(),
 		InvalidBucketName(), KeyTooLong(), InvalidKey(), KeyConflict(), NoSuchBucket(), NoSuchKey(), NoSuchUpload(),
 		BucketAlreadyOwnedByYou(), BucketNotEmpty(), InvalidPart(), InvalidPartOrder(), PreconditionFailed(),
-		NotImplemented(), MethodNotAllowed(), Internal(),
+		NotImplemented(), MethodNotAllowed(), Internal(), InvalidRange(), QuotaExceeded(),
 	} {
 		if e.Status < 400 || e.Code == "" {
 			t.Errorf("%+v", e)

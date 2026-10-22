@@ -1,0 +1,227 @@
+package storage
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// clock is a settable time source for the store.
+type clock struct{ t time.Time }
+
+func (c *clock) now() time.Time { return c.t }
+
+// age sets the data file's mtime and the sidecar's to when, as if written and last read then.
+func age(t *testing.T, s *Store, key string, when time.Time) {
+	t.Helper()
+	if err := os.Chtimes(filepath.Join(s.root, "bkt", key), when, when); err != nil {
+		t.Fatal(err)
+	}
+	// The sidecar records the data mtime; refresh it so it stays trusted.
+	if _, err := s.HeadObject("bkt", key); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chtimes(s.metaPath("bkt", key), when, when)
+}
+
+func exists(s *Store, key string) bool {
+	_, err := s.HeadObject("bkt", key)
+	return err == nil
+}
+
+func TestExpireAfterLastUse(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetLimits(map[string]Limit{"bkt": {ExpireAfter: 24 * time.Hour}})
+	for _, k := range []string{"old", "read", "fresh"} {
+		put(t, s, k, "data")
+	}
+	twoDays := c.t.Add(-48 * time.Hour)
+	age(t, s, "old", twoDays)
+	age(t, s, "read", twoDays)
+	_ = os.Chtimes(s.metaPath("bkt", "read"), c.t, c.t) // read recently
+	expired, _ := s.enforceLimits(context.Background())
+	if expired != 1 || exists(s, "old") || !exists(s, "read") || !exists(s, "fresh") {
+		t.Errorf("expired %d; old=%v read=%v fresh=%v", expired, exists(s, "old"), exists(s, "read"), exists(s, "fresh"))
+	}
+	if e, _ := s.Removed(); e != 1 {
+		t.Errorf("Removed expired = %d", e)
+	}
+}
+
+func TestReadRecordsLastUse(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	put(t, s, "k", "data")
+	old := c.t.Add(-3 * time.Hour)
+	age(t, s, "k", old)
+	f, _, err := s.GetObject("bkt", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	fi, _ := os.Stat(s.metaPath("bkt", "k"))
+	if !fi.ModTime().Equal(c.t) {
+		t.Errorf("sidecar mtime %v, want %v", fi.ModTime(), c.t)
+	}
+	// Within touchInterval a read writes nothing.
+	c.t = c.t.Add(10 * time.Minute)
+	f, _, _ = s.GetObject("bkt", "k")
+	_ = f.Close()
+	if fi2, _ := os.Stat(s.metaPath("bkt", "k")); !fi2.ModTime().Equal(fi.ModTime()) {
+		t.Error("sidecar touched again within the interval")
+	}
+	// The sidecar stays trusted: no re-hash, metadata kept.
+	if info, err := s.HeadObject("bkt", "k"); err != nil || info.ETag != md5ETag(md5sum("data")) {
+		t.Errorf("after touch: %+v %v", info, err)
+	}
+}
+
+func TestEvictLeastRecentlyUsed(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 10, Evict: true}})
+	put(t, s, "a", "aaaa")
+	put(t, s, "b", "bbbb")
+	age(t, s, "a", c.t.Add(-3*time.Hour))
+	age(t, s, "b", c.t.Add(-2*time.Hour))
+	// Over the limit: the write is accepted and wakes the janitor.
+	put(t, s, "c", "cccc")
+	select {
+	case <-s.kick:
+	default:
+		t.Fatal("janitor not woken")
+	}
+	_, evicted := s.enforceLimits(context.Background())
+	if evicted != 1 || exists(s, "a") || !exists(s, "b") || !exists(s, "c") {
+		t.Errorf("evicted %d; a=%v b=%v c=%v", evicted, exists(s, "a"), exists(s, "b"), exists(s, "c"))
+	}
+	if u := s.BucketUsage()["bkt"]; u.Bytes != 8 || u.Objects != 2 {
+		t.Errorf("usage after eviction = %+v", u)
+	}
+}
+
+func TestQuotaRefusesWrites(t *testing.T) {
+	s := newStore(t)
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 10}})
+	put(t, s, "a", "123456")
+	if _, err := s.PutObject("bkt", "b", strings.NewReader("12345"), 5, PutOptions{}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Errorf("over quota: %v", err)
+	}
+	// Replacing an object counts only the difference.
+	if _, err := s.PutObject("bkt", "a", strings.NewReader("1234567890"), 10, PutOptions{}); err != nil {
+		t.Errorf("replace within quota: %v", err)
+	}
+	if _, err := s.CopyObject(context.Background(), "bkt", "a", "bkt", "copy", CopyOptions{}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Errorf("copy over quota: %v", err)
+	}
+	if err := s.DeleteObject("bkt", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if u := s.BucketUsage()["bkt"]; u.Bytes != 0 || u.Objects != 0 {
+		t.Errorf("usage after delete = %+v", u)
+	}
+	s.MinPartSize = 1
+	id, _ := s.CreateUpload("bkt", "mp", Metadata{})
+	p1, _ := s.PutPart("bkt", "mp", id, 1, strings.NewReader("123456"), 6, nil)
+	p2, _ := s.PutPart("bkt", "mp", id, 2, strings.NewReader("123456"), 6, nil)
+	if _, err := s.CompleteUpload(context.Background(), "bkt", "mp", id, []CompletePart{{1, p1.ETag}, {2, p2.ETag}}, Conditions{}, 0); !errors.Is(err, ErrQuotaExceeded) {
+		t.Errorf("multipart over quota: %v", err)
+	}
+	// The commit-time check catches what the early one cannot see.
+	s.usageMu.Lock()
+	s.bucketUsage["bkt"] = Usage{Bytes: 0}
+	s.usageMu.Unlock()
+	tmp, sum, _, err := s.receive(strings.NewReader("12345678901"), 11, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.commit("bkt", "late", tmp, sidecar{ETag: md5ETag(sum)}, Conditions{}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Errorf("commit over quota: %v", err)
+	}
+	if exists(s, "late") {
+		t.Error("refused object was stored")
+	}
+}
+
+func TestRewrittenObjectSurvives(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetLimits(map[string]Limit{"bkt": {ExpireAfter: time.Hour}})
+	put(t, s, "k", "old")
+	age(t, s, "k", c.t.Add(-2*time.Hour))
+	cands := s.scanBucket(context.Background(), "bkt")
+	put(t, s, "k", "new data")
+	if s.removeIfUnused("bkt", cands[0], c.t.Add(-time.Hour)) || !exists(s, "k") {
+		t.Error("an object rewritten after the scan was removed")
+	}
+}
+
+func TestMeasureUsagePerBucket(t *testing.T) {
+	s := newStore(t)
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 100}, "none": {MaxSize: 1}})
+	put(t, s, "a", "123")
+	_ = os.WriteFile(filepath.Join(s.root, "bkt", "external"), []byte("12345"), 0o644)
+	s.MeasureUsage(context.Background())
+	u := s.BucketUsage()
+	if u["bkt"].Bytes != 8 || u["bkt"].Objects != 2 || u["none"].Bytes != 0 {
+		t.Errorf("usage = %+v", u)
+	}
+	if err := s.CreateBucket("gone"); err != nil {
+		t.Fatal(err)
+	}
+	put2 := func() { _, _ = s.PutObject("gone", "x", strings.NewReader("x"), 1, PutOptions{}) }
+	put2()
+	_ = s.DeleteObject("gone", "x")
+	if err := s.DeleteBucket("gone"); err != nil {
+		t.Fatal(err)
+	}
+	s.usageMu.Lock()
+	_, kept := s.bucketUsage["gone"]
+	s.usageMu.Unlock()
+	if kept {
+		t.Error("usage of a deleted bucket kept")
+	}
+}
+
+func TestJanitorAppliesLimitsWhenWoken(t *testing.T) {
+	s := newStore(t)
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 4, Evict: true}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.RunJanitor(ctx, time.Hour, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		close(done)
+	}()
+	// Write after the startup measurement, which would otherwise overwrite the tracked usage.
+	for s.Usage().At.IsZero() {
+		time.Sleep(time.Millisecond)
+	}
+	put(t, s, "a", "aaaa")
+	_ = os.Chtimes(filepath.Join(s.root, "bkt", "a"), time.Now().Add(-time.Hour), time.Now().Add(-time.Hour))
+	_ = os.Remove(s.metaPath("bkt", "a"))
+	put(t, s, "b", "bbbb")
+	// Poll the file, not HeadObject: a read would record a use of "a" and change the order.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(s.root, "bkt", "a")); err != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if exists(s, "a") || !exists(s, "b") {
+		t.Errorf("a=%v b=%v", exists(s, "a"), exists(s, "b"))
+	}
+}

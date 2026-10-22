@@ -114,6 +114,13 @@ type Store struct {
 	buckets     map[string]*sync.RWMutex // writers hold RLock, bucket deletion holds Lock
 	hashes      flight
 
+	limits      map[string]Limit
+	usageMu     sync.Mutex
+	bucketUsage map[string]Usage // tracked between janitor measurements
+	kick        chan struct{}    // wakes the janitor when an evicting bucket is over its limit
+	expired     atomic.Int64
+	evicted     atomic.Int64
+
 	usage atomic.Pointer[Usage]
 }
 
@@ -123,7 +130,8 @@ func New(root string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{root: abs, now: time.Now, MinPartSize: 5 << 20, buckets: map[string]*sync.RWMutex{}}
+	s := &Store{root: abs, now: time.Now, MinPartSize: 5 << 20, buckets: map[string]*sync.RWMutex{},
+		bucketUsage: map[string]Usage{}, kick: make(chan struct{}, 1)}
 	for _, d := range []string{"meta", "tmp", "uploads", "buckets"} {
 		if err := os.MkdirAll(s.sys(d), sysDirPerm); err != nil {
 			return nil, err
@@ -326,14 +334,27 @@ func (s *Store) commit(bucket, key, tmp string, m sidecar, cond Conditions) (Obj
 		return ObjectInfo{}, err
 	}
 	dst := s.dataPath(bucket, key)
+	var oldObjects, oldBytes int64
 	if fi, err := s.r.Lstat(s.rel(dst)); err == nil && fi.IsDir() {
 		return ObjectInfo{}, ErrConflict
+	} else if err == nil && fi.Mode().IsRegular() {
+		oldObjects, oldBytes = 1, fi.Size()
 	}
 
 	fi, err := os.Stat(tmp)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+	over, err := s.account(bucket, 1-oldObjects, fi.Size()-oldBytes)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = s.account(bucket, oldObjects-1, oldBytes-fi.Size())
+		}
+	}()
 	m.Key, m.Size, m.MtimeNs = key, fi.Size(), fi.ModTime().UnixNano()
 	metaTmp, err := s.stageSidecar(m)
 	if err != nil {
@@ -344,6 +365,10 @@ func (s *Store) commit(bucket, key, tmp string, m sidecar, cond Conditions) (Obj
 	metaDst := s.metaPath(bucket, key)
 	if err := s.place(tmp, dst, dirPerm); err != nil {
 		return ObjectInfo{}, err
+	}
+	committed = true // the data is in place, so the usage change stands
+	if over {
+		s.wake()
 	}
 	if err := s.place(metaTmp, metaDst, sysDirPerm); err != nil {
 		// With coarse mtimes the old sidecar could still match the new data.

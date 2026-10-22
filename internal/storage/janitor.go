@@ -13,22 +13,33 @@ import (
 // staleTmpAge is how long an abandoned staging file is kept; uploads in flight finish well before.
 const staleTmpAge = 24 * time.Hour
 
-// RunJanitor measures usage, then calls Sweep and MeasureUsage every interval until ctx
-// is cancelled.
+// RunJanitor measures usage and applies the bucket limits, then every interval sweeps,
+// applies the limits and re-measures until ctx is cancelled. A write that takes an
+// evicting bucket over its limit applies the limits at once.
 func (s *Store) RunJanitor(ctx context.Context, interval, uploadExpiry time.Duration, log *slog.Logger) {
 	s.MeasureUsage(ctx)
+	s.applyLimits(ctx, log)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.kick:
+			s.applyLimits(ctx, log)
 		case <-t.C:
 			if n := s.Sweep(ctx, uploadExpiry); n > 0 {
 				log.Info("janitor removed stale entries", "count", n)
 			}
+			s.applyLimits(ctx, log)
 			s.MeasureUsage(ctx)
 		}
+	}
+}
+
+func (s *Store) applyLimits(ctx context.Context, log *slog.Logger) {
+	if expired, evicted := s.enforceLimits(ctx); expired+evicted > 0 {
+		log.Info("bucket limits applied", "expired", expired, "evicted", evicted)
 	}
 }
 
@@ -159,15 +170,18 @@ func (s *Store) Usage() Usage {
 	return Usage{}
 }
 
-// MeasureUsage counts the regular files in every bucket. It walks the whole tree, so the
-// janitor runs it rather than each metrics scrape.
+// MeasureUsage counts the regular files in every bucket, in total and per bucket. It
+// walks the whole tree, so the janitor runs it rather than each metrics scrape; the
+// per-bucket figures also correct drift from files changed outside the server.
 func (s *Store) MeasureUsage(ctx context.Context) {
-	var u Usage
+	var total Usage
+	per := map[string]Usage{}
 	buckets, err := s.ListBuckets()
 	if err != nil {
 		return
 	}
 	for _, b := range buckets {
+		var u Usage
 		_ = filepath.WalkDir(s.bucketPath(b.Name), func(_ string, d os.DirEntry, err error) error {
 			if ctx.Err() != nil {
 				return filepath.SkipAll
@@ -181,10 +195,17 @@ func (s *Store) MeasureUsage(ctx context.Context) {
 			}
 			return nil
 		})
+		u.At = s.now()
+		per[b.Name] = u
+		total.Objects += u.Objects
+		total.Bytes += u.Bytes
 	}
 	if ctx.Err() != nil {
 		return
 	}
-	u.At = s.now()
-	s.usage.Store(&u)
+	total.At = s.now()
+	s.usage.Store(&total)
+	s.usageMu.Lock()
+	s.bucketUsage = per
+	s.usageMu.Unlock()
 }

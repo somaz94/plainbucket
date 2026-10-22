@@ -115,7 +115,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte("ok"))
 			return
 		case r.URL.Path == "/metrics" && h.opts.Metrics:
-			h.metrics.serve(w, h.usage)
+			h.metrics.serve(w, h.store)
 			return
 		}
 	}
@@ -142,11 +142,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Int("status", rec.Status), slog.Int64("bytes", rec.Bytes),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("request_id", id))
 	}
-}
-
-func (h *Handler) usage() (int64, int64, time.Time) {
-	u := h.store.Usage()
-	return u.Objects, u.Bytes, u.At
 }
 
 func requestID() string {
@@ -291,6 +286,7 @@ var storageErrors = map[error]func() *s3err.Error{
 	storage.ErrEntityTooSmall:     s3err.EntityTooSmall,
 	storage.ErrEntityTooLarge:     s3err.EntityTooLarge,
 	storage.ErrInvalidRange:       s3err.InvalidRange,
+	storage.ErrQuotaExceeded:      s3err.QuotaExceeded,
 	storage.ErrMarkerNotEmpty: func() *s3err.Error {
 		return s3err.InvalidArgument("An object key ending in / is a directory and must have an empty body.")
 	},

@@ -57,6 +57,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		return fmt.Errorf("opening %s: %w", cfg.Root, err)
 	}
 	defer func() { _ = store.Close() }()
+	store.SetLimits(bucketLimits(cfg))
 	if store.CaseInsensitive() {
 		logger.Warn("the root filesystem is case-insensitive: keys differing only in case refer to the same file", "root", store.Root())
 	}
@@ -140,6 +141,16 @@ func bucketPolicies(cfg *config.Config) map[string]s3api.BucketPolicy {
 				AllowedHeaders: c.AllowedHeaders, ExposeHeaders: c.ExposeHeaders, MaxAge: c.MaxAge}
 		}
 		out[name] = p
+	}
+	return out
+}
+
+func bucketLimits(cfg *config.Config) map[string]storage.Limit {
+	out := map[string]storage.Limit{}
+	for name, b := range cfg.Buckets {
+		if b.ExpireAfter > 0 || b.MaxSize > 0 {
+			out[name] = storage.Limit{ExpireAfter: b.ExpireAfter, MaxSize: b.MaxSize, Evict: b.Evict}
+		}
 	}
 	return out
 }

@@ -237,6 +237,17 @@
                     "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
                   }
                 }
+              },
+              "expire-after": {
+                "type": "string",
+                "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+              },
+              "max-size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "evict": {
+                "type": "boolean"
               }
             }
           }

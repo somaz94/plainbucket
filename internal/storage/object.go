@@ -39,6 +39,9 @@ func (s *Store) PutObject(bucket, key string, body io.Reader, size int64, o PutO
 	if isDirKey(key) && size != 0 {
 		return ObjectInfo{}, ErrMarkerNotEmpty
 	}
+	if err := s.fits(bucket, key, size); err != nil {
+		return ObjectInfo{}, err
+	}
 	tmp, sum, checks, err := s.receive(body, size, o.Verify)
 	if err != nil {
 		return ObjectInfo{}, err
@@ -89,9 +92,14 @@ func markerInfo(key string, mod time.Time) ObjectInfo {
 	return ObjectInfo{Key: key, ModTime: mod, ETag: emptyETag, ContentType: DirContentType, IsDir: true}
 }
 
-// GetObject opens bucket/key for reading. The file is nil for a directory marker.
+// GetObject opens bucket/key for reading and records the read as its last use. The
+// file is nil for a directory marker.
 func (s *Store) GetObject(bucket, key string) (*os.File, ObjectInfo, error) {
-	return s.open(bucket, key, true)
+	f, info, err := s.open(bucket, key, true)
+	if f != nil {
+		s.touch(bucket, key)
+	}
+	return f, info, err
 }
 
 // open opens bucket/key. persist lets it save a rebuilt sidecar, which takes the key
@@ -225,8 +233,20 @@ func (s *Store) DeleteObject(bucket, key string) error {
 		_ = os.Remove(s.metaPath(bucket, key))
 		return nil
 	}
-	if err := s.r.Remove(s.rel(p)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	return s.removeFile(bucket, key, p, fi)
+}
+
+// removeFile deletes the object file p, described by fi, with its sidecar and the
+// directories it leaves empty. The caller holds the key lock.
+func (s *Store) removeFile(bucket, key, p string, fi os.FileInfo) error {
+	if err := s.r.Remove(s.rel(p)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
+	}
+	if fi.Mode().IsRegular() {
+		_, _ = s.account(bucket, -1, -fi.Size())
 	}
 	_ = os.Remove(s.metaPath(bucket, key))
 	s.pruneEmptyParents(bucket, filepath.Dir(p))
@@ -280,6 +300,9 @@ func (s *Store) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, ds
 	}
 	if isDirKey(dstKey) {
 		return ObjectInfo{}, ErrMarkerNotEmpty
+	}
+	if err := s.fits(dstBucket, dstKey, src.Size); err != nil {
+		return ObjectInfo{}, err
 	}
 	tmp, sum, _, err := s.receive(ctxReader{ctx, f}, src.Size, nil)
 	if err != nil {

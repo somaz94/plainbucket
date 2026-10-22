@@ -238,6 +238,9 @@ func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, part
 	if maxSize > 0 && total > maxSize {
 		return ObjectInfo{}, ErrEntityTooLarge
 	}
+	if err := s.fits(bucket, key, total); err != nil {
+		return ObjectInfo{}, err
+	}
 
 	tmp, err := os.CreateTemp(s.sys("tmp"), "complete-*")
 	if err != nil {

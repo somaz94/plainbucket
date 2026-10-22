@@ -192,6 +192,10 @@ func TestBucketPolicies(t *testing.T) {
 			CORS: &config.CORS{AllowedOrigins: []string{"*"}, MaxAge: time.Minute}},
 		"plain": {},
 	}
+	cfg.Buckets["cache"] = config.Bucket{ExpireAfter: time.Hour, MaxSize: 10, Evict: true}
+	if l := bucketLimits(cfg); len(l) != 1 || l["cache"].MaxSize != 10 || !l["cache"].Evict {
+		t.Errorf("limits = %+v", l)
+	}
 	got := bucketPolicies(cfg)
 	www := got["www"]
 	if !www.Public || www.Website.Error != "404.html" || www.CORS.MaxAge != time.Minute || got["plain"].Website != nil {

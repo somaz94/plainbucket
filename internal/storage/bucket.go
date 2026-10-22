@@ -83,6 +83,9 @@ func (s *Store) DeleteBucket(name string) error {
 	}
 	_ = os.RemoveAll(s.sys("meta", name))
 	_ = os.Remove(s.sys("buckets", name+".json"))
+	s.usageMu.Lock()
+	delete(s.bucketUsage, name)
+	s.usageMu.Unlock()
 	ups, _ := os.ReadDir(s.sys("uploads"))
 	for _, e := range ups {
 		var u uploadMeta
