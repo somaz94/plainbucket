@@ -112,8 +112,8 @@ expect_fail "must be set together" --set auth.accessKey=admin
 expect_fail "requires config.metrics=true" "${KEY[@]}" --set serviceMonitor.enabled=true
 ok "fail guards"
 
-expect_fail "Additional property" "${KEY[@]}" --set bogus=1
-expect_fail "Additional property" "${KEY[@]}" --set replicaCount=2
+expect_fail "bogus" "${KEY[@]}" --set bogus=1
+expect_fail "replicaCount" "${KEY[@]}" --set replicaCount=2
 expect_fail "metrics" "${KEY[@]}" --set config.metrics=yes
 expect_fail "publicBuckets" "${KEY[@]}" --set "config.publicBuckets={Bad_Name}"
 expect_fail "maxObjectSize" "${KEY[@]}" --set config.maxObjectSize=10Gi
