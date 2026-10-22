@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Builds
 
+- **deps:** bump docker/login-action from 3 to 4 (#3) ([#3](https://github.com/somaz94/plainbucket/pull/3)) ([d0ea7b5](https://github.com/somaz94/plainbucket/commit/d0ea7b55fba6a16c7ae2d7c7403338862d40da24))
 - **deps:** bump docker/setup-qemu-action from 3 to 4 (#2) ([#2](https://github.com/somaz94/plainbucket/pull/2)) ([1eb7c81](https://github.com/somaz94/plainbucket/commit/1eb7c813e8048b16c0ea5f52ae7e7c85af6176c4))
 
 <br/>
