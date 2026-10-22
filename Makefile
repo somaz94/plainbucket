@@ -97,8 +97,12 @@ test-compat: ## Run the AWS SDK for Go v2 compatibility suite (separate module)
 test-awscli: build ## Run the aws cli end-to-end script against bin/plainbucket
 	@bash hack/test-awscli.sh
 
+.PHONY: test-rclone
+test-rclone: build ## Run the rclone end-to-end script against bin/plainbucket
+	@bash hack/test-rclone.sh
+
 .PHONY: test-all
-test-all: test cover-check test-compat test-awscli ## Run every test suite
+test-all: test cover-check test-compat test-awscli test-rclone ## Run every test suite
 
 .PHONY: cover
 cover: test ## Generate HTML coverage report

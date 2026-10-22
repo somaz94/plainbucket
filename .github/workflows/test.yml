@@ -38,3 +38,9 @@ jobs:
       # aws cli v2 is preinstalled on GitHub-hosted Ubuntu runners.
       - name: aws cli end-to-end
         run: make test-awscli
+
+      - name: Install rclone
+        run: sudo apt-get update -q && sudo apt-get install -y -q rclone
+
+      - name: rclone end-to-end
+        run: make test-rclone

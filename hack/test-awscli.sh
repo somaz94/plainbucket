@@ -5,50 +5,19 @@
 # Usage: hack/test-awscli.sh   (after `make build`; needs aws cli v2)
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BIN="${BIN:-${ROOT_DIR}/bin/plainbucket}"
-PORT="${PORT:-19000}"
-ENDPOINT="http://127.0.0.1:${PORT}"
-
 command -v aws >/dev/null 2>&1 || { echo "aws cli not found" >&2; exit 1; }
-[ -x "${BIN}" ] || { echo "${BIN} not found; run make build" >&2; exit 1; }
+# shellcheck source=hack/e2e-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/e2e-lib.sh"
 
-WORK="$(mktemp -d)"
-DATA="${WORK}/data"
-SERVER_PID=""
-cleanup() {
-    if [ -n "${SERVER_PID}" ]; then
-        kill "${SERVER_PID}" 2>/dev/null || true
-        wait "${SERVER_PID}" 2>/dev/null || true
-    fi
-    rm -rf "${WORK}"
-}
-trap cleanup EXIT
-
-export AWS_ACCESS_KEY_ID="e2e-access"
-export AWS_SECRET_ACCESS_KEY="e2e-secret"
+export AWS_ACCESS_KEY_ID="${E2E_ACCESS_KEY}"
+export AWS_SECRET_ACCESS_KEY="${E2E_SECRET_KEY}"
 export AWS_DEFAULT_REGION="us-east-1"
 export AWS_EC2_METADATA_DISABLED=true
 export AWS_CONFIG_FILE=/dev/null
 export AWS_SHARED_CREDENTIALS_FILE=/dev/null
 
-mkdir -p "${DATA}"
-PLAINBUCKET_ROOT="${DATA}" PLAINBUCKET_ADDRESS="127.0.0.1:${PORT}" \
-PLAINBUCKET_ACCESS_KEY="${AWS_ACCESS_KEY_ID}" PLAINBUCKET_SECRET_KEY="${AWS_SECRET_ACCESS_KEY}" \
-    "${BIN}" >"${WORK}/server.log" 2>&1 &
-SERVER_PID=$!
-
-for _ in $(seq 1 50); do
-    curl -fsS "${ENDPOINT}/healthz" >/dev/null 2>&1 && break
-    sleep 0.1
-done
-curl -fsS "${ENDPOINT}/healthz" >/dev/null || { cat "${WORK}/server.log" >&2; exit 1; }
-
-PASS=0
+start_server
 s3() { aws --endpoint-url "${ENDPOINT}" "$@"; }
-ok() { PASS=$((PASS + 1)); echo "  ok  $1"; }
-fail() { echo "  FAIL $1" >&2; cat "${WORK}/server.log" >&2; exit 1; }
 
 echo "aws cli e2e against ${ENDPOINT}"
 
