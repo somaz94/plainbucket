@@ -11,7 +11,8 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
   annotations:
     "helm.sh/hook": test
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    # Kept until the next test run so `helm test --logs` can read it.
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   automountServiceAccountToken: false
   {{- with .Values.imagePullSecrets }}
@@ -42,5 +43,5 @@ spec:
             - ALL
         readOnlyRootFilesystem: true
       command: ['curl']
-      args: ['-fsS', '-o', '/dev/null'{{ if $tls }}, '-k'{{ end }}, 'http{{ if $tls }}s{{ end }}://{{ include "plainbucket.fullname" . }}:{{ .Values.service.port }}/healthz']
+      args: ['-fsS', '-w', '\nHTTP %{http_code}\n'{{ if $tls }}, '-k'{{ end }}, 'http{{ if $tls }}s{{ end }}://{{ include "plainbucket.fullname" . }}:{{ .Values.service.port }}/healthz']
   restartPolicy: Never

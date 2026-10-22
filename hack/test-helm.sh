@@ -121,6 +121,7 @@ has "/healthz" "helm test pod"
 render "${KEY[@]}" --set config.tlsSecret=pb-tls --show-only templates/tests/test-connection.yaml
 has "'-k', 'https://" "helm test pod over https"
 lacks "app.kubernetes.io/name" "test pod outside the service selector"
+lacks "hook-succeeded" "test pod kept for helm test --logs"
 ok "helm test pod"
 
 expect_fail "no access key"
