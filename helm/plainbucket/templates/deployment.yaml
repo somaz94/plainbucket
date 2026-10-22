@@ -1,0 +1,201 @@
+{{- $authSecret := include "plainbucket.authSecret" . -}}
+{{- $tls := .Values.config.tlsSecret -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "plainbucket.fullname" . }}
+  labels:
+    {{- include "plainbucket.labels" . | nindent 4 }}
+spec:
+  # One pod only: object and bucket locks live in the process, so two pods on one
+  # volume could interleave writes. Recreate also lets a ReadWriteOnce claim move.
+  replicas: 1
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "plainbucket.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if and (not .Values.auth.existingSecret) .Values.auth.accessKey }}
+        checksum/auth: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "plainbucket.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "plainbucket.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount | default false }}
+      enableServiceLinks: {{ .Values.enableServiceLinks | default false }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- $grace := .Values.terminationGracePeriodSeconds }}
+      {{- if not (or (kindIs "invalid" $grace) (eq (toString $grace) "")) }}
+      terminationGracePeriodSeconds: {{ int $grace }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 9000
+              protocol: TCP
+          env:
+            - name: PLAINBUCKET_ROOT
+              value: /data
+            - name: PLAINBUCKET_ADDRESS
+              value: ":9000"
+            {{- if $authSecret }}
+            - name: PLAINBUCKET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecret }}
+                  key: {{ .Values.auth.accessKeyKey }}
+            - name: PLAINBUCKET_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecret }}
+                  key: {{ .Values.auth.secretKeyKey }}
+            {{- end }}
+            {{- if .Values.auth.credentialsSecret }}
+            - name: PLAINBUCKET_CREDENTIALS_FILE
+              value: /etc/plainbucket/credentials.yaml
+            {{- end }}
+            - name: PLAINBUCKET_REGION
+              value: {{ .Values.config.region | quote }}
+            {{- with .Values.config.publicBuckets }}
+            - name: PLAINBUCKET_PUBLIC_BUCKETS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.config.domains }}
+            - name: PLAINBUCKET_DOMAINS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.config.maxObjectSize }}
+            - name: PLAINBUCKET_MAX_OBJECT_SIZE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.uploadExpiry }}
+            - name: PLAINBUCKET_UPLOAD_EXPIRY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.bodyTimeout }}
+            - name: PLAINBUCKET_BODY_TIMEOUT
+              value: {{ . | quote }}
+            {{- end }}
+            - name: PLAINBUCKET_METRICS
+              value: {{ .Values.config.metrics | quote }}
+            - name: PLAINBUCKET_LOG_FORMAT
+              value: {{ .Values.config.logFormat | quote }}
+            - name: PLAINBUCKET_DEBUG
+              value: {{ .Values.config.debug | quote }}
+            {{- if $tls }}
+            - name: PLAINBUCKET_TLS_CERT
+              value: /etc/plainbucket/tls/tls.crt
+            - name: PLAINBUCKET_TLS_KEY
+              value: /etc/plainbucket/tls/tls.key
+            {{- end }}
+            {{- with .Values.config.tlsMinVers }}
+            - name: PLAINBUCKET_TLS_MIN_VERS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- range $kind, $p := .Values.probes }}
+          {{- if $p.enabled }}
+          {{ $kind }}Probe:
+            httpGet:
+              path: /healthz
+              port: http
+              {{- if $tls }}
+              scheme: HTTPS
+              {{- end }}
+            initialDelaySeconds: {{ $p.initialDelaySeconds }}
+            periodSeconds: {{ $p.periodSeconds }}
+            {{- with $p.timeoutSeconds }}
+            timeoutSeconds: {{ . }}
+            {{- end }}
+            {{- with $p.failureThreshold }}
+            failureThreshold: {{ . }}
+            {{- end }}
+          {{- end }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              {{- with .Values.persistence.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+            {{- if .Values.auth.credentialsSecret }}
+            - name: credentials
+              mountPath: /etc/plainbucket/credentials.yaml
+              subPath: {{ .Values.auth.credentialsKey }}
+              readOnly: true
+            {{- end }}
+            {{- if $tls }}
+            - name: tls
+              mountPath: /etc/plainbucket/tls
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "plainbucket.dataClaimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- with .Values.auth.credentialsSecret }}
+        - name: credentials
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+        {{- with $tls }}
+        - name: tls
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

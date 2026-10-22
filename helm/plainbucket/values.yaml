@@ -1,0 +1,145 @@
+# Default values for plainbucket. The chart always runs one pod: see templates/deployment.yaml.
+nameOverride: ""
+fullnameOverride: ""
+
+revisionHistoryLimit: 3
+
+image:
+  repository: somaz940/plainbucket
+  pullPolicy: IfNotPresent
+  tag: "v0.1.0"
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # The server never calls the Kubernetes API, so no token is mounted by default.
+  automount: false
+
+podAnnotations: {}
+podLabels: {}
+
+# Kubernetes injects <SERVICE>_PORT variables for every Service in the namespace; none are needed.
+enableServiceLinks: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  # Chown the volume only when its root has the wrong group, not every file on every start.
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Access keys. At least one is required: the full-access key (existingSecret, or
+# accessKey/secretKey from which the chart creates a Secret), credentialsSecret, or both.
+auth:
+  existingSecret: ""
+  accessKeyKey: accessKey
+  secretKeyKey: secretKey
+  # Only for trying the chart out: the values end up in the release history.
+  accessKey: ""
+  secretKey: ""
+  # Secret whose credentialsKey holds more keys, each optionally limited to buckets or
+  # to reads (YAML list, see docs/configuration.md#credentials).
+  credentialsSecret: ""
+  credentialsKey: credentials.yaml
+
+config:
+  region: us-east-1
+  # Buckets whose objects anyone may read with an unsigned GET or HEAD.
+  publicBuckets: []
+  # Domains for virtual-hosted-style requests (<bucket>.<domain>); needs wildcard DNS.
+  domains: []
+  maxObjectSize: ""  # bytes as a string; empty means unlimited
+  uploadExpiry: ""   # Go duration; empty keeps the server default
+  bodyTimeout: ""    # Go duration; empty keeps the server default
+  metrics: false
+  logFormat: text
+  debug: false
+  # Secret of type kubernetes.io/tls; when set the server speaks HTTPS.
+  tlsSecret: ""
+  tlsMinVers: ""
+
+extraEnv: []
+
+service:
+  type: ClusterIP
+  port: 9000
+  annotations: {}
+
+# For virtual-hosted style, add the wildcard host too, e.g. "*.s3.example.com".
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: s3.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Set to null to render no resources block.
+resources:
+  limits:
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# timeoutSeconds / failureThreshold are optional; unset keeps the Kubernetes defaults.
+probes:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    enabled: true
+    initialDelaySeconds: 2
+    periodSeconds: 5
+
+# The bucket root at /data. Disabled, it is an emptyDir and objects are lost with the pod.
+persistence:
+  enabled: true
+  existingClaim: ""
+  subPath: ""
+  storageClass: ""
+  accessMode: ReadWriteOnce  # ReadWriteOncePod needs Kubernetes 1.29+
+  size: 10Gi
+  # Keep the chart-created claim on helm uninstall.
+  keep: true
+
+extraVolumes: []
+extraVolumeMounts: []
+
+# Prometheus Operator ServiceMonitor for /metrics. Requires config.metrics=true.
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: ""
+  scrapeTimeout: ""
+  tlsConfig: {}      # used with config.tlsSecret, e.g. {insecureSkipVerify: true} for a self-signed cert
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+priorityClassName: ""
+
+# Empty keeps the Kubernetes default (30s).
+terminationGracePeriodSeconds: ""
+
+# Image for `helm test` (curl against /healthz; busybox wget cannot speak TLS 1.3).
+tests:
+  image: curlimages/curl:8.23.0

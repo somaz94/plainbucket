@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Rewrite the version in the Makefile IMG tag and README.md.
+# Rewrite the version in the Makefile IMG tag, the Helm chart and README.md.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 PROJECT_NAME="plainbucket"
+CHART_DIR="${ROOT_DIR}/helm/${PROJECT_NAME}"
 
 # Extract current version from Makefile IMG
 get_current_version() {
@@ -32,12 +33,17 @@ if [[ "$1" == "--current" ]]; then
     echo ""
     echo "Version in each file:"
     printf "  %-35s %s\n" "Makefile:" "${CURRENT}"
+    printf "  %-35s %s\n" "Chart.yaml version:" "$(sed -n 's/^version: //p' "${CHART_DIR}/Chart.yaml")"
+    printf "  %-35s %s\n" "Chart.yaml appVersion:" "$(sed -n 's/^appVersion: //p' "${CHART_DIR}/Chart.yaml")"
+    printf "  %-35s %s\n" "values.yaml image.tag:" "$(sed -n 's/^  tag: //p' "${CHART_DIR}/values.yaml")"
     exit 0
 fi
 
 NEW_VERSION="$1"
 
-if [[ ! "${NEW_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# In a variable: zsh drops the backslashes of an unquoted inline regex.
+version_re='^v[0-9]+\.[0-9]+\.[0-9]+$'
+if [[ ! "${NEW_VERSION}" =~ ${version_re} ]]; then
     echo "Error: Version must be in format vX.Y.Z (e.g., v0.1.0)"
     exit 1
 fi
@@ -86,6 +92,21 @@ update_file "${ROOT_DIR}/Makefile" \
     "${PROJECT_NAME}:${CURRENT_VERSION}" \
     "${PROJECT_NAME}:${NEW_VERSION}" \
     "Makefile (IMG)"
+
+# Chart versions follow the app version, without the "v".
+update_file "${CHART_DIR}/Chart.yaml" \
+    "^version: ${CURRENT_VERSION#v}$" \
+    "version: ${NEW_VERSION#v}" \
+    "Chart.yaml (version)"
+update_file "${CHART_DIR}/Chart.yaml" \
+    "^appVersion: \"${CURRENT_VERSION}\"$" \
+    "appVersion: \"${NEW_VERSION}\"" \
+    "Chart.yaml (appVersion)"
+# Two-space indent: image.tag only, not other tag keys added later.
+update_file "${CHART_DIR}/values.yaml" \
+    "^  tag: \"${CURRENT_VERSION}\"$" \
+    "  tag: \"${NEW_VERSION}\"" \
+    "values.yaml (image.tag)"
 
 echo ""
 echo "==> Updating documentation files..."

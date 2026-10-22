@@ -1,0 +1,15 @@
+# GitLab Runner cache: a runner key limited to its bucket, from a Secret holding the list:
+#   kubectl create secret generic plainbucket-credentials --from-file=credentials.yaml
+# where credentials.yaml is
+#   - access-key: gitlab-runner
+#     secret-key: change-me
+#     buckets: [runner-cache]
+# See docs/gitlab-runner.md for the runner's config.toml.
+auth:
+  existingSecret: plainbucket-auth
+  credentialsSecret: plainbucket-credentials
+config:
+  uploadExpiry: 24h
+persistence:
+  storageClass: fast-ssd
+  size: 100Gi

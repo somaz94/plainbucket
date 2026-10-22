@@ -101,8 +101,16 @@ test-awscli: build ## Run the aws cli end-to-end script against bin/plainbucket
 test-rclone: build ## Run the rclone end-to-end script against bin/plainbucket
 	@bash hack/test-rclone.sh
 
+.PHONY: test-runner
+test-runner: build ## Run the GitLab Runner cache end-to-end script (downloads a pinned gitlab-runner)
+	@bash hack/test-gitlab-runner.sh
+
+.PHONY: test-helm
+test-helm: ## Lint and template-test the Helm chart
+	@bash hack/test-helm.sh
+
 .PHONY: test-all
-test-all: test cover-check test-compat test-awscli test-rclone ## Run every test suite
+test-all: test cover-check test-compat test-awscli test-rclone test-runner test-helm ## Run every test suite
 
 .PHONY: cover
 cover: test ## Generate HTML coverage report

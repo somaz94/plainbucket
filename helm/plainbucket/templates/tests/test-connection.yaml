@@ -1,0 +1,46 @@
+{{- $tls := .Values.config.tlsSecret -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "plainbucket.fullname" . }}-test-connection"
+  # Not the selector labels: a running test pod must not become a Service endpoint.
+  labels:
+    helm.sh/chart: {{ include "plainbucket.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: test
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  automountServiceAccountToken: false
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: {{ .Values.tests.image }}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+      command: ['curl']
+      args: ['-fsS', '-o', '/dev/null'{{ if $tls }}, '-k'{{ end }}, 'http{{ if $tls }}s{{ end }}://{{ include "plainbucket.fullname" . }}:{{ .Values.service.port }}/healthz']
+  restartPolicy: Never

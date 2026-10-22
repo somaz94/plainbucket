@@ -1,0 +1,22 @@
+apiVersion: v2
+name: plainbucket
+description: A Helm chart for plainbucket, a single-node S3-compatible server that stores objects as plain files
+type: application
+version: 0.1.0
+appVersion: "v0.1.0"
+
+kubeVersion: ">=1.21.0-0"
+
+keywords:
+  - s3
+  - object-storage
+  - gitlab-runner-cache
+  - static-hosting
+
+home: https://github.com/somaz94/plainbucket
+sources:
+  - https://github.com/somaz94/plainbucket
+
+maintainers:
+  - name: somaz94
+    url: https://github.com/somaz94

@@ -1,0 +1,7 @@
+# Full-access key from an existing Secret:
+#   kubectl create secret generic plainbucket-auth \
+#     --from-literal=accessKey=admin --from-literal=secretKey=change-me
+auth:
+  existingSecret: plainbucket-auth
+persistence:
+  size: 50Gi

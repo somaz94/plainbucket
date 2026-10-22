@@ -15,11 +15,12 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - `internal/sigv4/` - SigV4 header and presigned verification, aws-chunked decoder with chunk and trailer signatures. `sigv4test/` is an independent signer for tests.
 - `internal/checksum/` - CRC32, CRC32C, CRC64NVME, SHA1, SHA256 on the standard library.
 - `internal/storage/` - the filesystem store: key mapping, sidecar metadata, atomic commit, S3-order listing walker, multipart, janitor. Knows nothing about HTTP.
-- `internal/s3api/` - HTTP router and handlers, XML documents, payload verification and upload progress deadline, storage error to S3 error mapping, Prometheus metrics.
+- `internal/s3api/` - HTTP router and handlers, access keys with bucket scopes and read-only, public-bucket anonymous reads, virtual-hosted routing, XML documents, payload verification and upload progress deadline, storage error to S3 error mapping, Prometheus metrics.
 - `internal/s3err/` - S3 error type and XML rendering.
 - `internal/server/` - listener lifecycle and the hourly janitor.
 - `compat/` - separate Go module running the AWS SDK for Go v2 against the handler.
-- `hack/test-awscli.sh`, `hack/test-rclone.sh` - client end-to-end scripts against `bin/plainbucket`; `hack/e2e-lib.sh` starts the server for both.
+- `helm/plainbucket/` - Helm chart; `hack/test-helm.sh` lints it, renders it and checks the fail guards and schema. Published by `.github/workflows/helm-release.yml` on tags.
+- `hack/test-awscli.sh`, `hack/test-rclone.sh`, `hack/test-gitlab-runner.sh` - client end-to-end scripts against `bin/plainbucket`; `hack/e2e-lib.sh` starts the server for them. The runner script downloads the official binary at the version and SHA-256 pinned in it and caches it in `bin/`; `compat/cmd/presign` makes its presigned URLs.
 
 <br/>
 
@@ -31,7 +32,11 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - Every `x-amz-*` request header must be signed (`sigv4.requireSigned`); the GET-for-HEAD presign fallback exists only for the GitLab Runner cache.
 - A sidecar is trusted only while its recorded size and mtime match the data file; otherwise the object is treated as edited outside the server.
 - Listing order must equal S3 byte order of whole keys. `storage/list_test.go` checks the walker against a brute-force reference; keep it passing when touching `walk`.
-- Path-style addressing only. New operations return `501` until implemented, never a silent success.
+- Path-style always works; virtual-hosted style only for `PLAINBUCKET_DOMAINS`. The request URL is never rewritten, because SigV4 signs the path as sent.
+- Anonymous requests may only `GET` / `HEAD` objects of public buckets; listing, multipart state and writes always need a key. Bucket policy and ACL APIs stay `501`: access is configured, not set through the API.
+- New operations return `501` until implemented, never a silent success.
+- The Helm chart runs exactly one pod with `Recreate`: locks are in-process. Keep `values.schema.json` closed and in step with `values.yaml` and every `.Values` path the templates read; credentials only ever reach the pod through Secrets.
+- `hack/bump-version.sh` moves the Makefile image tag, Chart `version` / `appVersion` and `values.yaml` `image.tag` together.
 
 <br/>
 
@@ -44,11 +49,13 @@ make cover-check   # coverage gate, also run in CI
 make test-compat   # AWS SDK for Go v2 (compat/ module)
 make test-awscli   # aws cli end-to-end
 make test-rclone   # rclone end-to-end
+make test-runner   # gitlab-runner cache helper end-to-end
+make test-helm     # Helm chart tests
 make test-all      # all of the above
 make lint
 ```
 
-CI (`.github/workflows/test.yml`) runs `test`, `cover-check`, `test-compat`, `test-awscli` and `test-rclone`.
+CI (`.github/workflows/test.yml`) runs `test`, `cover-check`, `test-compat`, `test-awscli`, `test-rclone`, `test-runner` and `test-helm`.
 
 <br/>
 
@@ -56,4 +63,5 @@ CI (`.github/workflows/test.yml`) runs `test`, `cover-check`, `test-compat`, `te
 
 - `docs/configuration.md` - settings table; update it with `internal/config`.
 - `docs/layout.md` - disk layout, external edits, key mapping limits.
+- `docs/gitlab-runner.md` - runner `config.toml` for the cache, and what the runner e2e covers.
 - `docs/compatibility.md` - supported and unsupported operations; update it with the router in `internal/s3api/handler.go`.

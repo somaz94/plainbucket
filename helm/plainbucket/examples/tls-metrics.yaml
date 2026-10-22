@@ -1,0 +1,14 @@
+# HTTPS in the pod from a kubernetes.io/tls Secret, with Prometheus Operator scraping.
+auth:
+  existingSecret: plainbucket-auth
+config:
+  tlsSecret: plainbucket-tls
+  tlsMinVers: TLS13
+  metrics: true
+  logFormat: json
+serviceMonitor:
+  enabled: true
+  labels:
+    release: prometheus
+  tlsConfig:
+    insecureSkipVerify: true

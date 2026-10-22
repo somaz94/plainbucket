@@ -1,0 +1,23 @@
+plainbucket {{ .Values.image.tag | default .Chart.AppVersion }} is installed as release {{ .Release.Name }}.
+
+S3 endpoint inside the cluster:
+  http{{ if .Values.config.tlsSecret }}s{{ end }}://{{ include "plainbucket.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+{{- if .Values.ingress.enabled }}
+
+Through the Ingress:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- end }}
+
+Use path-style addressing{{ with .Values.config.domains }}, or virtual-hosted style under {{ join ", " . }}{{ end }}.
+{{- with .Values.config.publicBuckets }}
+Objects in {{ join ", " . }} can be read without credentials.
+{{- end }}
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence is disabled, so objects live in an emptyDir and are lost when the pod is replaced.
+{{- end }}
+
+Logs:
+  kubectl logs -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "plainbucket.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -f

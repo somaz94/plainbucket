@@ -1,0 +1,26 @@
+# Public static hosting: objects in "www" are readable without credentials, and each
+# bucket is also reachable as <bucket>.s3.example.com (wildcard DNS and certificate).
+auth:
+  existingSecret: plainbucket-auth
+config:
+  publicBuckets: [www]
+  domains: [s3.example.com]
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+  hosts:
+    - host: s3.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+    - host: "*.s3.example.com"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: s3-example-com-tls
+      hosts:
+        - s3.example.com
+        - "*.s3.example.com"
