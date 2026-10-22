@@ -5,17 +5,18 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 - the AWS SDK for Go v2, including the multipart upload and download managers (`compat/`);
 - the aws cli (`hack/test-awscli.sh`);
 - rclone, including `check` by hash, `sync` with deletion, server-side copy and move, and directory markers (`hack/test-rclone.sh`);
-- the request flow of the GitLab Runner distributed cache: presigned PUT, `HEAD` on the presigned GET URL, presigned GET (`compat/`). A `HEAD` on a URL presigned for `GET` is accepted for that reason; S3 itself would refuse it.
+- the official `gitlab-runner` binary's cache helper, with presigned URLs and with Go Cloud URLs (`hack/test-gitlab-runner.sh`, see [gitlab-runner.md](gitlab-runner.md)). Older runners send `HEAD` on the URL presigned for `GET`; that is accepted for them, though S3 itself would refuse it, and `compat/` replays that flow.
 
 <br/>
 
 ## Addressing and Authentication
 
-- Path-style URLs only: `http://host:9000/<bucket>/<key>`. Configure SDKs with path-style addressing (`UsePathStyle` in Go, `addressing_style = path` in boto3 and the aws cli; the aws cli uses path style on its own for a custom endpoint).
+- Path-style URLs (`http://host:9000/<bucket>/<key>`) always work. Configure SDKs with path-style addressing (`UsePathStyle` in Go, `addressing_style = path` in boto3 and the aws cli; the aws cli uses path style on its own for a custom endpoint).
+- Virtual-hosted-style URLs (`http://<bucket>.s3.example.com/<key>`) work for the domains listed in `PLAINBUCKET_DOMAINS` ([Virtual-Hosted Addressing](configuration.md#virtual-hosted-addressing)).
 - AWS Signature Version 4 in the `Authorization` header or as a presigned URL, up to seven days.
 - Payload modes: a hex SHA-256 of the body, `UNSIGNED-PAYLOAD`, and aws-chunked bodies `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER` and `STREAMING-UNSIGNED-PAYLOAD-TRAILER`. Chunk and trailer signatures are verified.
 - Every `x-amz-*` header in a request must be covered by its signature, as on S3. An unsigned one is refused with `403 AccessDenied`, so a presigned URL cannot be repurposed with extra headers such as `x-amz-copy-source`.
-- Signature Version 2 and anonymous requests are refused.
+- Signature Version 2 is refused. Anonymous requests are refused, except `GET` and `HEAD` of objects in buckets configured as public ([Public Buckets](configuration.md#public-buckets)).
 
 <br/>
 
@@ -41,7 +42,7 @@ Object details:
 
 ## Not Implemented
 
-These return `501 NotImplemented`: ACLs and policies, versioning other than reading its status, object lock and retention, tagging, lifecycle, replication, CORS and website configuration, encryption settings, `UploadPartCopy`, `GetObject` by part number, `SelectObjectContent`, and delimiters in `ListMultipartUploads`. Virtual-hosted-style addressing is not supported.
+These return `501 NotImplemented`: ACLs and policies, versioning other than reading its status, object lock and retention, tagging, lifecycle, replication, CORS and website configuration, encryption settings, `UploadPartCopy`, `GetObject` by part number, `SelectObjectContent`, and delimiters in `ListMultipartUploads`.
 
 Storage classes are not modeled; every object reports `STANDARD`.
 
