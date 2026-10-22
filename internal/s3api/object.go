@@ -80,7 +80,7 @@ func (h *Handler) checkSize(n int64) error {
 }
 
 func (h *Handler) putObject(req *request) error {
-	p, err := newPayload(req, true)
+	p, err := newPayload(req, h.opts.BodyTimeout, true)
 	if err != nil {
 		return err
 	}
@@ -99,6 +99,7 @@ func (h *Handler) putObject(req *request) error {
 	if err != nil {
 		return err
 	}
+	h.metrics.receivedBytes.Add(p.size)
 	req.w.Header().Set("ETag", info.ETag)
 	setChecksumHeaders(req.w.Header(), info.Checksums)
 	req.w.WriteHeader(http.StatusOK)
@@ -155,7 +156,7 @@ func (h *Handler) deleteObject(req *request) error {
 }
 
 func (h *Handler) deleteObjects(req *request) error {
-	body, err := readXMLBody(req)
+	body, err := readXMLBody(req, h.opts.BodyTimeout)
 	if err != nil {
 		return err
 	}

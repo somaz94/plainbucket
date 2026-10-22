@@ -32,7 +32,7 @@ func (h *Handler) uploadPart(req *request) error {
 	if err != nil || !req.q.Has("uploadId") {
 		return s3err.InvalidArgument("UploadPart requires partNumber and uploadId.")
 	}
-	p, err := newPayload(req, false)
+	p, err := newPayload(req, h.opts.BodyTimeout, false)
 	if err != nil {
 		return err
 	}
@@ -43,6 +43,7 @@ func (h *Handler) uploadPart(req *request) error {
 	if err != nil {
 		return err
 	}
+	h.metrics.receivedBytes.Add(p.size)
 	req.w.Header().Set("ETag", part.ETag)
 	setChecksumHeaders(req.w.Header(), part.Checksums)
 	req.w.WriteHeader(http.StatusOK)
@@ -50,7 +51,7 @@ func (h *Handler) uploadPart(req *request) error {
 }
 
 func (h *Handler) completeMultipartUpload(req *request) error {
-	body, err := readXMLBody(req)
+	body, err := readXMLBody(req, h.opts.BodyTimeout)
 	if err != nil {
 		return err
 	}

@@ -27,7 +27,7 @@ func (h *Handler) listBuckets(req *request) error {
 }
 
 func (h *Handler) createBucket(req *request) error {
-	body, err := readXMLBody(req)
+	body, err := readXMLBody(req, h.opts.BodyTimeout)
 	if err != nil {
 		return err
 	}

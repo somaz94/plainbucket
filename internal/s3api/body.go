@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/somaz94/plainbucket/internal/checksum"
 	"github.com/somaz94/plainbucket/internal/s3err"
@@ -40,10 +41,37 @@ type payload struct {
 
 // bodyReader turns transport errors into IncompleteBody, so they are not mistaken for
 // server-side write failures.
-type bodyReader struct{ r io.Reader }
+// It also enforces a minimum upload rate: the read deadline moves forward only once
+// minProgress bytes have arrived, so a client trickling a byte now and then is cut off.
+type bodyReader struct {
+	r        io.Reader
+	rc       *http.ResponseController
+	timeout  time.Duration
+	progress int
+}
 
-func (b bodyReader) Read(p []byte) (int, error) {
+// minProgress is the data an upload must deliver within each BodyTimeout window.
+const minProgress = 32 << 10
+
+func newBodyReader(req *request, timeout time.Duration) *bodyReader {
+	b := &bodyReader{r: req.r.Body, timeout: timeout}
+	if timeout > 0 {
+		b.rc = http.NewResponseController(req.w)
+		if b.rc.SetReadDeadline(time.Now().Add(timeout)) != nil {
+			b.rc = nil // not a server connection, as in tests with a recorder
+		}
+	}
+	return b
+}
+
+func (b *bodyReader) Read(p []byte) (int, error) {
 	n, err := b.r.Read(p)
+	if b.rc != nil {
+		if b.progress += n; b.progress >= minProgress {
+			b.progress = 0
+			_ = b.rc.SetReadDeadline(time.Now().Add(b.timeout))
+		}
+	}
 	if err != nil && err != io.EOF {
 		var e *s3err.Error
 		if !errors.As(err, &e) {
@@ -58,7 +86,7 @@ const defaultChecksum = "CRC64NVME"
 
 // newPayload prepares the request body. withDefault adds defaultChecksum when the client
 // declared none, for bodies stored as whole objects.
-func newPayload(req *request, withDefault bool) (*payload, error) {
+func newPayload(req *request, timeout time.Duration, withDefault bool) (*payload, error) {
 	r := req.r
 	p := &payload{size: r.ContentLength, hashes: map[string]hash.Hash{}, want: map[string]string{}, trailing: map[string]bool{}}
 	if req.auth.Streaming() {
@@ -67,13 +95,13 @@ func newPayload(req *request, withDefault bool) (*payload, error) {
 			return nil, s3err.MissingContentLength()
 		}
 		p.size = n
-		p.chunked = req.auth.NewChunkedReader(bodyReader{r.Body})
+		p.chunked = req.auth.NewChunkedReader(newBodyReader(req, timeout))
 		p.reader = p.chunked
 	} else {
 		if p.size < 0 {
 			return nil, s3err.MissingContentLength()
 		}
-		p.reader = bodyReader{r.Body}
+		p.reader = newBodyReader(req, timeout)
 		if ph := req.auth.PayloadHash; ph != sigv4.UnsignedPayload {
 			p.sha, p.wantSHA = sha256.New(), ph
 		}
@@ -159,8 +187,8 @@ func (p *payload) verify(md5sum []byte) (map[string]string, error) {
 }
 
 // readXMLBody reads and verifies a small request document.
-func readXMLBody(req *request) ([]byte, error) {
-	p, err := newPayload(req, false)
+func readXMLBody(req *request, timeout time.Duration) ([]byte, error) {
+	p, err := newPayload(req, timeout, false)
 	if err != nil {
 		return nil, err
 	}

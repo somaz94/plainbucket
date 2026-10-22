@@ -28,6 +28,8 @@ type Config struct {
 	Region        string        `yaml:"region"`
 	MaxObjectSize int64         `yaml:"max-object-size"`
 	UploadExpiry  time.Duration `yaml:"upload-expiry"`
+	BodyTimeout   time.Duration `yaml:"body-timeout"`
+	Metrics       bool          `yaml:"metrics"`
 	LogFormat     string        `yaml:"log-format"`
 	Debug         bool          `yaml:"debug"`
 	TLSCert       string        `yaml:"tls-cert"`
@@ -42,6 +44,7 @@ func Default() *Config {
 		Address:      ":9000",
 		Region:       "us-east-1",
 		UploadExpiry: 7 * 24 * time.Hour,
+		BodyTimeout:  time.Minute,
 		LogFormat:    "text",
 	}
 }
@@ -87,6 +90,8 @@ func (c *Config) loadEnv() error {
 	e.string("REGION", &c.Region)
 	e.int64("MAX_OBJECT_SIZE", &c.MaxObjectSize)
 	e.duration("UPLOAD_EXPIRY", &c.UploadExpiry)
+	e.duration("BODY_TIMEOUT", &c.BodyTimeout)
+	e.bool("METRICS", &c.Metrics)
 	e.string("LOG_FORMAT", &c.LogFormat)
 	e.bool("DEBUG", &c.Debug)
 	e.string("TLS_CERT", &c.TLSCert)
@@ -172,6 +177,8 @@ func (c *Config) validate() error {
 		return errors.New("PLAINBUCKET_MAX_OBJECT_SIZE must not be negative")
 	case c.UploadExpiry <= 0:
 		return errors.New("PLAINBUCKET_UPLOAD_EXPIRY must be positive")
+	case c.BodyTimeout < 0:
+		return errors.New("PLAINBUCKET_BODY_TIMEOUT must not be negative")
 	case (c.TLSCert == "") != (c.TLSKey == ""):
 		return errors.New("PLAINBUCKET_TLS_CERT and PLAINBUCKET_TLS_KEY must be set together")
 	}
@@ -215,6 +222,8 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("region", c.Region),
 		slog.Int64("max_object_size", c.MaxObjectSize),
 		slog.Duration("upload_expiry", c.UploadExpiry),
+		slog.Duration("body_timeout", c.BodyTimeout),
+		slog.Bool("metrics", c.Metrics),
 		slog.String("log_format", c.LogFormat),
 		slog.Bool("debug", c.Debug),
 		slog.Bool("tls", c.HasTLS()),

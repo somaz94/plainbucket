@@ -13,8 +13,10 @@ import (
 // staleTmpAge is how long an abandoned staging file is kept; uploads in flight finish well before.
 const staleTmpAge = 24 * time.Hour
 
-// RunJanitor calls Sweep every interval until ctx is cancelled.
+// RunJanitor measures usage, then calls Sweep and MeasureUsage every interval until ctx
+// is cancelled.
 func (s *Store) RunJanitor(ctx context.Context, interval, uploadExpiry time.Duration, log *slog.Logger) {
+	s.MeasureUsage(ctx)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -25,6 +27,7 @@ func (s *Store) RunJanitor(ctx context.Context, interval, uploadExpiry time.Dura
 			if n := s.Sweep(ctx, uploadExpiry); n > 0 {
 				log.Info("janitor removed stale entries", "count", n)
 			}
+			s.MeasureUsage(ctx)
 		}
 	}
 }
@@ -139,4 +142,49 @@ func (s *Store) sweepSidecars(ctx context.Context, bucket string) int {
 		return nil
 	})
 	return removed
+}
+
+// Usage is the stored object count and size as of the last measurement.
+type Usage struct {
+	Objects int64
+	Bytes   int64
+	At      time.Time // zero until the first measurement
+}
+
+// Usage returns the last measurement taken by MeasureUsage.
+func (s *Store) Usage() Usage {
+	if u := s.usage.Load(); u != nil {
+		return *u
+	}
+	return Usage{}
+}
+
+// MeasureUsage counts the regular files in every bucket. It walks the whole tree, so the
+// janitor runs it rather than each metrics scrape.
+func (s *Store) MeasureUsage(ctx context.Context) {
+	var u Usage
+	buckets, err := s.ListBuckets()
+	if err != nil {
+		return
+	}
+	for _, b := range buckets {
+		_ = filepath.WalkDir(s.bucketPath(b.Name), func(_ string, d os.DirEntry, err error) error {
+			if ctx.Err() != nil {
+				return filepath.SkipAll
+			}
+			if err != nil || !d.Type().IsRegular() {
+				return nil
+			}
+			if fi, err := d.Info(); err == nil {
+				u.Objects++
+				u.Bytes += fi.Size()
+			}
+			return nil
+		})
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	u.At = s.now()
+	s.usage.Store(&u)
 }

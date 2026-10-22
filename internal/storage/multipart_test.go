@@ -251,3 +251,27 @@ func TestRunJanitorStops(t *testing.T) {
 		t.Error("janitor never swept")
 	}
 }
+
+func TestMeasureUsage(t *testing.T) {
+	s := newStore(t)
+	if !s.Usage().At.IsZero() {
+		t.Error("usage before measuring")
+	}
+	put(t, s, "a/b", "12345")
+	put(t, s, "c", "123")
+	put(t, s, "dir/", "")
+	_ = s.CreateBucket("other")
+	_, _ = s.PutObject("other", "x", strings.NewReader("12"), 2, PutOptions{})
+	s.MeasureUsage(context.Background())
+	if u := s.Usage(); u.Objects != 3 || u.Bytes != 10 || u.At.IsZero() {
+		t.Errorf("usage = %+v", u)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	before := s.Usage()
+	put(t, s, "d", "1")
+	s.MeasureUsage(ctx)
+	if s.Usage() != before {
+		t.Error("a cancelled measurement replaced the last one")
+	}
+}

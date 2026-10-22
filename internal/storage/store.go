@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -110,6 +111,8 @@ type Store struct {
 	uploadLocks [64]sync.Mutex // per multipart upload
 	bucketMu    sync.Mutex
 	buckets     map[string]*sync.RWMutex // writers hold RLock, bucket deletion holds Lock
+
+	usage atomic.Pointer[Usage]
 }
 
 // New opens the store rooted at root, creating its system directories.

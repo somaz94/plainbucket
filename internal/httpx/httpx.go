@@ -1,10 +1,21 @@
-// Package httpx holds the response recorder the S3 API logs requests with.
+// Package httpx holds the response recorder and metric label helper of the S3 API.
 package httpx
 
 import (
 	"io"
 	"net/http"
 )
+
+// MetricMethod maps a request method to a bounded metric label. net/http accepts any
+// method token, so labelling by r.Method lets a client mint unlimited series.
+func MetricMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodDelete, http.MethodOptions, http.MethodPatch:
+		return method
+	}
+	return "OTHER"
+}
 
 // Recorder wraps an http.ResponseWriter to capture the status code and bytes written.
 type Recorder struct {

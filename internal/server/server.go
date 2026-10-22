@@ -77,6 +77,8 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 			Region:        cfg.Region,
 			MaxObjectSize: cfg.MaxObjectSize,
 			Logger:        logger,
+			Metrics:       cfg.Metrics,
+			BodyTimeout:   cfg.BodyTimeout,
 		}),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,

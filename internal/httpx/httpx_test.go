@@ -38,6 +38,19 @@ func (w *readerFromWriter) ReadFrom(src io.Reader) (int64, error) {
 	return io.Copy(w.ResponseWriter, src)
 }
 
+func TestMetricMethod(t *testing.T) {
+	for _, m := range []string{"GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"} {
+		if got := MetricMethod(m); got != m {
+			t.Errorf("MetricMethod(%q) = %q", m, got)
+		}
+	}
+	for _, m := range []string{"XYZRANDOM123", "get", "PROPFIND", ""} {
+		if got := MetricMethod(m); got != "OTHER" {
+			t.Errorf("MetricMethod(%q) = %q, want OTHER", m, got)
+		}
+	}
+}
+
 func TestRecorderReadFrom(t *testing.T) {
 	inner := &readerFromWriter{ResponseWriter: httptest.NewRecorder()}
 	r := NewRecorder(inner)

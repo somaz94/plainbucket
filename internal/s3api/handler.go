@@ -26,14 +26,20 @@ type Options struct {
 	Region        string
 	MaxObjectSize int64        // 0 = unlimited
 	Logger        *slog.Logger // nil = slog.Default()
+	// Metrics serves Prometheus metrics at an unauthenticated GET /metrics.
+	Metrics bool
+	// BodyTimeout is how long an upload may go without delivering minProgress bytes
+	// before the connection is cut; 0 disables it.
+	BodyTimeout time.Duration
 }
 
 // Handler is the S3 API http.Handler.
 type Handler struct {
-	opts  Options
-	store *storage.Store
-	log   *slog.Logger
-	now   func() time.Time
+	opts    Options
+	store   *storage.Store
+	log     *slog.Logger
+	now     func() time.Time
+	metrics *metrics
 }
 
 // New returns a Handler.
@@ -42,7 +48,7 @@ func New(opts Options) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now}
+	return &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics()}
 }
 
 // request is one authenticated API call.
@@ -80,10 +86,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := requestID()
 	w.Header().Set("X-Amz-Request-Id", id)
 	w.Header().Set("Server", "plainbucket")
-	if r.URL.Path == "/healthz" && r.URL.RawQuery == "" && r.Header.Get("Authorization") == "" {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
-		return
+	// An S3 request to a bucket named healthz or metrics is signed, so it never lands here.
+	if r.URL.RawQuery == "" && r.Header.Get("Authorization") == "" && r.Method == http.MethodGet {
+		switch {
+		case r.URL.Path == "/healthz":
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte("ok"))
+			return
+		case r.URL.Path == "/metrics" && h.opts.Metrics:
+			h.metrics.serve(w, h.usage)
+			return
+		}
 	}
 
 	rec := httpx.NewRecorder(w)
@@ -92,12 +105,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.serve(req); err != nil {
 		h.fail(req, err)
 	}
+	h.metrics.record(httpx.MetricMethod(r.Method), rec.Status, rec.Bytes, time.Since(start))
 	if h.log.Enabled(r.Context(), slog.LevelDebug) {
 		h.log.LogAttrs(r.Context(), slog.LevelDebug, "request",
 			slog.String("method", r.Method), slog.String("path", r.URL.Path), slog.String("query", r.URL.RawQuery),
 			slog.Int("status", rec.Status), slog.Int64("bytes", rec.Bytes),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("request_id", id))
 	}
+}
+
+func (h *Handler) usage() (int64, int64, time.Time) {
+	u := h.store.Usage()
+	return u.Objects, u.Bytes, u.At
 }
 
 func requestID() string {
