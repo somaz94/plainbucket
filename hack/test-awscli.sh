@@ -37,6 +37,10 @@ cmp -s "${WORK}/big.bin" "${DATA}/e2e/big.bin" && ok "multipart object is a plai
 [ "$(s3 s3 ls s3://e2e --recursive | wc -l | tr -d ' ')" = "2" ] && ok "ls --recursive" || fail "ls --recursive"
 
 s3 s3 cp s3://e2e/big.bin "${WORK}/down.bin" >/dev/null
+s3 s3 cp s3://e2e/big.bin s3://e2e/big-copy.bin >/dev/null && cmp -s "${WORK}/big.bin" "${DATA}/e2e/big-copy.bin" &&
+    ok "server-side copy of 20 MiB (UploadPartCopy)" || fail "server-side copy"
+s3 s3 mv s3://e2e/big-copy.bin s3://e2e/big-moved.bin >/dev/null && [ ! -e "${DATA}/e2e/big-copy.bin" ] &&
+    cmp -s "${WORK}/big.bin" "${DATA}/e2e/big-moved.bin" && ok "server-side move of 20 MiB" || fail "server-side move"
 cmp -s "${WORK}/big.bin" "${WORK}/down.bin" && ok "download" || fail "download"
 
 mkdir -p "${WORK}/site/assets"

@@ -56,6 +56,7 @@ var (
 	ErrEntityTooSmall     = errors.New("part too small")
 	ErrMarkerNotEmpty     = errors.New("a key ending in / must have an empty body")
 	ErrEntityTooLarge     = errors.New("object larger than the maximum size")
+	ErrInvalidRange       = errors.New("range outside the source object")
 )
 
 // ObjectInfo describes an object.

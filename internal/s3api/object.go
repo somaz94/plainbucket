@@ -272,3 +272,12 @@ func partChecksums(item *partItem, sums map[string]string) {
 		}
 	}
 }
+
+// getObjectTagging reports an empty tag set: tags are not stored.
+func (h *Handler) getObjectTagging(req *request) error {
+	if _, err := h.store.HeadObject(req.bucket, req.key); err != nil {
+		return err
+	}
+	writeXML(req.w, http.StatusOK, tagging{NS: s3NS})
+	return nil
+}

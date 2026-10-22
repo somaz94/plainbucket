@@ -159,7 +159,9 @@ func (h *Handler) serve(req *request) error {
 		}
 	}
 	for k := range req.q {
-		if unsupported[k] {
+		// Tools copying an object read its tags first; an empty set lets them proceed.
+		readTags := k == "tagging" && req.key != "" && req.r.Method == http.MethodGet
+		if unsupported[k] && !readTags {
 			return s3err.NotImplemented()
 		}
 	}
@@ -222,6 +224,9 @@ func (h *Handler) objectOp(req *request) error {
 	}
 	switch req.r.Method {
 	case http.MethodGet, http.MethodHead:
+		if q.Has("tagging") {
+			return h.getObjectTagging(req)
+		}
 		if q.Has("uploadId") && req.r.Method == http.MethodGet {
 			return h.listParts(req)
 		}
@@ -269,6 +274,7 @@ var storageErrors = map[error]func() *s3err.Error{
 	storage.ErrInvalidPartOrder:   s3err.InvalidPartOrder,
 	storage.ErrEntityTooSmall:     s3err.EntityTooSmall,
 	storage.ErrEntityTooLarge:     s3err.EntityTooLarge,
+	storage.ErrInvalidRange:       s3err.InvalidRange,
 	storage.ErrMarkerNotEmpty: func() *s3err.Error {
 		return s3err.InvalidArgument("An object key ending in / is a directory and must have an empty body.")
 	},

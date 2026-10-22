@@ -27,13 +27,13 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 | Service | `ListBuckets` |
 | Bucket | `CreateBucket`, `HeadBucket`, `DeleteBucket` (must be empty), `GetBucketLocation`, `GetBucketVersioning` (always unversioned) |
 | Listing | `ListObjectsV2` and `ListObjects` with `prefix`, `delimiter`, `max-keys`, `start-after`, `continuation-token` / `marker`, `fetch-owner`, `encoding-type=url` |
-| Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive) |
-| Multipart | `CreateMultipartUpload`, `UploadPart`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` |
+| Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectTagging` (always an empty tag set) |
+| Multipart | `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy` (with `x-amz-copy-source-range`), `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` |
 
 Object details:
 
 - `GetObject` supports `Range`, `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since` and the `response-*` overrides presigned URLs use.
-- Writes accept `If-None-Match: *` (create only if absent, as the Terraform S3 backend lock uses) and `If-Match: <etag>`. `CopyObject` also accepts `x-amz-copy-source-if-match` and `-if-none-match`.
+- Writes accept `If-None-Match: *` (create only if absent, as the Terraform S3 backend lock uses) and `If-Match: <etag>`. `CopyObject` and `UploadPartCopy` also accept `x-amz-copy-source-if-match` and `-if-none-match`.
 - Stored with the object and returned on read: `Content-Type`, `x-amz-meta-*`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`.
 - `Content-MD5`, `x-amz-checksum-*` headers and trailing checksums are verified. Full-object checksums come back on `GetObject` / `HeadObject` with `x-amz-checksum-mode: ENABLED` when the whole object is read.
 - ETags follow S3: the MD5 of the object, or for a multipart upload the MD5 of the part MD5s followed by `-<parts>`.
@@ -42,7 +42,9 @@ Object details:
 
 ## Not Implemented
 
-These return `501 NotImplemented`: ACLs and policies, versioning other than reading its status, object lock and retention, tagging, lifecycle, replication, CORS and website configuration, encryption settings, `UploadPartCopy`, `GetObject` by part number, `SelectObjectContent`, and delimiters in `ListMultipartUploads`.
+These return `501 NotImplemented`: ACLs and policies, versioning other than reading its status, object lock and retention, storing tags, lifecycle, replication, CORS and website configuration, encryption settings, `GetObject` by part number, `SelectObjectContent`, and delimiters in `ListMultipartUploads`.
+
+Tags are not stored. `GetObjectTagging` answers with an empty set because the aws cli and other tools read the tags of an object before copying it, and fail on `501`; `PutObjectTagging` and `DeleteObjectTagging` stay unimplemented.
 
 Storage classes are not modeled; every object reports `STANDARD`.
 

@@ -120,6 +120,52 @@ func (s *Store) PutPart(bucket, key, id string, n int, body io.Reader, size int6
 	if err != nil {
 		return PartInfo{}, err
 	}
+	return s.placePart(bucket, key, id, dir, n, tmp, sum, size, checks)
+}
+
+// ByteRange is an inclusive byte range, as in x-amz-copy-source-range.
+type ByteRange struct{ Start, End int64 }
+
+// PutPartCopy stores part n of an upload from rng of srcBucket/srcKey, or the whole
+// object when rng is nil (UploadPartCopy). The copy stops when ctx is done.
+func (s *Store) PutPartCopy(ctx context.Context, srcBucket, srcKey string, rng *ByteRange, bucket, key, id string, n int, o CopyOptions) (PartInfo, error) {
+	if n < 1 || n > maxPartNumber {
+		return PartInfo{}, ErrInvalidPartNumber
+	}
+	if err := s.requireBucket(bucket); err != nil {
+		return PartInfo{}, err
+	}
+	_, dir, err := s.loadUpload(bucket, key, id)
+	if err != nil {
+		return PartInfo{}, err
+	}
+	f, src, err := s.GetObject(srcBucket, srcKey)
+	if err != nil {
+		return PartInfo{}, err
+	}
+	if f == nil {
+		return PartInfo{}, ErrNoSuchKey // a directory marker has no bytes to copy
+	}
+	defer func() { _ = f.Close() }()
+	if err := o.checkSource(src); err != nil {
+		return PartInfo{}, err
+	}
+	start, length := int64(0), src.Size
+	if rng != nil {
+		if rng.Start > rng.End || rng.End >= src.Size {
+			return PartInfo{}, ErrInvalidRange
+		}
+		start, length = rng.Start, rng.End-rng.Start+1
+	}
+	tmp, sum, _, err := s.receive(ctxReader{ctx, io.NewSectionReader(f, start, length)}, length, nil)
+	if err != nil {
+		return PartInfo{}, err
+	}
+	return s.placePart(bucket, key, id, dir, n, tmp, sum, length, nil)
+}
+
+// placePart moves the received part file tmp into the upload directory.
+func (s *Store) placePart(bucket, key, id, dir string, n int, tmp string, sum []byte, size int64, checks map[string]string) (PartInfo, error) {
 	defer func() { _ = os.Remove(tmp) }()
 	pm := partMeta{ETag: md5ETag(sum), Size: size, ModTime: s.now().UTC(), Checksums: checks}
 	raw, err := json.Marshal(pm)

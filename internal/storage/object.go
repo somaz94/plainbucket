@@ -243,6 +243,16 @@ type CopyOptions struct {
 	SrcIfNoneMatch  string
 }
 
+func (o CopyOptions) checkSource(src ObjectInfo) error {
+	if o.SrcIfMatch != "" && trimETag(o.SrcIfMatch) != trimETag(src.ETag) {
+		return ErrPreconditionFailed
+	}
+	if o.SrcIfNoneMatch != "" && (o.SrcIfNoneMatch == "*" || trimETag(o.SrcIfNoneMatch) == trimETag(src.ETag)) {
+		return ErrPreconditionFailed
+	}
+	return nil
+}
+
 // CopyObject copies srcBucket/srcKey to dstBucket/dstKey; the copy stops when ctx is done.
 func (s *Store) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, o CopyOptions) (ObjectInfo, error) {
 	f, src, err := s.GetObject(srcBucket, srcKey)
@@ -252,11 +262,8 @@ func (s *Store) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, ds
 	if f != nil {
 		defer func() { _ = f.Close() }()
 	}
-	if o.SrcIfMatch != "" && trimETag(o.SrcIfMatch) != trimETag(src.ETag) {
-		return ObjectInfo{}, ErrPreconditionFailed
-	}
-	if o.SrcIfNoneMatch != "" && (o.SrcIfNoneMatch == "*" || trimETag(o.SrcIfNoneMatch) == trimETag(src.ETag)) {
-		return ObjectInfo{}, ErrPreconditionFailed
+	if err := o.checkSource(src); err != nil {
+		return ObjectInfo{}, err
 	}
 	md := Metadata{ContentType: src.ContentType, UserMeta: src.UserMeta, Headers: src.Headers}
 	if o.ReplaceMetadata {

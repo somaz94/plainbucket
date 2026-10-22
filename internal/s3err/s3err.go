@@ -127,6 +127,10 @@ func PreconditionFailed() *Error {
 	return newErr(http.StatusPreconditionFailed, "PreconditionFailed", "At least one of the pre-conditions you specified did not hold.")
 }
 
+func InvalidRange() *Error {
+	return newErr(http.StatusRequestedRangeNotSatisfiable, "InvalidRange", "The requested range is not satisfiable.")
+}
+
 func NotImplemented() *Error {
 	return newErr(http.StatusNotImplemented, "NotImplemented", "A header or query you provided implies functionality that is not implemented.")
 }

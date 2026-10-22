@@ -174,7 +174,9 @@ func TestUnsupportedRequests(t *testing.T) {
 	x.mustDo(http.MethodPut, "/bkt/k", []byte("x"), nil, http.StatusOK)
 	for _, c := range []struct{ method, target string }{
 		{http.MethodGet, "/bkt?acl"},
-		{http.MethodGet, "/bkt/k?tagging"},
+		{http.MethodPut, "/bkt/k?tagging"},
+		{http.MethodDelete, "/bkt/k?tagging"},
+		{http.MethodGet, "/bkt?tagging"},
 		{http.MethodGet, "/bkt/k?versionId=abc"},
 		{http.MethodGet, "/bkt/k?partNumber=1"},
 		{http.MethodPut, "/bkt?versioning"},
@@ -186,7 +188,6 @@ func TestUnsupportedRequests(t *testing.T) {
 	x.mustDo(http.MethodGet, "/bkt/k?versionId=null", nil, nil, http.StatusOK)
 	x.expectErr(http.MethodGet, "/bkt?list-type=1", nil, nil, "InvalidArgument")
 	x.expectErr(http.MethodPut, "/bkt/k", []byte("x"), map[string]string{"If-None-Match": `"etag"`}, "NotImplemented")
-	x.expectErr(http.MethodPut, "/bkt/k?partNumber=1&uploadId=x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/k"}, "NotImplemented")
 }
 
 func TestPutGetHead(t *testing.T) {
@@ -608,5 +609,80 @@ func TestPartChecksums(t *testing.T) {
 	partChecksums(&p, map[string]string{"CRC32": "a", "CRC32C": "b", "CRC64NVME": "c", "SHA1": "d", "SHA256": "e"})
 	if p.ChecksumCRC32 != "a" || p.ChecksumCRC32C != "b" || p.ChecksumCRC64NVME != "c" || p.ChecksumSHA1 != "d" || p.ChecksumSHA256 != "e" {
 		t.Errorf("part = %+v", p)
+	}
+}
+
+func TestUploadPartCopyAPI(t *testing.T) {
+	x := newHarness(t, func(o *Options) {
+		o.Credentials = append(o.Credentials, Credential{AccessKey: "SCOPED", SecretKey: "scoped-secret", Buckets: []string{"bkt"}})
+	})
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/other", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/src", []byte("0123456789"), nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/other/src", []byte("secret"), nil, http.StatusOK)
+
+	var up struct{ UploadId string }
+	_ = xml.Unmarshal(x.mustDo(http.MethodPost, "/bkt/dst?uploads", nil, nil, http.StatusOK).Body.Bytes(), &up)
+	part := func(n int, rng string) *httptest.ResponseRecorder {
+		hdr := map[string]string{"X-Amz-Copy-Source": "/bkt/src"}
+		if rng != "" {
+			hdr["X-Amz-Copy-Source-Range"] = rng
+		}
+		return x.do(http.MethodPut, fmt.Sprintf("/bkt/dst?partNumber=%d&uploadId=%s", n, up.UploadId), nil, hdr)
+	}
+	var res struct {
+		XMLName xml.Name
+		ETag    string
+	}
+	rec := part(1, "bytes=0-4")
+	if err := xml.Unmarshal(rec.Body.Bytes(), &res); err != nil || res.XMLName.Local != "CopyPartResult" || res.ETag == "" {
+		t.Fatalf("copy part: %d %s", rec.Code, rec.Body.String())
+	}
+	e1 := res.ETag
+	_ = xml.Unmarshal(part(2, "bytes=5-9").Body.Bytes(), &res)
+	doc := `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>` + e1 + `</ETag></Part><Part><PartNumber>2</PartNumber><ETag>` + res.ETag + `</ETag></Part></CompleteMultipartUpload>`
+	x.mustDo(http.MethodPost, "/bkt/dst?uploadId="+up.UploadId, []byte(doc), nil, http.StatusOK)
+	if got := x.mustDo(http.MethodGet, "/bkt/dst", nil, nil, http.StatusOK).Body.String(); got != "0123456789" {
+		t.Errorf("assembled %q", got)
+	}
+
+	_ = xml.Unmarshal(x.mustDo(http.MethodPost, "/bkt/dst?uploads", nil, nil, http.StatusOK).Body.Bytes(), &up)
+	for rng, code := range map[string]string{"bytes=5-10": "InvalidRange", "bytes=5": "InvalidArgument", "0-4": "InvalidArgument", "bytes=4-1": "InvalidArgument"} {
+		if got := errCode(part(1, rng)); got != code {
+			t.Errorf("range %q: %s, want %s", rng, got, code)
+		}
+	}
+	x.expectErr(http.MethodPut, "/bkt/dst?partNumber=1&uploadId="+up.UploadId, nil, map[string]string{"X-Amz-Copy-Source": "/bkt/missing"}, "NoSuchKey")
+	x.as("SCOPED", "scoped-secret", func() {
+		x.expectErr(http.MethodPut, "/bkt/dst?partNumber=1&uploadId="+up.UploadId, nil, map[string]string{"X-Amz-Copy-Source": "/other/src"}, "AccessDenied")
+	})
+}
+
+func TestUploadPartCopySizeLimit(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.MaxObjectSize = 4 })
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/src", []byte("1234"), nil, http.StatusOK)
+	var up struct{ UploadId string }
+	_ = xml.Unmarshal(x.mustDo(http.MethodPost, "/bkt/dst?uploads", nil, nil, http.StatusOK).Body.Bytes(), &up)
+	target := "/bkt/dst?partNumber=1&uploadId=" + up.UploadId
+	x.mustDo(http.MethodPut, target, nil, map[string]string{"X-Amz-Copy-Source": "/bkt/src"}, http.StatusOK)
+	x.expectErr(http.MethodPut, target, nil, map[string]string{"X-Amz-Copy-Source": "/bkt/src", "X-Amz-Copy-Source-Range": "bytes=0-9"}, "EntityTooLarge")
+	x.mustDo(http.MethodPut, "/bkt/big", []byte("1234"), nil, http.StatusOK)
+	h := x.h
+	h.opts.MaxObjectSize = 3
+	x.expectErr(http.MethodPut, target, nil, map[string]string{"X-Amz-Copy-Source": "/bkt/big"}, "EntityTooLarge")
+}
+
+func TestGetObjectTagging(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.PublicBuckets = []string{"bkt"} })
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/k", []byte("x"), nil, http.StatusOK)
+	rec := x.mustDo(http.MethodGet, "/bkt/k?tagging", nil, nil, http.StatusOK)
+	if !strings.Contains(rec.Body.String(), "<TagSet></TagSet>") {
+		t.Errorf("tagging: %s", rec.Body.String())
+	}
+	x.expectErr(http.MethodGet, "/bkt/missing?tagging", nil, nil, "NoSuchKey")
+	if rec := x.anon(http.MethodGet, "/bkt/k?tagging"); rec.Code != http.StatusForbidden {
+		t.Errorf("anonymous tagging: %d", rec.Code)
 	}
 }

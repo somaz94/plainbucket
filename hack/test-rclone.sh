@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end check with rclone: copy (single and multipart), check by hash, sync with
-# deletion, server-side copy and move, directory markers and purge.
+# deletion, server-side copy and move (multipart too), directory markers and purge.
 #
 # Usage: hack/test-rclone.sh   (after `make build`; needs rclone)
 set -euo pipefail
@@ -45,6 +45,8 @@ rc sync "${SRC}" pb:rcb/tree && ok "sync"
 rc copyto pb:rcb/tree/b.txt pb:rcb/copied.txt && ok "server-side copy"
 rc moveto pb:rcb/copied.txt pb:rcb/moved.txt && ok "server-side move"
 [ "$(rc cat pb:rcb/moved.txt)" = "beta" ] && [ ! -e "${DATA}/rcb/copied.txt" ] && ok "cat after move" || fail "move result"
+rc copyto --s3-copy-cutoff 5M pb:rcb/tree/big.bin pb:rcb/big-copy.bin && cmp -s "${SRC}/big.bin" "${DATA}/rcb/big-copy.bin" &&
+    ok "server-side multipart copy (UploadPartCopy)" || fail "server-side multipart copy"
 
 rc mkdir --s3-directory-markers pb:rcb/empty && ok "directory marker"
 [ -d "${DATA}/rcb/empty" ] && ok "marker is a directory" || fail "marker on disk"

@@ -80,6 +80,19 @@ type listBucketResult struct {
 	CommonPrefixes        []commonPrefix `xml:"CommonPrefixes"`
 }
 
+type copyPartResult struct {
+	XMLName      xml.Name `xml:"CopyPartResult"`
+	NS           string   `xml:"xmlns,attr"`
+	LastModified string   `xml:"LastModified"`
+	ETag         string   `xml:"ETag"`
+}
+
+type tagging struct {
+	XMLName xml.Name `xml:"Tagging"`
+	NS      string   `xml:"xmlns,attr"`
+	TagSet  struct{} `xml:"TagSet"`
+}
+
 type copyObjectResult struct {
 	XMLName      xml.Name `xml:"CopyObjectResult"`
 	NS           string   `xml:"xmlns,attr"`

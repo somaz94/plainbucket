@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/storage"
@@ -24,12 +25,12 @@ func (h *Handler) createMultipartUpload(req *request) error {
 }
 
 func (h *Handler) uploadPart(req *request) error {
-	if req.r.Header.Get("X-Amz-Copy-Source") != "" {
-		return s3err.NotImplemented()
-	}
 	n, err := strconv.Atoi(req.q.Get("partNumber"))
 	if err != nil || !req.q.Has("uploadId") {
 		return s3err.InvalidArgument("UploadPart requires partNumber and uploadId.")
+	}
+	if req.r.Header.Get("X-Amz-Copy-Source") != "" {
+		return h.uploadPartCopy(req, n)
 	}
 	p, err := newPayload(req, h.opts.BodyTimeout, false)
 	if err != nil {
@@ -47,6 +48,62 @@ func (h *Handler) uploadPart(req *request) error {
 	setChecksumHeaders(req.w.Header(), part.Checksums)
 	req.w.WriteHeader(http.StatusOK)
 	return nil
+}
+
+func (h *Handler) uploadPartCopy(req *request, n int) error {
+	srcBucket, srcKey, err := parseCopySource(req.r.Header.Get("X-Amz-Copy-Source"))
+	if err != nil {
+		return err
+	}
+	if !req.mayRead(srcBucket) {
+		return s3err.AccessDenied("This access key may not access the source bucket.")
+	}
+	rng, err := parseCopyRange(req.r.Header.Get("X-Amz-Copy-Source-Range"))
+	if err != nil {
+		return err
+	}
+	if rng != nil {
+		if err := h.checkSize(rng.End - rng.Start + 1); err != nil {
+			return err
+		}
+	} else if h.opts.MaxObjectSize > 0 {
+		src, err := h.store.HeadObject(srcBucket, srcKey)
+		if err != nil {
+			return err
+		}
+		if err := h.checkSize(src.Size); err != nil {
+			return err
+		}
+	}
+	opts := storage.CopyOptions{
+		SrcIfMatch:     req.r.Header.Get("X-Amz-Copy-Source-If-Match"),
+		SrcIfNoneMatch: req.r.Header.Get("X-Amz-Copy-Source-If-None-Match"),
+	}
+	part, err := h.store.PutPartCopy(req.r.Context(), srcBucket, srcKey, rng, req.bucket, req.key, req.q.Get("uploadId"), n, opts)
+	if err != nil {
+		return err
+	}
+	writeXML(req.w, http.StatusOK, copyPartResult{NS: s3NS, LastModified: isoTime(part.ModTime), ETag: part.ETag})
+	return nil
+}
+
+// parseCopyRange parses x-amz-copy-source-range, which S3 accepts only as bytes=first-last.
+func parseCopyRange(v string) (*storage.ByteRange, error) {
+	if v == "" {
+		return nil, nil
+	}
+	bad := s3err.InvalidArgument("The x-amz-copy-source-range value must be of the form bytes=first-last where first and last are the zero-based offsets of the first and last bytes to copy")
+	spec, ok := strings.CutPrefix(v, "bytes=")
+	if !ok {
+		return nil, bad
+	}
+	a, b, ok := strings.Cut(spec, "-")
+	start, err1 := strconv.ParseInt(a, 10, 64)
+	end, err2 := strconv.ParseInt(b, 10, 64)
+	if !ok || err1 != nil || err2 != nil || start < 0 || end < start {
+		return nil, bad
+	}
+	return &storage.ByteRange{Start: start, End: end}, nil
 }
 
 func (h *Handler) completeMultipartUpload(req *request) error {

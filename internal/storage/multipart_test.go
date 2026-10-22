@@ -275,3 +275,67 @@ func TestMeasureUsage(t *testing.T) {
 		t.Error("a cancelled measurement replaced the last one")
 	}
 }
+
+func TestPutPartCopy(t *testing.T) {
+	s := newStore(t)
+	s.MinPartSize = 4
+	src := put(t, s, "src", "0123456789")
+	id, err := s.CreateUpload("bkt", "dst", Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	p1, err := s.PutPartCopy(ctx, "bkt", "src", &ByteRange{Start: 0, End: 5}, "bkt", "dst", id, 1, CopyOptions{SrcIfMatch: src.ETag})
+	if err != nil || p1.Size != 6 || p1.ETag != md5ETag(md5sum("012345")) {
+		t.Fatalf("part 1: %+v %v", p1, err)
+	}
+	p2, err := s.PutPartCopy(ctx, "bkt", "src", &ByteRange{Start: 6, End: 9}, "bkt", "dst", id, 2, CopyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := s.CompleteUpload(ctx, "bkt", "dst", id, []CompletePart{{Number: 1, ETag: p1.ETag}, {Number: 2, ETag: p2.ETag}}, Conditions{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(s.root, "bkt", "dst")); string(got) != "0123456789" || info.Size != 10 {
+		t.Errorf("assembled %q (%d)", got, info.Size)
+	}
+
+	whole, _ := s.CreateUpload("bkt", "whole", Metadata{})
+	if p, err := s.PutPartCopy(ctx, "bkt", "src", nil, "bkt", "whole", whole, 1, CopyOptions{}); err != nil || p.Size != 10 {
+		t.Errorf("whole object part: %+v %v", p, err)
+	}
+
+	id, _ = s.CreateUpload("bkt", "dst2", Metadata{})
+	for name, c := range map[string]struct {
+		rng  *ByteRange
+		o    CopyOptions
+		src  string
+		n    int
+		id   string
+		want error
+	}{
+		"past end":       {rng: &ByteRange{Start: 5, End: 10}, src: "src", n: 1, id: id, want: ErrInvalidRange},
+		"reversed":       {rng: &ByteRange{Start: 5, End: 4}, src: "src", n: 1, id: id, want: ErrInvalidRange},
+		"if-match":       {o: CopyOptions{SrcIfMatch: `"nope"`}, src: "src", n: 1, id: id, want: ErrPreconditionFailed},
+		"missing":        {src: "missing", n: 1, id: id, want: ErrNoSuchKey},
+		"bad number":     {src: "src", n: 0, id: id, want: ErrInvalidPartNumber},
+		"unknown upload": {src: "src", n: 1, id: strings.Repeat("0", 32), want: ErrNoSuchUpload},
+	} {
+		if _, err := s.PutPartCopy(ctx, "bkt", c.src, c.rng, "bkt", "dst2", c.id, c.n, c.o); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", name, err, c.want)
+		}
+	}
+	marker, _ := s.CreateUpload("bkt", "m", Metadata{})
+	if _, err := s.PutObject("bkt", "dir/", strings.NewReader(""), 0, PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutPartCopy(ctx, "bkt", "dir/", nil, "bkt", "m", marker, 1, CopyOptions{}); !errors.Is(err, ErrNoSuchKey) {
+		t.Errorf("marker source: %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := s.PutPartCopy(canceled, "bkt", "src", nil, "bkt", "m", marker, 1, CopyOptions{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled: %v", err)
+	}
+}
