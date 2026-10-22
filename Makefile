@@ -105,12 +105,20 @@ test-rclone: build ## Run the rclone end-to-end script against bin/plainbucket
 test-runner: build ## Run the GitLab Runner cache end-to-end script (downloads a pinned gitlab-runner)
 	@bash hack/test-gitlab-runner.sh
 
+.PHONY: test-s3tests
+test-s3tests: build ## Run the pinned ceph/s3-tests subset and compare with hack/s3tests-pass.txt
+	@bash hack/test-s3tests.sh
+
+.PHONY: s3tests-update
+s3tests-update: build ## Rewrite hack/s3tests-pass.txt from a ceph/s3-tests run
+	@S3TESTS_UPDATE=1 bash hack/test-s3tests.sh
+
 .PHONY: test-helm
 test-helm: ## Lint and template-test the Helm chart
 	@bash hack/test-helm.sh
 
 .PHONY: test-all
-test-all: test cover-check test-compat test-awscli test-rclone test-runner test-helm ## Run every test suite
+test-all: test cover-check test-compat test-awscli test-rclone test-runner test-s3tests test-helm ## Run every test suite
 
 .PHONY: cover
 cover: test ## Generate HTML coverage report

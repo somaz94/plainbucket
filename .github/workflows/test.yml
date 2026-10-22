@@ -4,15 +4,22 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '.github/workflows/**'
       - '**/*.md'
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
@@ -68,3 +75,49 @@ jobs:
 
       - name: GitLab Runner cache end-to-end
         run: make test-runner
+
+  s3-tests:
+    name: ceph/s3-tests subset
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Setup Python
+        id: python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      # The script pins the s3-tests commit and the frozen requirements; the cache only saves the setup.
+      - name: Cache s3-tests
+        uses: actions/cache@v6
+        with:
+          path: |
+            bin/s3-tests
+            bin/s3tests-venv
+          # A venv points at its interpreter, so a new Python patch or image must rebuild it.
+          key: s3tests-${{ env.ImageOS }}-${{ runner.arch }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('hack/test-s3tests.sh', 'hack/s3tests-requirements.txt') }}
+
+      - name: s3-tests
+        env:
+          S3TESTS_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: make test-s3tests
+
+      - name: Upload the JUnit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3tests-report
+          path: |
+            bin/s3tests.xml
+            bin/s3tests.log
+          if-no-files-found: ignore
+          retention-days: 7
