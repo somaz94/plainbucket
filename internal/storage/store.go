@@ -111,6 +111,7 @@ type Store struct {
 	uploadLocks [64]sync.Mutex // per multipart upload
 	bucketMu    sync.Mutex
 	buckets     map[string]*sync.RWMutex // writers hold RLock, bucket deletion holds Lock
+	hashes      flight
 
 	usage atomic.Pointer[Usage]
 }

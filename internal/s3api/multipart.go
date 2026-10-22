@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/somaz94/plainbucket/internal/s3err"
-	"github.com/somaz94/plainbucket/internal/sigv4"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
@@ -71,11 +70,7 @@ func (h *Handler) completeMultipartUpload(req *request) error {
 	if err != nil {
 		return err
 	}
-	loc := "http://" + req.r.Host + "/" + req.bucket + "/" + sigv4.URIEncodePath(req.key)
-	if req.r.TLS != nil {
-		loc = "https" + loc[4:]
-	}
-	writeXML(req.w, http.StatusOK, completeMultipartUploadResult{NS: s3NS, Location: loc, Bucket: req.bucket, Key: req.key, ETag: info.ETag})
+	writeXML(req.w, http.StatusOK, completeMultipartUploadResult{NS: s3NS, Location: req.url(req.key), Bucket: req.bucket, Key: req.key, ETag: info.ETag})
 	return nil
 }
 

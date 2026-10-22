@@ -9,11 +9,14 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/somaz94/plainbucket/internal/storage"
 )
 
 // EnvPrefix prefixes every environment variable.
@@ -21,10 +24,17 @@ const EnvPrefix = "PLAINBUCKET_"
 
 // Config holds the server configuration.
 type Config struct {
-	Root          string        `yaml:"root"`
-	Address       string        `yaml:"address"`
-	AccessKey     string        `yaml:"access-key"`
-	SecretKey     string        `yaml:"secret-key"`
+	Root      string `yaml:"root"`
+	Address   string `yaml:"address"`
+	AccessKey string `yaml:"access-key"`
+	SecretKey string `yaml:"secret-key"`
+	// Credentials are keys beyond AccessKey; CredentialsFile adds more from a YAML list,
+	// so a Kubernetes Secret can hold them without the rest of the configuration.
+	Credentials     []Credential `yaml:"credentials"`
+	CredentialsFile string       `yaml:"credentials-file"`
+	PublicBuckets   []string     `yaml:"public-buckets"`
+	// Domains enable virtual-hosted-style requests: Host <bucket>.<domain>.
+	Domains       []string      `yaml:"domains"`
 	Region        string        `yaml:"region"`
 	MaxObjectSize int64         `yaml:"max-object-size"`
 	UploadExpiry  time.Duration `yaml:"upload-expiry"`
@@ -35,6 +45,15 @@ type Config struct {
 	TLSCert       string        `yaml:"tls-cert"`
 	TLSKey        string        `yaml:"tls-key"`
 	TLSMinVers    string        `yaml:"tls-min-vers"`
+}
+
+// Credential is one access key. Buckets limits it to those buckets (empty = all) and
+// ReadOnly to GET and HEAD.
+type Credential struct {
+	AccessKey string   `yaml:"access-key"`
+	SecretKey string   `yaml:"secret-key"`
+	Buckets   []string `yaml:"buckets"`
+	ReadOnly  bool     `yaml:"read-only"`
 }
 
 // Default returns the default configuration.
@@ -60,13 +79,22 @@ func Load(configFile string) (*Config, error) {
 	if err := cfg.loadEnv(); err != nil {
 		return nil, fmt.Errorf("env: %w", err)
 	}
+	if cfg.CredentialsFile != "" {
+		var extra []Credential
+		if err := decodeYAML(cfg.CredentialsFile, &extra); err != nil {
+			return nil, fmt.Errorf("loading credentials file: %w", err)
+		}
+		cfg.Credentials = append(cfg.Credentials, extra...)
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
 	return cfg, nil
 }
 
-func (c *Config) loadYAML(path string) error {
+func (c *Config) loadYAML(path string) error { return decodeYAML(path, c) }
+
+func decodeYAML(path string, dst any) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -75,7 +103,7 @@ func (c *Config) loadYAML(path string) error {
 	dec := yaml.NewDecoder(f)
 	// A misspelled key would otherwise be dropped silently.
 	dec.KnownFields(true)
-	if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
+	if err := dec.Decode(dst); err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 	return nil
@@ -87,6 +115,9 @@ func (c *Config) loadEnv() error {
 	e.string("ADDRESS", &c.Address)
 	e.string("ACCESS_KEY", &c.AccessKey)
 	e.string("SECRET_KEY", &c.SecretKey)
+	e.string("CREDENTIALS_FILE", &c.CredentialsFile)
+	e.list("PUBLIC_BUCKETS", &c.PublicBuckets)
+	e.list("DOMAINS", &c.Domains)
 	e.string("REGION", &c.Region)
 	e.int64("MAX_OBJECT_SIZE", &c.MaxObjectSize)
 	e.duration("UPLOAD_EXPIRY", &c.UploadExpiry)
@@ -110,6 +141,21 @@ func (e *envBinder) string(key string, dst *string) {
 	if v, ok := os.LookupEnv(EnvPrefix + key); ok {
 		*dst = v
 	}
+}
+
+// list reads a comma-separated value, dropping empty items.
+func (e *envBinder) list(key string, dst *[]string) {
+	raw, ok := e.lookup(key)
+	if !ok {
+		return
+	}
+	var out []string
+	for v := range strings.SplitSeq(raw, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	*dst = out
 }
 
 func (e *envBinder) lookup(key string) (string, bool) {
@@ -169,8 +215,10 @@ func (c *Config) validate() error {
 		return errors.New("PLAINBUCKET_ROOT is required")
 	case c.Address == "":
 		return errors.New("PLAINBUCKET_ADDRESS is required")
-	case c.AccessKey == "" || c.SecretKey == "":
-		return errors.New("PLAINBUCKET_ACCESS_KEY and PLAINBUCKET_SECRET_KEY are required")
+	case (c.AccessKey == "") != (c.SecretKey == ""):
+		return errors.New("PLAINBUCKET_ACCESS_KEY and PLAINBUCKET_SECRET_KEY must be set together")
+	case len(c.AllCredentials()) == 0:
+		return errors.New("no access key: set PLAINBUCKET_ACCESS_KEY and PLAINBUCKET_SECRET_KEY, or credentials")
 	case c.Region == "":
 		return errors.New("PLAINBUCKET_REGION must not be empty")
 	case c.MaxObjectSize < 0:
@@ -182,6 +230,9 @@ func (c *Config) validate() error {
 	case (c.TLSCert == "") != (c.TLSKey == ""):
 		return errors.New("PLAINBUCKET_TLS_CERT and PLAINBUCKET_TLS_KEY must be set together")
 	}
+	if err := c.validateAccess(); err != nil {
+		return err
+	}
 	if _, ok := tlsVersions[normalizeTLS(c.TLSMinVers)]; c.TLSMinVers != "" && !ok {
 		return fmt.Errorf("invalid PLAINBUCKET_TLS_MIN_VERS %q: must be TLS12 or TLS13", c.TLSMinVers)
 	}
@@ -192,6 +243,54 @@ func (c *Config) validate() error {
 		return fmt.Errorf("PLAINBUCKET_LOG_FORMAT must be \"text\" or \"json\", got %q", c.LogFormat)
 	}
 	return nil
+}
+
+func (c *Config) validateAccess() error {
+	seen := map[string]bool{}
+	for i, cr := range c.AllCredentials() {
+		switch {
+		case cr.AccessKey == "" || cr.SecretKey == "":
+			return fmt.Errorf("credential %d: access-key and secret-key are required", i)
+		case seen[cr.AccessKey]:
+			return fmt.Errorf("access key %q is defined twice", cr.AccessKey)
+		}
+		seen[cr.AccessKey] = true
+		if err := checkBuckets("credential "+cr.AccessKey+" buckets", cr.Buckets); err != nil {
+			return err
+		}
+	}
+	if err := checkBuckets("PLAINBUCKET_PUBLIC_BUCKETS", c.PublicBuckets); err != nil {
+		return err
+	}
+	for i, d := range c.Domains {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if !domainRe.MatchString(d) {
+			return fmt.Errorf("PLAINBUCKET_DOMAINS: %q must be a host name without scheme or port, such as s3.example.com", c.Domains[i])
+		}
+		c.Domains[i] = d
+	}
+	return nil
+}
+
+var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+func checkBuckets(what string, names []string) error {
+	for _, b := range names {
+		if !storage.ValidBucketName(b) {
+			return fmt.Errorf("%s: %q is not a valid bucket name", what, b)
+		}
+	}
+	return nil
+}
+
+// AllCredentials returns every access key: AccessKey first, with full access, then
+// Credentials.
+func (c *Config) AllCredentials() []Credential {
+	var all []Credential
+	if c.AccessKey != "" {
+		all = append(all, Credential{AccessKey: c.AccessKey, SecretKey: c.SecretKey})
+	}
+	return append(all, c.Credentials...)
 }
 
 var tlsVersions = map[string]uint16{
@@ -219,6 +318,9 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("address", c.Address),
 		slog.Bool("access_key", c.AccessKey != ""),
 		slog.Bool("secret_key", c.SecretKey != ""),
+		slog.Int("access_keys", len(c.AllCredentials())),
+		slog.Any("public_buckets", c.PublicBuckets),
+		slog.Any("domains", c.Domains),
 		slog.String("region", c.Region),
 		slog.Int64("max_object_size", c.MaxObjectSize),
 		slog.Duration("upload_expiry", c.UploadExpiry),

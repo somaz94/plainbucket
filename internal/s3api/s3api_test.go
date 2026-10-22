@@ -45,7 +45,7 @@ func newHarness(t *testing.T, mutate func(*Options)) *harness {
 	store.MinPartSize = 5
 	logs := &bytes.Buffer{}
 	opts := Options{
-		Store: store, AccessKey: "AK", SecretKey: "SK", Region: "us-east-1",
+		Store: store, Credentials: []Credential{{AccessKey: "AK", SecretKey: "SK"}}, Region: "us-east-1",
 		Logger: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	}
 	if mutate != nil {

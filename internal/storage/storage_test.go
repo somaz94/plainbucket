@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"errors"
 	"io"
@@ -274,7 +275,7 @@ func TestCopyObject(t *testing.T) {
 	if err := s.CreateBucket("other"); err != nil {
 		t.Fatal(err)
 	}
-	cp, err := s.CopyObject("bkt", "src", "other", "dst", CopyOptions{})
+	cp, err := s.CopyObject(context.Background(), "bkt", "src", "other", "dst", CopyOptions{})
 	if err != nil || cp.ETag != src.ETag {
 		t.Fatalf("copy: %+v %v", cp, err)
 	}
@@ -285,7 +286,7 @@ func TestCopyObject(t *testing.T) {
 		t.Errorf("copied %q %+v", b, got)
 	}
 
-	if _, err := s.CopyObject("bkt", "src", "bkt", "src", CopyOptions{ReplaceMetadata: true, Metadata: Metadata{ContentType: "application/json"}}); err != nil {
+	if _, err := s.CopyObject(context.Background(), "bkt", "src", "bkt", "src", CopyOptions{ReplaceMetadata: true, Metadata: Metadata{ContentType: "application/json"}}); err != nil {
 		t.Fatal(err)
 	}
 	body, self := read(t, s, "src")
@@ -293,23 +294,23 @@ func TestCopyObject(t *testing.T) {
 		t.Errorf("self copy %q %+v", body, self)
 	}
 
-	if _, err := s.CopyObject("bkt", "src", "bkt", "x", CopyOptions{SrcIfMatch: `"nope"`}); !errors.Is(err, ErrPreconditionFailed) {
+	if _, err := s.CopyObject(context.Background(), "bkt", "src", "bkt", "x", CopyOptions{SrcIfMatch: `"nope"`}); !errors.Is(err, ErrPreconditionFailed) {
 		t.Errorf("src if-match: %v", err)
 	}
-	if _, err := s.CopyObject("bkt", "src", "bkt", "x", CopyOptions{SrcIfNoneMatch: src.ETag}); !errors.Is(err, ErrPreconditionFailed) {
+	if _, err := s.CopyObject(context.Background(), "bkt", "src", "bkt", "x", CopyOptions{SrcIfNoneMatch: src.ETag}); !errors.Is(err, ErrPreconditionFailed) {
 		t.Errorf("src if-none-match: %v", err)
 	}
-	if _, err := s.CopyObject("bkt", "missing", "bkt", "x", CopyOptions{}); !errors.Is(err, ErrNoSuchKey) {
+	if _, err := s.CopyObject(context.Background(), "bkt", "missing", "bkt", "x", CopyOptions{}); !errors.Is(err, ErrNoSuchKey) {
 		t.Errorf("missing source: %v", err)
 	}
-	if _, err := s.CopyObject("bkt", "src", "nope", "x", CopyOptions{}); !errors.Is(err, ErrNoSuchBucket) {
+	if _, err := s.CopyObject(context.Background(), "bkt", "src", "nope", "x", CopyOptions{}); !errors.Is(err, ErrNoSuchBucket) {
 		t.Errorf("missing destination bucket: %v", err)
 	}
-	if _, err := s.CopyObject("bkt", "src", "bkt", "x/", CopyOptions{}); !errors.Is(err, ErrMarkerNotEmpty) {
+	if _, err := s.CopyObject(context.Background(), "bkt", "src", "bkt", "x/", CopyOptions{}); !errors.Is(err, ErrMarkerNotEmpty) {
 		t.Errorf("copy onto marker: %v", err)
 	}
 	put(t, s, "m/", "")
-	if info, err := s.CopyObject("bkt", "m/", "bkt", "n/", CopyOptions{}); err != nil || !info.IsDir {
+	if info, err := s.CopyObject(context.Background(), "bkt", "m/", "bkt", "n/", CopyOptions{}); err != nil || !info.IsDir {
 		t.Errorf("copy marker: %+v %v", info, err)
 	}
 }

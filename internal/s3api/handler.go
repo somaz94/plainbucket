@@ -2,11 +2,12 @@
 package s3api
 
 import (
+	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,9 +21,13 @@ import (
 
 // Options configure a Handler.
 type Options struct {
-	Store         *storage.Store
-	AccessKey     string
-	SecretKey     string
+	Store       *storage.Store
+	Credentials []Credential
+	// PublicBuckets may be read anonymously, object by object; listing still needs a key.
+	PublicBuckets []string
+	// Domains enable virtual-hosted-style requests: Host <bucket>.<domain> names the
+	// bucket and the whole path is the key. Others stay path-style.
+	Domains       []string
 	Region        string
 	MaxObjectSize int64        // 0 = unlimited
 	Logger        *slog.Logger // nil = slog.Default()
@@ -40,6 +45,8 @@ type Handler struct {
 	log     *slog.Logger
 	now     func() time.Time
 	metrics *metrics
+	creds   map[string]*Credential
+	public  map[string]bool
 }
 
 // New returns a Handler.
@@ -48,15 +55,25 @@ func New(opts Options) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics()}
+	h := &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics(),
+		creds: map[string]*Credential{}, public: map[string]bool{}}
+	for i := range opts.Credentials {
+		h.creds[opts.Credentials[i].AccessKey] = &opts.Credentials[i]
+	}
+	for _, b := range opts.PublicBuckets {
+		h.public[b] = true
+	}
+	return h
 }
 
-// request is one authenticated API call.
+// request is one API call. auth and cred are nil for an anonymous one.
 type request struct {
 	w      http.ResponseWriter
 	r      *http.Request
 	id     string
 	auth   *sigv4.Auth
+	cred   *Credential
+	vhost  bool // the bucket came from the Host header
 	bucket string
 	key    string
 	q      url.Values
@@ -74,20 +91,15 @@ var unsupported = map[string]bool{
 	"versions": true, "website": true,
 }
 
-func (h *Handler) credentials(accessKey string) (string, bool) {
-	if subtle.ConstantTimeCompare([]byte(accessKey), []byte(h.opts.AccessKey)) != 1 {
-		return "", false
-	}
-	return h.opts.SecretKey, true
-}
-
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := requestID()
 	w.Header().Set("X-Amz-Request-Id", id)
 	w.Header().Set("Server", "plainbucket")
 	// An S3 request to a bucket named healthz or metrics is signed, so it never lands here.
-	if r.URL.RawQuery == "" && r.Header.Get("Authorization") == "" && r.Method == http.MethodGet {
+	// On a virtual host these paths are object keys (a public bucket serves them unsigned).
+	vbucket, vhost := h.vhostBucket(r.Host)
+	if !vhost && r.URL.RawQuery == "" && r.Header.Get("Authorization") == "" && r.Method == http.MethodGet {
 		switch {
 		case r.URL.Path == "/healthz":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -101,7 +113,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rec := httpx.NewRecorder(w)
 	start := time.Now()
-	req := &request{w: rec, r: r, id: id}
+	req := &request{w: rec, r: r, id: id, vhost: vhost, bucket: vbucket}
 	if err := h.serve(req); err != nil {
 		h.fail(req, err)
 	}
@@ -126,13 +138,26 @@ func requestID() string {
 }
 
 func (h *Handler) serve(req *request) error {
-	auth, e := sigv4.Verify(req.r, h.credentials, h.now())
-	if e != nil {
-		return e
+	if req.vhost {
+		req.key = strings.TrimPrefix(req.r.URL.Path, "/")
+	} else {
+		req.bucket, req.key, _ = strings.Cut(strings.TrimPrefix(req.r.URL.Path, "/"), "/")
 	}
-	req.auth = auth
-	req.bucket, req.key, _ = strings.Cut(strings.TrimPrefix(req.r.URL.Path, "/"), "/")
 	req.q = req.r.URL.Query()
+	if anonymous(req.r, req.q) {
+		if err := h.authorizeAnonymous(req); err != nil {
+			return err
+		}
+	} else {
+		auth, e := sigv4.Verify(req.r, h.credentials, h.now())
+		if e != nil {
+			return e
+		}
+		req.auth, req.cred = auth, h.creds[auth.AccessKey]
+		if err := req.authorize(); err != nil {
+			return err
+		}
+	}
 	for k := range req.q {
 		if unsupported[k] {
 			return s3err.NotImplemented()
@@ -267,6 +292,10 @@ func toS3(err error) *s3err.Error {
 }
 
 func (h *Handler) fail(req *request, err error) {
+	if errors.Is(err, context.Canceled) && req.r.Context().Err() != nil {
+		h.log.Debug("request canceled by the client", "method", req.r.Method, "path", req.r.URL.Path, "request_id", req.id)
+		return
+	}
 	e := toS3(err)
 	if e == nil {
 		h.log.Error("request failed", "method", req.r.Method, "path", req.r.URL.Path, "request_id", req.id, "err", err)
@@ -276,4 +305,43 @@ func (h *Handler) fail(req *request, err error) {
 		h.log.Debug("request denied", "method", req.r.Method, "path", req.r.URL.Path, "code", e.Code, "reason", e.Message)
 	}
 	e.Write(req.w, req.r, req.id)
+}
+
+// vhostBucket returns the bucket a virtual-hosted-style Host names. The longest matching
+// domain wins, so s3.example.com and example.com can both be configured.
+func (h *Handler) vhostBucket(host string) (string, bool) {
+	if len(h.opts.Domains) == 0 {
+		return "", false
+	}
+	if hp, _, err := net.SplitHostPort(host); err == nil {
+		host = hp
+	}
+	host = strings.ToLower(host)
+	best := ""
+	for _, d := range h.opts.Domains {
+		if host == d {
+			return "", false // the endpoint itself is path-style
+		}
+		if len(d) > len(best) && strings.HasSuffix(host, "."+d) {
+			best = d
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	b := strings.TrimSuffix(host, "."+best)
+	return b, storage.ValidBucketName(b)
+}
+
+// url returns the absolute URL of key in the request's bucket, addressed as the request was.
+func (req *request) url(key string) string {
+	scheme := "http"
+	if req.r.TLS != nil {
+		scheme = "https"
+	}
+	path := "/" + req.bucket + "/" + sigv4.URIEncodePath(key)
+	if req.vhost {
+		path = "/" + sigv4.URIEncodePath(key)
+	}
+	return scheme + "://" + req.r.Host + path
 }

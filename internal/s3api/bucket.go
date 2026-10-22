@@ -20,6 +20,9 @@ func (h *Handler) listBuckets(req *request) error {
 	}
 	res := listAllMyBucketsResult{NS: s3NS, Owner: serverOwner, Buckets: []bucketItem{}}
 	for _, b := range bs {
+		if !req.mayRead(b.Name) {
+			continue
+		}
 		res.Buckets = append(res.Buckets, bucketItem{Name: b.Name, CreationDate: isoTime(b.Created)})
 	}
 	writeXML(req.w, http.StatusOK, res)
@@ -40,7 +43,11 @@ func (h *Handler) createBucket(req *request) error {
 	if err := h.store.CreateBucket(req.bucket); err != nil {
 		return err
 	}
-	req.w.Header().Set("Location", "/"+req.bucket)
+	loc := "/" + req.bucket
+	if req.vhost {
+		loc = req.url("")
+	}
+	req.w.Header().Set("Location", loc)
 	req.w.WriteHeader(http.StatusOK)
 	return nil
 }

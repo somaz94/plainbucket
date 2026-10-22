@@ -72,8 +72,9 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 	srv := &http.Server{
 		Handler: s3api.New(s3api.Options{
 			Store:         store,
-			AccessKey:     cfg.AccessKey,
-			SecretKey:     cfg.SecretKey,
+			Credentials:   credentials(cfg),
+			PublicBuckets: cfg.PublicBuckets,
+			Domains:       cfg.Domains,
 			Region:        cfg.Region,
 			MaxObjectSize: cfg.MaxObjectSize,
 			Logger:        logger,
@@ -117,4 +118,12 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		logger.Info("server stopped")
 		return nil
 	}
+}
+
+func credentials(cfg *config.Config) []s3api.Credential {
+	var out []s3api.Credential
+	for _, c := range cfg.AllCredentials() {
+		out = append(out, s3api.Credential{AccessKey: c.AccessKey, SecretKey: c.SecretKey, Buckets: c.Buckets, ReadOnly: c.ReadOnly})
+	}
+	return out
 }

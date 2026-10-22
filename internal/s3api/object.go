@@ -197,6 +197,9 @@ func (h *Handler) copyObject(req *request) error {
 	if err != nil {
 		return err
 	}
+	if !req.mayRead(srcBucket) {
+		return s3err.AccessDenied("This access key may not access the source bucket.")
+	}
 	opts := storage.CopyOptions{
 		SrcIfMatch:     req.r.Header.Get("X-Amz-Copy-Source-If-Match"),
 		SrcIfNoneMatch: req.r.Header.Get("X-Amz-Copy-Source-If-None-Match"),
@@ -224,7 +227,7 @@ func (h *Handler) copyObject(req *request) error {
 			return err
 		}
 	}
-	info, err := h.store.CopyObject(srcBucket, srcKey, req.bucket, req.key, opts)
+	info, err := h.store.CopyObject(req.r.Context(), srcBucket, srcKey, req.bucket, req.key, opts)
 	if err != nil {
 		return err
 	}

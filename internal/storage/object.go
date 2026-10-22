@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/md5" //nolint:gosec // S3 ETag format
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -144,17 +146,29 @@ func (s *Store) HeadObject(bucket, key string) (ObjectInfo, error) {
 	return info, err
 }
 
+// hashFile is replaced in tests to count how often a file is hashed.
+var hashFile = func(r io.Reader) ([]byte, error) {
+	h := md5.New() //nolint:gosec // S3 ETag format
+	if _, err := io.Copy(h, r); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
+}
+
 // refresh rebuilds the sidecar of a file written outside the server: it computes the MD5
 // and keeps the old metadata, or guesses the content type from the extension.
 func (s *Store) refresh(bucket, key string, f *os.File, fi os.FileInfo, old sidecar, persist bool) (sidecar, error) {
-	h := md5.New() //nolint:gosec // S3 ETag format
-	if _, err := io.Copy(h, f); err != nil {
+	// Concurrent readers of the same unchanged file share one hash: a HEAD storm on a
+	// large file copied in from outside would otherwise read it once per request.
+	id := bucket + "/" + key + "\x00" + strconv.FormatInt(fi.Size(), 10) + "\x00" + strconv.FormatInt(fi.ModTime().UnixNano(), 10)
+	sum, err := s.hashes.do(id, func() ([]byte, error) { return hashFile(f) })
+	if err != nil {
 		return sidecar{}, err
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return sidecar{}, err
 	}
-	m := sidecar{Key: key, ETag: md5ETag(h.Sum(nil)), Size: fi.Size(), MtimeNs: fi.ModTime().UnixNano(), Metadata: old.Metadata}
+	m := sidecar{Key: key, ETag: md5ETag(sum), Size: fi.Size(), MtimeNs: fi.ModTime().UnixNano(), Metadata: old.Metadata}
 	if m.ContentType == "" {
 		m.ContentType = mime.TypeByExtension(filepath.Ext(key))
 	}
@@ -229,8 +243,8 @@ type CopyOptions struct {
 	SrcIfNoneMatch  string
 }
 
-// CopyObject copies srcBucket/srcKey to dstBucket/dstKey.
-func (s *Store) CopyObject(srcBucket, srcKey, dstBucket, dstKey string, o CopyOptions) (ObjectInfo, error) {
+// CopyObject copies srcBucket/srcKey to dstBucket/dstKey; the copy stops when ctx is done.
+func (s *Store) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, o CopyOptions) (ObjectInfo, error) {
 	f, src, err := s.GetObject(srcBucket, srcKey)
 	if err != nil {
 		return ObjectInfo{}, err
@@ -260,7 +274,7 @@ func (s *Store) CopyObject(srcBucket, srcKey, dstBucket, dstKey string, o CopyOp
 	if isDirKey(dstKey) {
 		return ObjectInfo{}, ErrMarkerNotEmpty
 	}
-	tmp, sum, _, err := s.receive(f, src.Size, nil)
+	tmp, sum, _, err := s.receive(ctxReader{ctx, f}, src.Size, nil)
 	if err != nil {
 		return ObjectInfo{}, err
 	}

@@ -90,6 +90,11 @@ func TestInvalid(t *testing.T) {
 		"bad bool":      {"PLAINBUCKET_DEBUG": "maybe"},
 		"bad duration":  {"PLAINBUCKET_UPLOAD_EXPIRY": "7d"},
 		"bad size":      {"PLAINBUCKET_MAX_OBJECT_SIZE": "10Gi"},
+		"half key":      {"PLAINBUCKET_SECRET_KEY": ""},
+		"public bucket": {"PLAINBUCKET_PUBLIC_BUCKETS": "ok-bucket,Bad_Name"},
+		"creds missing": {"PLAINBUCKET_CREDENTIALS_FILE": "/nonexistent/creds.yaml"},
+		"domain port":   {"PLAINBUCKET_DOMAINS": "s3.example.com:9000"},
+		"domain scheme": {"PLAINBUCKET_DOMAINS": "https://s3.example.com"},
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -125,5 +130,58 @@ func TestLogValueHidesSecrets(t *testing.T) {
 	}
 	if cfg.TLSMinVersion() != tls.VersionTLS12 {
 		t.Error("default TLS version")
+	}
+}
+
+func TestCredentialsAndPublicBuckets(t *testing.T) {
+	setRequired(t)
+	dir := t.TempDir()
+	creds := filepath.Join(dir, "creds.yaml")
+	_ = os.WriteFile(creds, []byte("- access-key: runner\n  secret-key: runner-secret\n  buckets: [runner-cache]\n- access-key: reader\n  secret-key: reader-secret\n  read-only: true\n"), 0o600)
+	cfgFile := filepath.Join(dir, "c.yaml")
+	_ = os.WriteFile(cfgFile, []byte("credentials:\n  - access-key: yaml\n    secret-key: yaml-secret\n"), 0o600)
+	t.Setenv("PLAINBUCKET_CREDENTIALS_FILE", creds)
+	t.Setenv("PLAINBUCKET_PUBLIC_BUCKETS", " site, ,assets ")
+	t.Setenv("PLAINBUCKET_DOMAINS", "S3.Example.com,localhost")
+	cfg, err := Load(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := cfg.AllCredentials()
+	var keys []string
+	for _, c := range all {
+		keys = append(keys, c.AccessKey)
+	}
+	if strings.Join(keys, ",") != "ak,yaml,runner,reader" || all[2].Buckets[0] != "runner-cache" || !all[3].ReadOnly || all[0].ReadOnly {
+		t.Errorf("credentials = %+v", all)
+	}
+	if strings.Join(cfg.Domains, ",") != "s3.example.com,localhost" {
+		t.Errorf("domains = %q", cfg.Domains)
+	}
+	if strings.Join(cfg.PublicBuckets, ",") != "site,assets" {
+		t.Errorf("public buckets = %q", cfg.PublicBuckets)
+	}
+
+	// Keys from the file alone are enough.
+	t.Setenv("PLAINBUCKET_ACCESS_KEY", "")
+	t.Setenv("PLAINBUCKET_SECRET_KEY", "")
+	if _, err := Load(""); err != nil {
+		t.Errorf("file-only keys: %v", err)
+	}
+
+	for name, body := range map[string]string{
+		"duplicate":  "- {access-key: runner, secret-key: a}\n- {access-key: runner, secret-key: b}\n",
+		"no secret":  "- {access-key: runner}\n",
+		"bad bucket": "- {access-key: runner, secret-key: a, buckets: [UPPER]}\n",
+		"unknown":    "- {access-key: runner, secret-key: a, bucket: [x]}\n",
+	} {
+		_ = os.WriteFile(creds, []byte(body), 0o600)
+		if _, err := Load(""); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	_ = os.WriteFile(creds, nil, 0o600)
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "no access key") {
+		t.Errorf("no keys at all: %v", err)
 	}
 }

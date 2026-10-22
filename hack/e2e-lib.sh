@@ -20,7 +20,7 @@ cleanup() {
         kill "${SERVER_PID}" 2>/dev/null || true
         wait "${SERVER_PID}" 2>/dev/null || true
     fi
-    rm -rf "${WORK}"
+    rm -rf "${WORK:?}"
 }
 trap cleanup EXIT
 

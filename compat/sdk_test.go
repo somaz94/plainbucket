@@ -37,23 +37,33 @@ const (
 
 type env struct {
 	root   string
+	url    string
+	addr   string // listener address, for clients that dial a virtual host
+	tls    bool
 	client *s3.Client
 	http   *http.Client
 }
 
 // setup starts plainbucket over plain HTTP or TLS: the SDK picks a different payload
 // signing mode for each (signed payload over HTTP, aws-chunked with trailers over TLS).
-func setup(t *testing.T, useTLS bool) *env {
+func setup(t *testing.T, useTLS bool) *env { return setupWith(t, useTLS, nil) }
+
+// setupWith is setup with server options changed by mutate.
+func setupWith(t *testing.T, useTLS bool, mutate func(*s3api.Options)) *env {
 	t.Helper()
 	root := t.TempDir()
 	store, err := storage.New(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := s3api.New(s3api.Options{
-		Store: store, AccessKey: accessKey, SecretKey: secretKey, Region: "us-east-1",
+	opts := s3api.Options{
+		Store: store, Credentials: []s3api.Credential{{AccessKey: accessKey, SecretKey: secretKey}}, Region: "us-east-1",
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
+	}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	h := s3api.New(opts)
 	srv := httptest.NewUnstartedServer(h)
 	if useTLS {
 		srv.StartTLS()
@@ -71,7 +81,7 @@ func setup(t *testing.T, useTLS bool) *env {
 		o.BaseEndpoint = aws.String(srv.URL)
 		o.UsePathStyle = true
 	})
-	return &env{root: root, client: client, http: srv.Client()}
+	return &env{root: root, url: srv.URL, addr: srv.Listener.Addr().String(), tls: useTLS, client: client, http: srv.Client()}
 }
 
 func forEachTransport(t *testing.T, fn func(t *testing.T, e *env)) {
@@ -517,6 +527,66 @@ func TestAuthFailures(t *testing.T) {
 	})
 	if _, err := unknown.ListBuckets(ctx, &s3.ListBucketsInput{}); apiCode(err) != "InvalidAccessKeyId" {
 		t.Errorf("unknown key: %v", err)
+	}
+}
+
+func (e *env) as(ak, sk string) *s3.Client {
+	return s3.New(e.client.Options(), func(o *s3.Options) {
+		o.Credentials = credentials.NewStaticCredentialsProvider(ak, sk, "")
+	})
+}
+
+func TestScopedKeysAndPublicRead(t *testing.T) {
+	e := setupWith(t, false, func(o *s3api.Options) {
+		o.Credentials = append(o.Credentials,
+			s3api.Credential{AccessKey: "scoped", SecretKey: "scoped-secret/+=", Buckets: []string{"site"}},
+			s3api.Credential{AccessKey: "reader", SecretKey: "reader-secret", ReadOnly: true})
+		o.PublicBuckets = []string{"site"}
+	})
+	ctx := context.Background()
+	mustCreateBucket(t, e, "site")
+	mustCreateBucket(t, e, "private")
+
+	scoped := e.as("scoped", "scoped-secret/+=")
+	if _, err := scoped.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String("site"), Key: aws.String("index.html"),
+		Body: strings.NewReader("<h1>hi</h1>"), ContentType: aws.String("text/html")}); err != nil {
+		t.Fatalf("scoped put: %v", err)
+	}
+	if _, err := scoped.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String("private"), Key: aws.String("x"), Body: strings.NewReader("x")}); apiCode(err) != "AccessDenied" {
+		t.Errorf("scoped put outside its bucket: %v", err)
+	}
+	out, err := scoped.ListBuckets(ctx, &s3.ListBucketsInput{})
+	if err != nil || len(out.Buckets) != 1 || aws.ToString(out.Buckets[0].Name) != "site" {
+		t.Errorf("scoped ListBuckets: %+v %v", out, err)
+	}
+
+	reader := e.as("reader", "reader-secret")
+	if _, err := reader.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String("site"), Key: aws.String("index.html")}); err != nil {
+		t.Errorf("read-only get: %v", err)
+	}
+	if _, err := reader.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String("site"), Key: aws.String("index.html")}); apiCode(err) != "AccessDenied" {
+		t.Errorf("read-only delete: %v", err)
+	}
+
+	// A browser fetches the public bucket with no credentials at all.
+	resp, err := e.http.Get(e.url + "/site/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "<h1>hi</h1>" || resp.Header.Get("Content-Type") != "text/html" {
+		t.Errorf("anonymous GET: %d %q %v", resp.StatusCode, body, resp.Header)
+	}
+	for _, u := range []string{"/site", "/private/x", "/"} {
+		resp, err := e.http.Get(e.url + u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("anonymous GET %s = %d, want 403", u, resp.StatusCode)
+		}
 	}
 }
 

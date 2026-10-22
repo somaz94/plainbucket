@@ -46,6 +46,7 @@ S3 keys are arbitrary strings; file paths are not. The following differ from S3:
 - **A key cannot also be a prefix.** With object `a` stored as a file, `a/b` would need `a` to be a directory, and the reverse. The later write fails with `409 KeyConflict`.
 - **Keys must be valid relative paths.** Empty segments (`a//b`), `.` and `..` segments and NUL bytes are rejected with `400 InvalidArgument`. A segment longer than 255 bytes, or a key longer than 1024 bytes, is rejected with `400 KeyTooLongError`.
 - **Case-insensitive filesystems fold keys.** On such a filesystem, macOS's default included, `Photo.jpg` and `photo.jpg` are one file. The server logs a warning at startup when it detects this.
+- **Unicode normalization follows the filesystem.** Keys are stored byte for byte. On a normalization-insensitive filesystem (APFS), the NFC and NFD spellings of `café` name one file; on ext4 and XFS they are two objects. A listing returns the name as stored on disk, which on HFS+ is the NFD form even for a key written in NFC.
 - **Empty prefixes disappear.** Deleting the last object under `a/b/` removes the empty directories `a/b` and `a`, stopping at a directory created as an explicit marker.
 
 <br/>
