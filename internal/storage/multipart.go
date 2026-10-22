@@ -1,0 +1,321 @@
+package storage
+
+import (
+	"context"
+	"crypto/md5" //nolint:gosec // S3 ETag format
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	maxPartNumber  = 10000
+	uploadMetaFile = "upload.json"
+)
+
+var (
+	uploadIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+	ErrInvalidPartNumber = errors.New("part number must be between 1 and 10000")
+)
+
+type uploadMeta struct {
+	Bucket    string    `json:"bucket"`
+	Key       string    `json:"key"`
+	Initiated time.Time `json:"initiated"`
+	Metadata
+}
+
+type partMeta struct {
+	ETag      string            `json:"etag"`
+	Size      int64             `json:"size"`
+	ModTime   time.Time         `json:"mod_time"`
+	Checksums map[string]string `json:"checksums,omitempty"`
+}
+
+// PartInfo describes an uploaded part.
+type PartInfo struct {
+	Number    int
+	ETag      string
+	Size      int64
+	ModTime   time.Time
+	Checksums map[string]string
+}
+
+// UploadInfo describes an in-progress multipart upload.
+type UploadInfo struct {
+	Key       string
+	UploadID  string
+	Initiated time.Time
+}
+
+// CompletePart names a part in a CompleteMultipartUpload request.
+type CompletePart struct {
+	Number int
+	ETag   string
+}
+
+func partFile(n int) string { return fmt.Sprintf("part-%05d", n) }
+
+// CreateUpload starts a multipart upload and returns its ID.
+func (s *Store) CreateUpload(bucket, key string, md Metadata) (string, error) {
+	if err := s.requireBucket(bucket); err != nil {
+		return "", err
+	}
+	if err := checkKey(key); err != nil {
+		return "", err
+	}
+	if isDirKey(key) {
+		return "", ErrMarkerNotEmpty
+	}
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	id := hex.EncodeToString(b[:])
+	raw, err := json.Marshal(uploadMeta{Bucket: bucket, Key: key, Initiated: s.now().UTC(), Metadata: md})
+	if err != nil {
+		return "", err
+	}
+	if err := s.writeFileAtomic(filepath.Join(s.sys("uploads", id), uploadMetaFile), raw); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (s *Store) loadUpload(bucket, key, id string) (uploadMeta, string, error) {
+	var u uploadMeta
+	if !uploadIDRe.MatchString(id) {
+		return u, "", ErrNoSuchUpload
+	}
+	dir := s.sys("uploads", id)
+	raw, err := os.ReadFile(filepath.Join(dir, uploadMetaFile))
+	if err != nil || json.Unmarshal(raw, &u) != nil || u.Bucket != bucket || u.Key != key {
+		return u, "", ErrNoSuchUpload
+	}
+	return u, dir, nil
+}
+
+// PutPart stores part n of an upload, replacing an earlier upload of the same part.
+func (s *Store) PutPart(bucket, key, id string, n int, body io.Reader, size int64, verify Verifier) (PartInfo, error) {
+	if n < 1 || n > maxPartNumber {
+		return PartInfo{}, ErrInvalidPartNumber
+	}
+	if err := s.requireBucket(bucket); err != nil {
+		return PartInfo{}, err
+	}
+	_, dir, err := s.loadUpload(bucket, key, id)
+	if err != nil {
+		return PartInfo{}, err
+	}
+	tmp, sum, checks, err := s.receive(body, size, verify)
+	if err != nil {
+		return PartInfo{}, err
+	}
+	defer func() { _ = os.Remove(tmp) }()
+	pm := partMeta{ETag: md5ETag(sum), Size: size, ModTime: s.now().UTC(), Checksums: checks}
+	raw, err := json.Marshal(pm)
+	if err != nil {
+		return PartInfo{}, err
+	}
+	// The data and its metadata land under the upload lock, so a retried part racing the
+	// original cannot leave one attempt's ETag describing the other's bytes.
+	unlock := s.lockUpload(id)
+	defer unlock()
+	if _, _, err := s.loadUpload(bucket, key, id); err != nil {
+		return PartInfo{}, err
+	}
+	if err := s.place(tmp, filepath.Join(dir, partFile(n)), sysDirPerm); err != nil {
+		return PartInfo{}, err
+	}
+	if err := s.writeFileAtomic(filepath.Join(dir, partFile(n)+".json"), raw); err != nil {
+		return PartInfo{}, err
+	}
+	return PartInfo{Number: n, ETag: pm.ETag, Size: size, ModTime: pm.ModTime, Checksums: checks}, nil
+}
+
+func readPart(dir string, n int) (partMeta, error) {
+	var pm partMeta
+	raw, err := os.ReadFile(filepath.Join(dir, partFile(n)+".json"))
+	if err != nil || json.Unmarshal(raw, &pm) != nil {
+		return pm, ErrInvalidPart
+	}
+	fi, err := os.Stat(filepath.Join(dir, partFile(n)))
+	if err != nil || fi.Size() != pm.Size {
+		return pm, ErrInvalidPart
+	}
+	return pm, nil
+}
+
+// CompleteUpload assembles the listed parts into the object. The ETag is the MD5 of the
+// concatenated part MD5s followed by -<part count>, as S3 computes it. maxSize (0 = no
+// limit) is checked before anything is written, so an oversized upload never replaces
+// the existing object.
+func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, parts []CompletePart, cond Conditions, maxSize int64) (ObjectInfo, error) {
+	unlock := s.lockUpload(id)
+	defer unlock()
+	u, dir, err := s.loadUpload(bucket, key, id)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if len(parts) == 0 {
+		return ObjectInfo{}, ErrInvalidPart
+	}
+	for i := 1; i < len(parts); i++ {
+		if parts[i].Number <= parts[i-1].Number {
+			return ObjectInfo{}, ErrInvalidPartOrder
+		}
+	}
+	metas := make([]partMeta, len(parts))
+	for i, p := range parts {
+		pm, err := readPart(dir, p.Number)
+		if err != nil || trimETag(p.ETag) != trimETag(pm.ETag) {
+			return ObjectInfo{}, ErrInvalidPart
+		}
+		if i < len(parts)-1 && pm.Size < s.MinPartSize {
+			return ObjectInfo{}, ErrEntityTooSmall
+		}
+		metas[i] = pm
+	}
+	var total int64
+	for _, pm := range metas {
+		total += pm.Size
+	}
+	if maxSize > 0 && total > maxSize {
+		return ObjectInfo{}, ErrEntityTooLarge
+	}
+
+	tmp, err := os.CreateTemp(s.sys("tmp"), "complete-*")
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	etagSum := md5.New() //nolint:gosec // S3 ETag format
+	for i, p := range parts {
+		if err = ctx.Err(); err != nil {
+			break
+		}
+		raw, _ := hex.DecodeString(trimETag(metas[i].ETag))
+		etagSum.Write(raw)
+		if err = appendFile(tmp, filepath.Join(dir, partFile(p.Number))); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = tmp.Chmod(filePerm)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+
+	etag := `"` + hex.EncodeToString(etagSum.Sum(nil)) + "-" + strconv.Itoa(len(parts)) + `"`
+	info, err := s.commit(bucket, key, name, sidecar{ETag: etag, Metadata: u.Metadata}, cond)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	_ = os.RemoveAll(dir)
+	return info, nil
+}
+
+func appendFile(dst *os.File, src string) error {
+	f, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = io.Copy(dst, f)
+	return err
+}
+
+// AbortUpload discards an upload and its parts.
+func (s *Store) AbortUpload(bucket, key, id string) error {
+	unlock := s.lockUpload(id)
+	defer unlock()
+	_, dir, err := s.loadUpload(bucket, key, id)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(dir)
+}
+
+// ListParts returns up to max parts numbered above marker, and whether more remain.
+func (s *Store) ListParts(bucket, key, id string, marker, max int) ([]PartInfo, bool, error) {
+	_, dir, err := s.loadUpload(bucket, key, id)
+	if err != nil {
+		return nil, false, err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false, err
+	}
+	var parts []PartInfo
+	for _, e := range ents {
+		numStr, ok := strings.CutPrefix(e.Name(), "part-")
+		if !ok || strings.HasSuffix(numStr, ".json") {
+			continue
+		}
+		n, err := strconv.Atoi(numStr)
+		if err != nil || n <= marker {
+			continue
+		}
+		pm, err := readPart(dir, n)
+		if err != nil {
+			continue
+		}
+		parts = append(parts, PartInfo{Number: n, ETag: pm.ETag, Size: pm.Size, ModTime: pm.ModTime, Checksums: pm.Checksums})
+	}
+	slices.SortFunc(parts, func(a, b PartInfo) int { return a.Number - b.Number })
+	if len(parts) > max {
+		return parts[:max], true, nil
+	}
+	return parts, false, nil
+}
+
+// ListUploads returns up to max uploads of bucket whose key starts with prefix, ordered
+// by key then upload ID, after the (keyMarker, idMarker) position.
+func (s *Store) ListUploads(bucket, prefix, keyMarker, idMarker string, max int) ([]UploadInfo, bool, error) {
+	if err := s.requireBucket(bucket); err != nil {
+		return nil, false, err
+	}
+	ents, err := os.ReadDir(s.sys("uploads"))
+	if err != nil {
+		return nil, false, err
+	}
+	var ups []UploadInfo
+	for _, e := range ents {
+		var u uploadMeta
+		raw, err := os.ReadFile(filepath.Join(s.sys("uploads", e.Name()), uploadMetaFile))
+		if err != nil || json.Unmarshal(raw, &u) != nil || u.Bucket != bucket || !strings.HasPrefix(u.Key, prefix) {
+			continue
+		}
+		if u.Key < keyMarker || (u.Key == keyMarker && (idMarker == "" || e.Name() <= idMarker)) {
+			continue
+		}
+		ups = append(ups, UploadInfo{Key: u.Key, UploadID: e.Name(), Initiated: u.Initiated})
+	}
+	slices.SortFunc(ups, func(a, b UploadInfo) int {
+		if c := strings.Compare(a.Key, b.Key); c != 0 {
+			return c
+		}
+		return strings.Compare(a.UploadID, b.UploadID)
+	})
+	if len(ups) > max {
+		return ups[:max], true, nil
+	}
+	return ups, false, nil
+}

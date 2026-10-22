@@ -1,0 +1,48 @@
+# Build and test binaries
+bin/
+dist/
+
+# Version control
+.git/
+.gitignore
+
+# CI/CD
+.github/
+
+# Documentation
+docs/
+*.md
+LICENSE
+
+# Helm charts
+helm/
+compat/
+
+# Config and scripts (not needed for binary build)
+deploy/
+hack/
+scripts/
+testdata/
+
+# IDE
+.vscode/
+.idea/
+
+# Test files and coverage output, at any depth
+**/*_test.go
+**/testdata/
+*.out
+coverage.html
+
+# Docker artifacts
+Dockerfile*
+.dockerignore
+
+# Local config and tooling (not needed for the build; .env may hold secrets)
+.env
+.env.*
+.find-sensitive-allow
+.golangci.yml
+Makefile
+cliff.toml
+.DS_Store

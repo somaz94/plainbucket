@@ -1,0 +1,104 @@
+# plainbucket
+
+An S3-compatible object server that stores every object as a plain file.
+
+Bucket `photos` is the directory `<root>/photos`, and object `2026/trip.jpg` in it is the file `<root>/photos/2026/trip.jpg`. Nothing is chunked, encoded or hidden in a database, so the data stays readable with `ls`, `cp` and `rsync` when the server is stopped, and files you drop into the directory show up as objects.
+
+plainbucket is a single binary with no runtime dependencies beyond the Go standard library, Cobra and a YAML parser. It is meant for one node: a laptop, a homelab box, or a Kubernetes pod with one volume. It does not replicate, erasure-code or version objects.
+
+<br/>
+
+## Features
+
+- **S3 API, path-style**: buckets, objects, `ListObjectsV2` and `ListObjects`, multipart upload, `CopyObject`, `DeleteObjects`, ranged and conditional reads, conditional writes (`If-None-Match: *`, `If-Match`). See [docs/compatibility.md](docs/compatibility.md).
+- **AWS Signature Version 4**: `Authorization` header and presigned URLs, every payload mode the AWS SDKs send, including aws-chunked streaming with trailing checksums.
+- **Checksums**: CRC32, CRC32C, CRC64NVME, SHA-1 and SHA-256 are verified on upload and returned on request. An upload that declares none gets a CRC64NVME, as on S3.
+- **Plain files**: objects are files, metadata lives in a separate system directory, and files changed outside the server are detected and re-hashed. See [docs/layout.md](docs/layout.md).
+- **Tested with real clients**: the official AWS SDK for Go v2 and the aws cli run against the server in CI.
+
+<br/>
+
+## Quick Start
+
+```bash
+make build
+
+PLAINBUCKET_ROOT=./data \
+PLAINBUCKET_ACCESS_KEY=admin \
+PLAINBUCKET_SECRET_KEY=change-me \
+./bin/plainbucket
+```
+
+Point any S3 client at it:
+
+```bash
+export AWS_ACCESS_KEY_ID=admin AWS_SECRET_ACCESS_KEY=change-me AWS_DEFAULT_REGION=us-east-1
+
+aws --endpoint-url http://localhost:9000 s3 mb s3://site
+aws --endpoint-url http://localhost:9000 s3 sync ./public s3://site
+ls ./data/site            # the synced files, as files
+```
+
+With Docker:
+
+```bash
+docker run -d -p 9000:9000 \
+  -e PLAINBUCKET_ACCESS_KEY=admin -e PLAINBUCKET_SECRET_KEY=change-me \
+  -v "$PWD/data:/data" somaz940/plainbucket:latest
+```
+
+SDKs need path-style addressing for a custom endpoint. In the AWS SDK for Go v2:
+
+```go
+client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	o.BaseEndpoint = aws.String("http://localhost:9000")
+	o.UsePathStyle = true
+})
+```
+
+<br/>
+
+## Configuration
+
+Settings come from environment variables (prefix `PLAINBUCKET_`), then an optional YAML file passed with `-c`, then defaults. The access key and secret key are required. See [docs/configuration.md](docs/configuration.md).
+
+<br/>
+
+## Serving the Same Files over HTTP
+
+Because buckets are directories, a static file server can publish them read-only while clients write through the S3 API. With [static-file-server](https://github.com/somaz94/static-file-server), set `FOLDER` to the plainbucket root and `HIDE_DOT_FILES=true`, so the `.plainbucket` system directory stays private.
+
+<br/>
+
+## Limitations
+
+The filesystem layout trades some S3 semantics for plain files:
+
+- A key and a longer key using it as a directory cannot coexist (`a` and `a/b`). The second write fails with `409 KeyConflict`.
+- Keys must map to valid paths: no empty, `.` or `..` segments, and no segment longer than 255 bytes.
+- On a case-insensitive filesystem, keys differing only in case are the same object. The server logs a warning at startup when it detects one.
+- Deleting the last object under a prefix also removes the now-empty directories, unless one was created as a folder marker (`a/`).
+- Symlinks are followed only while they stay inside the root.
+
+[docs/layout.md](docs/layout.md) explains each of these.
+
+<br/>
+
+## Development
+
+```bash
+make help          # every target
+make test          # unit tests with the race detector and a coverage profile
+make cover-check   # fail below the coverage minimum
+make test-compat   # AWS SDK for Go v2 suite (separate module under compat/)
+make test-awscli   # aws cli end-to-end script
+make lint
+```
+
+`compat/` is its own Go module so the AWS SDK never becomes a dependency of the server.
+
+<br/>
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

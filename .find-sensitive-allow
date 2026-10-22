@@ -1,0 +1,4 @@
+# Reviewed entries for ~/.claude/scripts/find-sensitive.sh: <path><TAB><exact line text>.
+# AWS documentation example credentials (SigV4 test vectors), not real keys.
+internal/sigv4/sigv4_test.go	docAK = "AKIAIOSFODNN7EXAMPLE"
+internal/sigv4/sigv4_test.go	"&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request" +
