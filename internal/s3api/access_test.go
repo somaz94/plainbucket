@@ -52,6 +52,7 @@ func TestPublicRead(t *testing.T) {
 		{http.MethodGet, "/pub?list-type=2"},
 		{http.MethodGet, "/pub/dir/a.txt?uploadId=x"},
 		{http.MethodGet, "/pub/dir/a.txt?partNumber=1"},
+		{http.MethodGet, "/pub/dir/a.txt?attributes"},
 		{http.MethodPut, "/pub/dir/b.txt"},
 		{http.MethodDelete, "/pub/dir/a.txt"},
 		{http.MethodPost, "/pub/dir/a.txt?uploads"},

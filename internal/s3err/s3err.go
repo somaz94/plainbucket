@@ -119,6 +119,14 @@ func InvalidPart() *Error {
 	return newErr(http.StatusBadRequest, "InvalidPart", "One or more of the specified parts could not be found or its ETag did not match.")
 }
 
+func InvalidRange() *Error {
+	return newErr(http.StatusRequestedRangeNotSatisfiable, "InvalidRange", "The requested range is not satisfiable")
+}
+
+func InvalidPartNumber() *Error {
+	return newErr(http.StatusRequestedRangeNotSatisfiable, "InvalidPartNumber", "The requested partnumber is not satisfiable.")
+}
+
 func InvalidPartOrder() *Error {
 	return newErr(http.StatusBadRequest, "InvalidPartOrder", "The list of parts was not in ascending order.")
 }

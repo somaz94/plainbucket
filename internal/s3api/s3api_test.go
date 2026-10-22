@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -178,16 +179,20 @@ func TestUnsupportedRequests(t *testing.T) {
 		{http.MethodDelete, "/bkt/k?tagging"},
 		{http.MethodGet, "/bkt?tagging"},
 		{http.MethodGet, "/bkt/k?versionId=abc"},
-		{http.MethodGet, "/bkt/k?partNumber=1"},
+		{http.MethodPut, "/bkt/k?attributes"},
+		{http.MethodGet, "/bkt?attributes"},
 		{http.MethodPut, "/bkt?versioning"},
 		{http.MethodGet, "/bkt/k?versioning"},
 		{http.MethodGet, "/bkt?uploads&delimiter=/"},
+		{http.MethodGet, "/bkt/k?versions"},
+		{http.MethodPut, "/bkt?versions"},
 	} {
 		x.expectErr(c.method, c.target, nil, nil, "NotImplemented")
 	}
 	x.mustDo(http.MethodGet, "/bkt/k?versionId=null", nil, nil, http.StatusOK)
 	x.expectErr(http.MethodGet, "/bkt?list-type=1", nil, nil, "InvalidArgument")
-	x.expectErr(http.MethodPut, "/bkt/k", []byte("x"), map[string]string{"If-None-Match": `"etag"`}, "NotImplemented")
+	etag := x.mustDo(http.MethodPut, "/bkt/k", []byte("x"), map[string]string{"If-None-Match": `"other"`}, http.StatusOK).Header().Get("ETag")
+	x.expectErr(http.MethodPut, "/bkt/k", []byte("y"), map[string]string{"If-None-Match": etag}, "PreconditionFailed")
 }
 
 func TestPutGetHead(t *testing.T) {
@@ -213,7 +218,7 @@ func TestPutGetHead(t *testing.T) {
 	rec = x.mustDo(http.MethodGet, "/bkt/dir/hello.txt?response-content-type=application/x-override", nil, map[string]string{"X-Amz-Checksum-Mode": "ENABLED"}, http.StatusOK)
 	h := rec.Header()
 	if rec.Body.String() != "hello world" || h.Get("ETag") != etag || h.Get("Content-Type") != "application/x-override" ||
-		h.Get("Cache-Control") != "max-age=1" || h.Get("Content-Disposition") != "inline" || h.Get("X-Amz-Meta-Color") != "blue" ||
+		h.Get("Cache-Control") != "max-age=1" || h.Get("Content-Disposition") != "inline" || rawHeader(h, "x-amz-meta-color") != "blue" ||
 		h.Get("X-Amz-Checksum-Crc64nvme") == "" || h.Get("X-Amz-Checksum-Type") != "FULL_OBJECT" {
 		t.Errorf("get: %q %v", rec.Body.String(), h)
 	}
@@ -279,6 +284,7 @@ func TestPayloadErrors(t *testing.T) {
 	}{
 		{"md5 mismatch", map[string]string{"Content-MD5": base64.StdEncoding.EncodeToString(make([]byte, 16))}, body, "BadDigest"},
 		{"md5 invalid", map[string]string{"Content-MD5": "nope"}, body, "InvalidDigest"},
+		{"md5 empty", map[string]string{"Content-MD5": ""}, body, "InvalidDigest"},
 		{"sha mismatch", map[string]string{"X-Amz-Content-Sha256": sha([]byte("other"))}, body, "XAmzContentSHA256Mismatch"},
 		{"crc mismatch", map[string]string{"X-Amz-Checksum-Crc32": "AAAAAA=="}, body, "BadDigest"},
 		{"trailer without chunks", map[string]string{"X-Amz-Trailer": "x-amz-checksum-crc32"}, body, "InvalidRequest"},
@@ -437,10 +443,64 @@ func TestListObjectsAPI(t *testing.T) {
 		t.Errorf("start-after: %s", rec.Body.String())
 	}
 
+	rec = x.mustDo(http.MethodGet, "/bkt?prefix=%0A&encoding-type=url", nil, nil, http.StatusOK)
+	if !strings.Contains(rec.Body.String(), "<Prefix>&#xA;</Prefix>") {
+		t.Errorf("V1 echoes the prefix unencoded: %s", rec.Body.String())
+	}
+	rec = x.mustDo(http.MethodGet, "/bkt?list-type=2&prefix=%0A&encoding-type=url&continuation-token=", nil, nil, http.StatusOK)
+	if body := rec.Body.String(); !strings.Contains(body, "<Prefix>%0A</Prefix>") || !strings.Contains(body, "<ContinuationToken></ContinuationToken>") {
+		t.Errorf("V2 prefix and empty token: %s", body)
+	}
+
 	x.expectErr(http.MethodGet, "/bkt?max-keys=-1", nil, nil, "InvalidArgument")
 	x.expectErr(http.MethodGet, "/bkt?encoding-type=gzip", nil, nil, "InvalidArgument")
 	x.expectErr(http.MethodGet, "/bkt?list-type=2&continuation-token=%25%25", nil, nil, "InvalidArgument")
 	x.expectErr(http.MethodGet, "/missing?list-type=2", nil, nil, "NoSuchBucket")
+}
+
+func TestListObjectVersionsAPI(t *testing.T) {
+	x := newHarness(t, nil)
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	for _, k := range []string{"a/1", "a/2", "b", "c d"} {
+		x.mustDo(http.MethodPut, "/bkt/"+strings.ReplaceAll(k, " ", "%20"), []byte("xy"), nil, http.StatusOK)
+	}
+	page := func(target string) listVersionsResult {
+		t.Helper()
+		var res listVersionsResult
+		if err := xml.Unmarshal(x.mustDo(http.MethodGet, target, nil, nil, http.StatusOK).Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	res := page("/bkt?versions&delimiter=/&max-keys=2")
+	if len(res.CommonPrefixes) != 1 || res.CommonPrefixes[0].Prefix != "a/" || len(res.Versions) != 1 {
+		t.Fatalf("page 1: %+v", res)
+	}
+	v := res.Versions[0]
+	if v.Key != "b" || v.VersionID != "null" || !v.IsLatest || v.Size != 2 || v.Owner == nil || v.StorageClass != "STANDARD" {
+		t.Errorf("version: %+v", v)
+	}
+	if !res.IsTruncated || res.NextKeyMarker != "b" || res.NextVersionIDMarker != "null" {
+		t.Errorf("page 1 markers: %+v", res)
+	}
+	res = page("/bkt?versions&delimiter=/&key-marker=b&version-id-marker=null&encoding-type=url")
+	if len(res.Versions) != 1 || res.Versions[0].Key != "c%20d" || res.IsTruncated || res.KeyMarker != "b" ||
+		res.VersionIDMarker != "null" || res.EncodingType != "url" {
+		t.Errorf("page 2: %+v", res)
+	}
+	res = page("/bkt?versions&max-keys=1&delimiter=/")
+	if res.NextKeyMarker != "a/" || res.NextVersionIDMarker != "" {
+		t.Errorf("a prefix ends the page without a version marker: %+v", res)
+	}
+	if res := page("/bkt?versions&prefix=a/"); len(res.Versions) != 2 || res.Prefix != "a/" {
+		t.Errorf("prefix: %+v", res)
+	}
+
+	x.expectErr(http.MethodGet, "/bkt?versions&version-id-marker=null", nil, nil, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt?versions&key-marker=b&version-id-marker=abc", nil, nil, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt?versions&max-keys=x", nil, nil, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/missing?versions", nil, nil, "NoSuchBucket")
 }
 
 func TestCopyAPI(t *testing.T) {
@@ -470,7 +530,8 @@ func TestCopyAPI(t *testing.T) {
 	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst?versionId=v2"}, "NotImplemented")
 	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/missing"}, "NoSuchKey")
 	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "X-Amz-Copy-Source-If-Match": `"nope"`}, "PreconditionFailed")
-	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "If-None-Match": "etag"}, "NotImplemented")
+	x.mustDo(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "If-None-Match": `"other"`}, http.StatusOK)
+	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "If-None-Match": "*"}, "PreconditionFailed")
 
 	if err := os.WriteFile(filepath.Join(x.root, "bkt", "huge"), bytes.Repeat([]byte("x"), 30), 0o644); err != nil {
 		t.Fatal(err)
@@ -541,7 +602,6 @@ func TestMultipartAPI(t *testing.T) {
 	x.expectErr(http.MethodGet, "/missing?uploads", nil, nil, "NoSuchBucket")
 
 	x.expectErr(http.MethodPost, "/bkt/big?uploadId="+id, []byte("<nope"), nil, "MalformedXML")
-	x.expectErr(http.MethodPost, "/bkt/big?uploadId="+id, []byte("<CompleteMultipartUpload/>"), map[string]string{"If-None-Match": "x"}, "NotImplemented")
 	var doc strings.Builder
 	doc.WriteString("<CompleteMultipartUpload>")
 	for i, e := range etags {
@@ -571,6 +631,207 @@ func TestMultipartAPI(t *testing.T) {
 	}
 	x.expectErr(http.MethodDelete, "/bkt/other?uploadId="+id, nil, nil, "NoSuchUpload")
 	x.expectErr(http.MethodPost, "/bkt/m/?uploads", nil, nil, "InvalidArgument")
+}
+
+// rawHeader returns the header sent under exactly name, which need not be canonical.
+func rawHeader(h http.Header, name string) string {
+	for k, v := range h {
+		if k == name && len(v) == 1 {
+			return v[0]
+		}
+	}
+	return ""
+}
+
+func md5hex(s string) string {
+	sum := md5.Sum([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestMultipartChecksumAPI(t *testing.T) {
+	x := newHarness(t, nil)
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	const partSHA = "arcu6553sHVAiX4MjW0j7I7vD4w6R+Gz9Ok0Q9lTa+0="
+	const composite = "Ok6Cs5b96ux6+MWQkJO7UBT5sKPBeXBLwvj/hK89smg=-1"
+	start := func(key string) string {
+		t.Helper()
+		rec := x.mustDo(http.MethodPost, "/bkt/"+key+"?uploads", nil, map[string]string{"X-Amz-Checksum-Algorithm": "sha256"}, http.StatusOK)
+		if rec.Header().Get("X-Amz-Checksum-Algorithm") != "SHA256" || rec.Header().Get("X-Amz-Checksum-Type") != "COMPOSITE" {
+			t.Errorf("create headers: %v", rec.Header())
+		}
+		var res initiateMultipartUploadResult
+		_ = xml.Unmarshal(rec.Body.Bytes(), &res)
+		x.mustDo(http.MethodPut, "/bkt/"+key+"?partNumber=1&uploadId="+res.UploadID, []byte(strings.Repeat("A", 1024)),
+			map[string]string{"X-Amz-Checksum-Sha256": partSHA}, http.StatusOK)
+		return res.UploadID
+	}
+	doc := func(partChecksum string) []byte {
+		return []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"` + md5hex(strings.Repeat("A", 1024)) +
+			`"</ETag>` + partChecksum + `</Part></CompleteMultipartUpload>`)
+	}
+
+	id := start("k")
+	x.expectErr(http.MethodPost, "/bkt/k?uploadId="+id, doc(""), map[string]string{"X-Amz-Checksum-Sha256": "bad"}, "BadDigest")
+	rec := x.mustDo(http.MethodPost, "/bkt/k?uploadId="+id, doc("<ChecksumSHA256>"+partSHA+"</ChecksumSHA256>"),
+		map[string]string{"X-Amz-Checksum-Sha256": composite}, http.StatusOK)
+	var res completeMultipartUploadResult
+	if xml.Unmarshal(rec.Body.Bytes(), &res) != nil || res.ChecksumSHA256 != composite || res.ChecksumType != "COMPOSITE" {
+		t.Errorf("complete: %s", rec.Body.String())
+	}
+	if h := x.mustDo(http.MethodHead, "/bkt/k", nil, nil, http.StatusOK).Header(); h.Get("X-Amz-Checksum-Sha256") != "" {
+		t.Errorf("checksum without checksum mode: %v", h)
+	}
+	h := x.mustDo(http.MethodHead, "/bkt/k", nil, map[string]string{"X-Amz-Checksum-Mode": "ENABLED"}, http.StatusOK).Header()
+	if h.Get("X-Amz-Checksum-Sha256") != composite || h.Get("X-Amz-Checksum-Type") != "COMPOSITE" {
+		t.Errorf("checksum mode: %v", h)
+	}
+
+	h = x.mustDo(http.MethodGet, "/bkt/k?partNumber=1", nil, map[string]string{"X-Amz-Checksum-Mode": "ENABLED"}, http.StatusPartialContent).Header()
+	if h.Get("X-Amz-Checksum-Sha256") != partSHA || h.Get("X-Amz-Checksum-Type") != "COMPOSITE" {
+		t.Errorf("part checksum: %v", h)
+	}
+
+	id = start("k2")
+	x.expectErr(http.MethodPost, "/bkt/k2?uploadId="+id, doc("<ChecksumSHA256>other</ChecksumSHA256>"), nil, "InvalidPart")
+	x.expectErr(http.MethodPost, "/bkt/k2?uploadId="+id, doc(""), map[string]string{"X-Amz-Checksum-Crc32": "AAAAAA=="}, "InvalidRequest")
+
+	// A full-object CRC32 is computed over the data, and a copy keeps it.
+	rec = x.mustDo(http.MethodPost, "/bkt/full?uploads", nil,
+		map[string]string{"X-Amz-Checksum-Algorithm": "CRC32", "X-Amz-Checksum-Type": "FULL_OBJECT"}, http.StatusOK)
+	var up initiateMultipartUploadResult
+	_ = xml.Unmarshal(rec.Body.Bytes(), &up)
+	x.mustDo(http.MethodPut, "/bkt/full?partNumber=1&uploadId="+up.UploadID, []byte("foo"), nil, http.StatusOK)
+	rec = x.mustDo(http.MethodPost, "/bkt/full?uploadId="+up.UploadID, []byte(`<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"`+
+		md5hex("foo")+`"</ETag></Part></CompleteMultipartUpload>`), map[string]string{"X-Amz-Checksum-Crc32": "jHNlIQ=="}, http.StatusOK)
+	res = completeMultipartUploadResult{}
+	if xml.Unmarshal(rec.Body.Bytes(), &res) != nil || res.ChecksumCRC32 != "jHNlIQ==" || res.ChecksumType != "FULL_OBJECT" {
+		t.Errorf("full object: %s", rec.Body.String())
+	}
+	x.mustDo(http.MethodPut, "/bkt/full-copy", nil, map[string]string{"X-Amz-Copy-Source": "bkt/full"}, http.StatusOK)
+	h = x.mustDo(http.MethodHead, "/bkt/full-copy", nil, map[string]string{"X-Amz-Checksum-Mode": "ENABLED"}, http.StatusOK).Header()
+	if h.Get("X-Amz-Checksum-Crc32") != "jHNlIQ==" || h.Get("X-Amz-Checksum-Type") != "FULL_OBJECT" {
+		t.Errorf("copy keeps the full-object checksum: %v", h)
+	}
+
+	x.expectErr(http.MethodPost, "/bkt/k3?uploads", nil, map[string]string{"X-Amz-Checksum-Type": "COMPOSITE"}, "InvalidRequest")
+	x.expectErr(http.MethodPost, "/bkt/k3?uploads", nil, map[string]string{"X-Amz-Checksum-Algorithm": "MD5"}, "InvalidRequest")
+	x.expectErr(http.MethodPost, "/bkt/k3?uploads", nil,
+		map[string]string{"X-Amz-Checksum-Algorithm": "SHA256", "X-Amz-Checksum-Type": "FULL_OBJECT"}, "InvalidRequest")
+	// DeleteObjects still verifies its document's checksum.
+	x.expectErr(http.MethodPost, "/bkt?delete", []byte(`<Delete><Object><Key>k</Key></Object></Delete>`),
+		map[string]string{"X-Amz-Checksum-Crc32": "AAAAAA=="}, "BadDigest")
+}
+
+// multipartObject completes key from parts and returns the object's ETag.
+func (x *harness) multipartObject(key string, parts ...string) string {
+	x.t.Helper()
+	rec := x.mustDo(http.MethodPost, "/bkt/"+key+"?uploads", nil, nil, http.StatusOK)
+	var up initiateMultipartUploadResult
+	_ = xml.Unmarshal(rec.Body.Bytes(), &up)
+	doc := "<CompleteMultipartUpload>"
+	for i, p := range parts {
+		n := strconv.Itoa(i + 1)
+		etag := x.mustDo(http.MethodPut, "/bkt/"+key+"?partNumber="+n+"&uploadId="+up.UploadID, []byte(p), nil, http.StatusOK).Header().Get("ETag")
+		doc += "<Part><PartNumber>" + n + "</PartNumber><ETag>" + etag + "</ETag></Part>"
+	}
+	rec = x.mustDo(http.MethodPost, "/bkt/"+key+"?uploadId="+up.UploadID, []byte(doc+"</CompleteMultipartUpload>"), nil, http.StatusOK)
+	var res completeMultipartUploadResult
+	_ = xml.Unmarshal(rec.Body.Bytes(), &res)
+	return res.ETag
+}
+
+func TestGetObjectPartNumber(t *testing.T) {
+	x := newHarness(t, nil)
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	etag := x.multipartObject("mp", "aaaaa", "bbbbb", "cc")
+	for n, want := range []string{"aaaaa", "bbbbb", "cc"} {
+		rec := x.mustDo(http.MethodGet, "/bkt/mp?partNumber="+strconv.Itoa(n+1), nil, nil, http.StatusPartialContent)
+		if rec.Body.String() != want || rec.Header().Get("X-Amz-Mp-Parts-Count") != "3" || rec.Header().Get("ETag") != etag {
+			t.Errorf("part %d: %q %v", n+1, rec.Body.String(), rec.Header())
+		}
+	}
+	rec := x.mustDo(http.MethodHead, "/bkt/mp?partNumber=3", nil, nil, http.StatusPartialContent)
+	if rec.Header().Get("Content-Length") != "2" || rec.Header().Get("Content-Range") != "bytes 10-11/12" {
+		t.Errorf("head part: %v", rec.Header())
+	}
+	x.expectErr(http.MethodGet, "/bkt/mp?partNumber=4", nil, nil, "InvalidPartNumber")
+	x.expectErr(http.MethodGet, "/bkt/mp?partNumber=0", nil, nil, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt/mp?partNumber=x", nil, nil, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt/mp?partNumber=1", nil, map[string]string{"Range": "bytes=0-1"}, "InvalidRequest")
+	x.expectErr(http.MethodGet, "/bkt/missing?partNumber=1", nil, nil, "NoSuchKey")
+
+	x.mustDo(http.MethodPut, "/bkt/single", []byte("body"), nil, http.StatusOK)
+	rec = x.mustDo(http.MethodGet, "/bkt/single?partNumber=1", nil, nil, http.StatusPartialContent)
+	if rec.Body.String() != "body" || rec.Header().Get("X-Amz-Mp-Parts-Count") != "" {
+		t.Errorf("single part: %q %v", rec.Body.String(), rec.Header())
+	}
+	x.expectErr(http.MethodGet, "/bkt/single?partNumber=2", nil, nil, "InvalidPartNumber")
+	x.mustDo(http.MethodPut, "/bkt/empty", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodGet, "/bkt/empty?partNumber=1", nil, nil, http.StatusOK)
+
+	x.expectErr(http.MethodGet, "/bkt/empty", nil, map[string]string{"Range": "bytes=0-"}, "InvalidRange")
+	x.expectErr(http.MethodGet, "/bkt/single", nil, map[string]string{"Range": "bytes=4-9"}, "InvalidRange")
+	x.expectErr(http.MethodGet, "/bkt/single", nil, map[string]string{"Range": "bytes=-0"}, "InvalidRange")
+	x.mustDo(http.MethodGet, "/bkt/single", nil, map[string]string{"Range": "bytes=-9"}, http.StatusPartialContent)
+	x.mustDo(http.MethodGet, "/bkt/single", nil, map[string]string{"Range": "bytes=0-1,3-"}, http.StatusPartialContent)
+	x.mustDo(http.MethodGet, "/bkt/single", nil, map[string]string{"Range": "items=0-1"}, http.StatusOK)
+
+	x.multipartObject("tail", "aaaaa", "")
+	if rec := x.mustDo(http.MethodGet, "/bkt/tail?partNumber=2", nil, nil, http.StatusOK); rec.Body.Len() != 0 {
+		t.Errorf("an empty last part is empty, got %q", rec.Body.String())
+	}
+	if rec := x.do(http.MethodGet, "/bkt/mp?partNumber=9", nil, nil); rec.Header().Get("X-Amz-Mp-Parts-Count") != "" {
+		t.Errorf("parts count on an error: %v", rec.Header())
+	}
+}
+
+func TestGetObjectAttributes(t *testing.T) {
+	x := newHarness(t, nil)
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	etag := x.multipartObject("mp", "aaaaa", "bbbbb", "cc")
+	all := map[string]string{"X-Amz-Object-Attributes": "ETag,Checksum, ObjectParts,StorageClass,ObjectSize"}
+	get := func(key string, hdr map[string]string) objectAttributesResult {
+		t.Helper()
+		rec := x.mustDo(http.MethodGet, "/bkt/"+key+"?attributes", nil, hdr, http.StatusOK)
+		if rec.Header().Get("Last-Modified") == "" {
+			t.Error("no Last-Modified")
+		}
+		var res objectAttributesResult
+		if err := xml.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	res := get("mp", all)
+	op := res.ObjectParts
+	if res.ETag != strings.Trim(etag, `"`) || res.StorageClass != "STANDARD" || res.ObjectSize == nil || *res.ObjectSize != 12 ||
+		op == nil || op.TotalPartsCount != 3 || len(op.Parts) != 3 || op.Parts[2].PartNumber != 3 || op.Parts[2].Size != 2 || op.IsTruncated {
+		t.Errorf("multipart: %+v %+v", res, op)
+	}
+	paged := map[string]string{"X-Amz-Object-Attributes": "ObjectParts", "X-Amz-Max-Parts": "1", "X-Amz-Part-Number-Marker": "1"}
+	res = get("mp", paged)
+	if op = res.ObjectParts; res.ETag != "" || len(op.Parts) != 1 || op.Parts[0].PartNumber != 2 || !op.IsTruncated ||
+		op.NextPartNumberMarker != 2 || op.PartNumberMarker != 1 || op.MaxParts != 1 {
+		t.Errorf("paged: %+v", op)
+	}
+
+	x.mustDo(http.MethodPut, "/bkt/single", []byte("foo"), map[string]string{"X-Amz-Checksum-Crc32": "jHNlIQ=="}, http.StatusOK)
+	res = get("single", all)
+	if res.ObjectParts != nil || res.Checksum == nil || res.Checksum.ChecksumCRC32 != "jHNlIQ==" || res.Checksum.ChecksumType != "FULL_OBJECT" {
+		t.Errorf("single: %+v %+v", res, res.Checksum)
+	}
+
+	res = get("mp", map[string]string{"X-Amz-Object-Attributes": "ObjectParts", "X-Amz-Max-Parts": "0"})
+	if len(res.ObjectParts.Parts) != 3 || res.ObjectParts.IsTruncated {
+		t.Errorf("max-parts 0 is the default: %+v", res.ObjectParts)
+	}
+
+	x.expectErr(http.MethodGet, "/bkt/mp?attributes", nil, nil, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt/mp?attributes", nil, map[string]string{"X-Amz-Object-Attributes": "Owner"}, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt/mp?attributes", nil, map[string]string{"X-Amz-Object-Attributes": "ETag", "X-Amz-Max-Parts": "-1"}, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt/mp?attributes", nil, map[string]string{"X-Amz-Object-Attributes": "ETag", "X-Amz-Part-Number-Marker": "x"}, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt/missing?attributes", nil, all, "NoSuchKey")
 }
 
 func TestMultipartSizeLimit(t *testing.T) {
@@ -608,7 +869,7 @@ func TestToS3Unknown(t *testing.T) {
 }
 
 func TestStripAWSChunked(t *testing.T) {
-	for in, want := range map[string]string{"aws-chunked": "", "aws-chunked, gzip": "gzip", "gzip,br": "gzip,br", "": ""} {
+	for in, want := range map[string]string{"aws-chunked": "", "aws-chunked, gzip": "gzip", "gzip,br": "gzip, br", "": ""} {
 		if got := stripAWSChunked(in); got != want {
 			t.Errorf("stripAWSChunked(%q) = %q, want %q", in, got, want)
 		}
@@ -616,10 +877,13 @@ func TestStripAWSChunked(t *testing.T) {
 }
 
 func TestPartChecksums(t *testing.T) {
-	var p partItem
-	partChecksums(&p, map[string]string{"CRC32": "a", "CRC32C": "b", "CRC64NVME": "c", "SHA1": "d", "SHA256": "e"})
+	sums := map[string]string{"CRC32": "a", "CRC32C": "b", "CRC64NVME": "c", "SHA1": "d", "SHA256": "e"}
+	p := partItem{checksumFields: newChecksumFields(sums)}
 	if p.ChecksumCRC32 != "a" || p.ChecksumCRC32C != "b" || p.ChecksumCRC64NVME != "c" || p.ChecksumSHA1 != "d" || p.ChecksumSHA256 != "e" {
 		t.Errorf("part = %+v", p)
+	}
+	if got := p.values(); len(got) != 5 || got["SHA256"] != "e" {
+		t.Errorf("values = %v", got)
 	}
 }
 

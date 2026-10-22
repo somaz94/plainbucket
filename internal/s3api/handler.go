@@ -91,8 +91,8 @@ type request struct {
 	q       url.Values
 }
 
-// Subresources this server does not implement; requests naming one get 501 instead of
-// being mistaken for a plain object or bucket operation.
+// Subresources this server does not implement; requests naming one get 501 (bar the
+// GETs readableSubresource answers) instead of being mistaken for a plain operation.
 var unsupported = map[string]bool{
 	"accelerate": true, "acl": true, "analytics": true, "attributes": true, "cors": true,
 	"encryption": true, "intelligent-tiering": true, "inventory": true, "legal-hold": true,
@@ -101,6 +101,22 @@ var unsupported = map[string]bool{
 	"publicAccessBlock": true, "replication": true, "requestPayment": true, "restore": true,
 	"retention": true, "select": true, "session": true, "tagging": true, "torrent": true,
 	"versions": true, "website": true,
+}
+
+// readableSubresource reports the GETs of an unsupported subresource that are answered:
+// an object's (empty) tags, which tools copying an object read first, its attributes,
+// and a bucket's versions, which are its objects as the "null" version.
+func readableSubresource(k string, req *request) bool {
+	if req.r.Method != http.MethodGet {
+		return false
+	}
+	switch k {
+	case "tagging", "attributes":
+		return req.key != ""
+	case "versions":
+		return req.key == ""
+	}
+	return false
 }
 
 // ServeHTTP implements http.Handler.
@@ -177,9 +193,7 @@ func (h *Handler) serve(req *request) error {
 		}
 	}
 	for k := range req.q {
-		// Tools copying an object read its tags first; an empty set lets them proceed.
-		readTags := k == "tagging" && req.key != "" && req.r.Method == http.MethodGet
-		if unsupported[k] && !readTags {
+		if unsupported[k] && !readableSubresource(k, req) {
 			return s3err.NotImplemented()
 		}
 	}
@@ -213,6 +227,8 @@ func (h *Handler) bucketOp(req *request) error {
 			return h.getBucketVersioning(req)
 		case q.Has("uploads"):
 			return h.listMultipartUploads(req)
+		case q.Has("versions"):
+			return h.listObjectVersions(req)
 		case q.Get("list-type") == "2":
 			return h.listObjects(req, true)
 		case q.Has("list-type"):
@@ -247,11 +263,11 @@ func (h *Handler) objectOp(req *request) error {
 		if q.Has("tagging") {
 			return h.getObjectTagging(req)
 		}
+		if q.Has("attributes") {
+			return h.getObjectAttributes(req)
+		}
 		if q.Has("uploadId") && req.r.Method == http.MethodGet {
 			return h.listParts(req)
-		}
-		if q.Has("partNumber") {
-			return s3err.NotImplemented()
 		}
 		return h.getObject(req)
 	case http.MethodPut:
@@ -291,10 +307,16 @@ var storageErrors = map[error]func() *s3err.Error{
 	storage.ErrPreconditionFailed: s3err.PreconditionFailed,
 	storage.ErrNoSuchUpload:       s3err.NoSuchUpload,
 	storage.ErrInvalidPart:        s3err.InvalidPart,
-	storage.ErrInvalidPartOrder:   s3err.InvalidPartOrder,
-	storage.ErrEntityTooSmall:     s3err.EntityTooSmall,
-	storage.ErrEntityTooLarge:     s3err.EntityTooLarge,
-	storage.ErrQuotaExceeded:      s3err.QuotaExceeded,
+	storage.ErrInvalidChecksum: func() *s3err.Error {
+		return s3err.InvalidRequest("The checksum does not match the algorithm or type of the upload.")
+	},
+	storage.ErrBadDigest: func() *s3err.Error {
+		return s3err.BadDigest("The checksum you specified did not match the calculated checksum.")
+	},
+	storage.ErrInvalidPartOrder: s3err.InvalidPartOrder,
+	storage.ErrEntityTooSmall:   s3err.EntityTooSmall,
+	storage.ErrEntityTooLarge:   s3err.EntityTooLarge,
+	storage.ErrQuotaExceeded:    s3err.QuotaExceeded,
 	storage.ErrMarkerNotEmpty: func() *s3err.Error {
 		return s3err.InvalidArgument("An object key ending in / is a directory and must have an empty body.")
 	},

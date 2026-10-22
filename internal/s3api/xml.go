@@ -68,7 +68,7 @@ type listBucketResult struct {
 	Prefix                string         `xml:"Prefix"`
 	Marker                *string        `xml:"Marker,omitempty"`
 	NextMarker            string         `xml:"NextMarker,omitempty"`
-	ContinuationToken     string         `xml:"ContinuationToken,omitempty"`
+	ContinuationToken     *string        `xml:"ContinuationToken,omitempty"`
 	NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
 	StartAfter            string         `xml:"StartAfter,omitempty"`
 	KeyCount              *int           `xml:"KeyCount,omitempty"`
@@ -78,6 +78,64 @@ type listBucketResult struct {
 	IsTruncated           bool           `xml:"IsTruncated"`
 	Contents              []listObject   `xml:"Contents"`
 	CommonPrefixes        []commonPrefix `xml:"CommonPrefixes"`
+}
+
+type objectVersion struct {
+	Key          string `xml:"Key"`
+	VersionID    string `xml:"VersionId"`
+	IsLatest     bool   `xml:"IsLatest"`
+	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	Size         int64  `xml:"Size"`
+	StorageClass string `xml:"StorageClass"`
+	Owner        *owner `xml:"Owner,omitempty"`
+}
+
+type listVersionsResult struct {
+	XMLName             xml.Name        `xml:"ListVersionsResult"`
+	NS                  string          `xml:"xmlns,attr"`
+	Name                string          `xml:"Name"`
+	Prefix              string          `xml:"Prefix"`
+	KeyMarker           string          `xml:"KeyMarker"`
+	VersionIDMarker     string          `xml:"VersionIdMarker"`
+	NextKeyMarker       string          `xml:"NextKeyMarker,omitempty"`
+	NextVersionIDMarker string          `xml:"NextVersionIdMarker,omitempty"`
+	MaxKeys             int             `xml:"MaxKeys"`
+	Delimiter           string          `xml:"Delimiter,omitempty"`
+	EncodingType        string          `xml:"EncodingType,omitempty"`
+	IsTruncated         bool            `xml:"IsTruncated"`
+	Versions            []objectVersion `xml:"Version"`
+	CommonPrefixes      []commonPrefix  `xml:"CommonPrefixes"`
+}
+
+type attributesChecksum struct {
+	checksumFields
+	ChecksumType string `xml:"ChecksumType"`
+}
+
+type attributesPart struct {
+	PartNumber int   `xml:"PartNumber"`
+	Size       int64 `xml:"Size"`
+	checksumFields
+}
+
+type attributesParts struct {
+	TotalPartsCount      int              `xml:"PartsCount"`
+	PartNumberMarker     int              `xml:"PartNumberMarker"`
+	NextPartNumberMarker int              `xml:"NextPartNumberMarker"`
+	MaxParts             int              `xml:"MaxParts"`
+	IsTruncated          bool             `xml:"IsTruncated"`
+	Parts                []attributesPart `xml:"Part"`
+}
+
+type objectAttributesResult struct {
+	XMLName      xml.Name            `xml:"GetObjectAttributesResponse"`
+	NS           string              `xml:"xmlns,attr"`
+	ETag         string              `xml:"ETag,omitempty"`
+	Checksum     *attributesChecksum `xml:"Checksum,omitempty"`
+	ObjectParts  *attributesParts    `xml:"ObjectParts,omitempty"`
+	StorageClass string              `xml:"StorageClass,omitempty"`
+	ObjectSize   *int64              `xml:"ObjectSize,omitempty"`
 }
 
 type copyPartResult struct {
@@ -139,6 +197,7 @@ type completeMultipartUpload struct {
 	Parts   []struct {
 		PartNumber int    `xml:"PartNumber"`
 		ETag       string `xml:"ETag"`
+		checksumFields
 	} `xml:"Part"`
 }
 
@@ -149,18 +208,51 @@ type completeMultipartUploadResult struct {
 	Bucket   string   `xml:"Bucket"`
 	Key      string   `xml:"Key"`
 	ETag     string   `xml:"ETag"`
+	checksumFields
+	ChecksumType string `xml:"ChecksumType,omitempty"`
 }
 
-type partItem struct {
-	PartNumber        int    `xml:"PartNumber"`
-	LastModified      string `xml:"LastModified"`
-	ETag              string `xml:"ETag"`
-	Size              int64  `xml:"Size"`
+// checksumFields carries one value per checksum algorithm in S3 documents.
+type checksumFields struct {
 	ChecksumCRC32     string `xml:"ChecksumCRC32,omitempty"`
 	ChecksumCRC32C    string `xml:"ChecksumCRC32C,omitempty"`
 	ChecksumCRC64NVME string `xml:"ChecksumCRC64NVME,omitempty"`
 	ChecksumSHA1      string `xml:"ChecksumSHA1,omitempty"`
 	ChecksumSHA256    string `xml:"ChecksumSHA256,omitempty"`
+}
+
+func (c *checksumFields) fields() map[string]*string {
+	return map[string]*string{
+		"CRC32": &c.ChecksumCRC32, "CRC32C": &c.ChecksumCRC32C, "CRC64NVME": &c.ChecksumCRC64NVME,
+		"SHA1": &c.ChecksumSHA1, "SHA256": &c.ChecksumSHA256,
+	}
+}
+
+func newChecksumFields(sums map[string]string) checksumFields {
+	var c checksumFields
+	for alg, f := range c.fields() {
+		*f = sums[alg]
+	}
+	return c
+}
+
+// values returns the algorithms that carry a value.
+func (c checksumFields) values() map[string]string {
+	out := map[string]string{}
+	for alg, f := range c.fields() {
+		if *f != "" {
+			out[alg] = *f
+		}
+	}
+	return out
+}
+
+type partItem struct {
+	PartNumber   int    `xml:"PartNumber"`
+	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	Size         int64  `xml:"Size"`
+	checksumFields
 }
 
 type listPartsResult struct {

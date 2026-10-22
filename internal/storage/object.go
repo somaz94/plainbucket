@@ -308,5 +308,14 @@ func (s *Store) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, ds
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	return s.commit(dstBucket, dstKey, tmp, sidecar{ETag: md5ETag(sum), Checksums: src.Checksums, Metadata: md}, o.Cond)
+	return s.commit(dstBucket, dstKey, tmp, sidecar{ETag: md5ETag(sum), Checksums: copiedChecksums(src), Metadata: md}, o.Cond)
+}
+
+// copiedChecksums keeps the source's full-object checksums: a copy is a single part, so a
+// composite checksum of the source's parts does not describe it.
+func copiedChecksums(src ObjectInfo) map[string]string {
+	if src.ChecksumType == ChecksumComposite {
+		return nil
+	}
+	return src.Checksums
 }

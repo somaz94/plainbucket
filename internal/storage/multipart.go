@@ -30,10 +30,23 @@ var (
 )
 
 type uploadMeta struct {
-	Bucket    string    `json:"bucket"`
-	Key       string    `json:"key"`
-	Initiated time.Time `json:"initiated"`
+	Bucket    string            `json:"bucket"`
+	Key       string            `json:"key"`
+	Initiated time.Time         `json:"initiated"`
+	Checksum  MultipartChecksum `json:"checksum,omitzero"`
 	Metadata
+}
+
+// MultipartChecksum is the checksum CreateMultipartUpload asks the object to carry.
+type MultipartChecksum struct {
+	Algorithm string `json:"algorithm,omitempty"`
+	Type      string `json:"type,omitempty"` // COMPOSITE or FULL_OBJECT
+}
+
+// CompleteChecksums are the checksums a CompleteMultipartUpload request declares.
+type CompleteChecksums struct {
+	Object map[string]string         // algorithm -> value, from the request headers
+	Parts  map[int]map[string]string // part number -> algorithm -> value, from the document
 }
 
 type partMeta struct {
@@ -68,7 +81,7 @@ type CompletePart struct {
 func partFile(n int) string { return fmt.Sprintf("part-%05d", n) }
 
 // CreateUpload starts a multipart upload and returns its ID.
-func (s *Store) CreateUpload(bucket, key string, md Metadata) (string, error) {
+func (s *Store) CreateUpload(bucket, key string, md Metadata, ck MultipartChecksum) (string, error) {
 	if err := s.requireBucket(bucket); err != nil {
 		return "", err
 	}
@@ -81,7 +94,7 @@ func (s *Store) CreateUpload(bucket, key string, md Metadata) (string, error) {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	id := hex.EncodeToString(b[:])
-	raw, err := json.Marshal(uploadMeta{Bucket: bucket, Key: key, Initiated: s.now().UTC(), Metadata: md})
+	raw, err := json.Marshal(uploadMeta{Bucket: bucket, Key: key, Initiated: s.now().UTC(), Checksum: ck, Metadata: md})
 	if err != nil {
 		return "", err
 	}
@@ -214,7 +227,7 @@ func readPart(dir string, n int) (partMeta, error) {
 // concatenated part MD5s followed by -<part count>, as S3 computes it. maxSize (0 = no
 // limit) is checked before anything is written, so an oversized upload never replaces
 // the existing object.
-func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, parts []CompletePart, cond Conditions, maxSize int64) (ObjectInfo, error) {
+func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, parts []CompletePart, cond Conditions, maxSize int64, ck CompleteChecksums) (ObjectInfo, error) {
 	unlock := s.lockUpload(id)
 	defer unlock()
 	u, dir, err := s.loadUpload(bucket, key, id)
@@ -238,7 +251,16 @@ func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, part
 		if i < len(parts)-1 && pm.Size < s.MinPartSize {
 			return ObjectInfo{}, ErrEntityTooSmall
 		}
+		for alg, v := range ck.Parts[p.Number] {
+			if got, ok := pm.Checksums[alg]; !ok || got != v {
+				return ObjectInfo{}, ErrInvalidPart
+			}
+		}
 		metas[i] = pm
+	}
+	sum, err := newObjectChecksum(u.Checksum, ck.Object, len(parts))
+	if err != nil {
+		return ObjectInfo{}, err
 	}
 	var total int64
 	for _, pm := range metas {
@@ -258,15 +280,22 @@ func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, part
 	name := tmp.Name()
 	defer func() { _ = os.Remove(name) }()
 	etagSum := md5.New() //nolint:gosec // S3 ETag format
+	records := make([]PartRecord, len(parts))
 	for i, p := range parts {
 		if err = ctx.Err(); err != nil {
 			break
 		}
 		raw, _ := hex.DecodeString(trimETag(metas[i].ETag))
 		etagSum.Write(raw)
-		if err = appendFile(tmp, filepath.Join(dir, partFile(p.Number))); err != nil {
+		// Only the object's algorithm: the sidecar is read on every GET and listing row.
+		records[i] = PartRecord{Size: metas[i].Size}
+		if v, ok := metas[i].Checksums[sum.algorithm()]; ok {
+			records[i].Checksums = map[string]string{sum.alg: v}
+		}
+		if err = appendFile(sum.part(tmp), filepath.Join(dir, partFile(p.Number))); err != nil {
 			break
 		}
+		sum.endPart()
 	}
 	if err == nil {
 		err = tmp.Chmod(filePerm)
@@ -282,7 +311,15 @@ func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, part
 	}
 
 	etag := `"` + hex.EncodeToString(etagSum.Sum(nil)) + "-" + strconv.Itoa(len(parts)) + `"`
-	info, err := s.commit(bucket, key, name, sidecar{ETag: etag, Metadata: u.Metadata}, cond)
+	m := sidecar{ETag: etag, Parts: records, Metadata: u.Metadata}
+	if sum != nil {
+		v := sum.value()
+		if want, ok := ck.Object[sum.alg]; ok && want != v {
+			return ObjectInfo{}, ErrBadDigest
+		}
+		m.Checksums, m.ChecksumType = map[string]string{sum.alg: v}, sum.typ
+	}
+	info, err := s.commit(bucket, key, name, m, cond)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -290,7 +327,7 @@ func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, part
 	return info, nil
 }
 
-func appendFile(dst *os.File, src string) error {
+func appendFile(dst io.Writer, src string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return err

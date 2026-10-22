@@ -157,6 +157,12 @@ func TestConditions(t *testing.T) {
 	if _, err := s.PutObject("bkt", "new", strings.NewReader("2"), 1, PutOptions{Cond: Conditions{IfNoneMatch: "*"}}); err != nil {
 		t.Errorf("If-None-Match on new: %v", err)
 	}
+	if _, err := s.PutObject("bkt", "lock", strings.NewReader("2"), 1, PutOptions{Cond: Conditions{IfNoneMatch: first.ETag}}); !errors.Is(err, ErrPreconditionFailed) {
+		t.Errorf("If-None-Match with the current ETag: %v", err)
+	}
+	if _, err := s.PutObject("bkt", "new", strings.NewReader("3"), 1, PutOptions{Cond: Conditions{IfNoneMatch: `"other"`}}); err != nil {
+		t.Errorf("If-None-Match with another ETag: %v", err)
+	}
 	if _, err := s.PutObject("bkt", "lock", strings.NewReader("3"), 1, PutOptions{Cond: Conditions{IfMatch: `"bogus"`}}); !errors.Is(err, ErrPreconditionFailed) {
 		t.Errorf("If-Match mismatch: %v", err)
 	}
@@ -348,7 +354,7 @@ func TestBuckets(t *testing.T) {
 	}
 
 	put(t, s, "k", "x")
-	id, _ := s.CreateUpload("bkt", "up", Metadata{})
+	id, _ := s.CreateUpload("bkt", "up", Metadata{}, MultipartChecksum{})
 	if err := s.DeleteBucket("bkt"); !errors.Is(err, ErrBucketNotEmpty) {
 		t.Errorf("non-empty: %v", err)
 	}

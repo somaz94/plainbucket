@@ -57,10 +57,10 @@ func TestCompleteTooLargeKeepsObject(t *testing.T) {
 	s := newStore(t)
 	s.MinPartSize = 1
 	put(t, s, "k", "previous")
-	id, _ := s.CreateUpload("bkt", "k", Metadata{})
+	id, _ := s.CreateUpload("bkt", "k", Metadata{}, MultipartChecksum{})
 	p1, _ := s.PutPart("bkt", "k", id, 1, strings.NewReader("12345"), 5, nil)
 	p2, _ := s.PutPart("bkt", "k", id, 2, strings.NewReader("12345"), 5, nil)
-	_, err := s.CompleteUpload(context.Background(), "bkt", "k", id, []CompletePart{{1, p1.ETag}, {2, p2.ETag}}, Conditions{}, 8)
+	_, err := s.CompleteUpload(context.Background(), "bkt", "k", id, []CompletePart{{1, p1.ETag}, {2, p2.ETag}}, Conditions{}, 8, CompleteChecksums{})
 	if !errors.Is(err, ErrEntityTooLarge) {
 		t.Fatalf("err = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestCompleteTooLargeKeepsObject(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := s.CompleteUpload(ctx, "bkt", "k", id, []CompletePart{{1, p1.ETag}, {2, p2.ETag}}, Conditions{}, 0); !errors.Is(err, context.Canceled) {
+	if _, err := s.CompleteUpload(ctx, "bkt", "k", id, []CompletePart{{1, p1.ETag}, {2, p2.ETag}}, Conditions{}, 0, CompleteChecksums{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled complete: %v", err)
 	}
 	if body, _ := read(t, s, "k"); body != "previous" {

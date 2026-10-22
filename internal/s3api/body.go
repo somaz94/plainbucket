@@ -107,7 +107,8 @@ func newPayload(req *request, timeout time.Duration, withDefault bool) (*payload
 		}
 	}
 
-	if v := r.Header.Get("Content-MD5"); v != "" {
+	if _, ok := r.Header["Content-Md5"]; ok {
+		v := r.Header.Get("Content-MD5")
 		sum, err := base64.StdEncoding.DecodeString(v)
 		if err != nil || len(sum) != md5.Size {
 			return nil, s3err.InvalidDigest()
@@ -186,11 +187,15 @@ func (p *payload) verify(md5sum []byte) (map[string]string, error) {
 	return out, nil
 }
 
-// readXMLBody reads and verifies a small request document.
-func readXMLBody(req *request, timeout time.Duration) ([]byte, error) {
+// readXMLBody reads and verifies a small request document. checksums false leaves the
+// x-amz-checksum-* headers unchecked, for requests where they describe something else.
+func readXMLBody(req *request, timeout time.Duration, checksums bool) ([]byte, error) {
 	p, err := newPayload(req, timeout, false)
 	if err != nil {
 		return nil, err
+	}
+	if !checksums {
+		clear(p.want)
 	}
 	if p.size > maxXMLBody {
 		return nil, s3err.InvalidRequest("The request document is too large.")

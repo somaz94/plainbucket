@@ -55,7 +55,7 @@ func (h *Handler) authorizeAnonymous(req *request) error {
 		return denied
 	}
 	for k := range req.q {
-		if k == "uploadId" || k == "partNumber" || k == "tagging" {
+		if k == "uploadId" || k == "partNumber" || k == "tagging" || k == "attributes" {
 			return denied
 		}
 		if strings.HasPrefix(k, "response-") {

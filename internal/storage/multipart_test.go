@@ -17,7 +17,7 @@ import (
 func TestMultipartLifecycle(t *testing.T) {
 	s := newStore(t)
 	s.MinPartSize = 4
-	id, err := s.CreateUpload("bkt", "big/file.bin", Metadata{ContentType: "application/x-test"})
+	id, err := s.CreateUpload("bkt", "big/file.bin", Metadata{ContentType: "application/x-test"}, MultipartChecksum{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestMultipartLifecycle(t *testing.T) {
 
 	info, err := s.CompleteUpload(context.Background(), "bkt", "big/file.bin", id, []CompletePart{
 		{1, p1.ETag}, {2, strings.Trim(p2.ETag, `"`)}, {3, p3.ETag},
-	}, Conditions{}, 0)
+	}, Conditions{}, 0, CompleteChecksums{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestMultipartLifecycle(t *testing.T) {
 	if _, err := os.Stat(s.sys("uploads", id)); !os.IsNotExist(err) {
 		t.Error("upload directory kept after completion")
 	}
-	if _, err := s.CompleteUpload(context.Background(), "bkt", "big/file.bin", id, []CompletePart{{1, p1.ETag}}, Conditions{}, 0); !errors.Is(err, ErrNoSuchUpload) {
+	if _, err := s.CompleteUpload(context.Background(), "bkt", "big/file.bin", id, []CompletePart{{1, p1.ETag}}, Conditions{}, 0, CompleteChecksums{}); !errors.Is(err, ErrNoSuchUpload) {
 		t.Errorf("complete twice: %v", err)
 	}
 }
@@ -83,7 +83,7 @@ func TestMultipartLifecycle(t *testing.T) {
 func TestMultipartErrors(t *testing.T) {
 	s := newStore(t)
 	s.MinPartSize = 4
-	id, _ := s.CreateUpload("bkt", "k", Metadata{})
+	id, _ := s.CreateUpload("bkt", "k", Metadata{}, MultipartChecksum{})
 	p1, _ := s.PutPart("bkt", "k", id, 1, strings.NewReader("abc"), 3, nil)
 	p2, _ := s.PutPart("bkt", "k", id, 2, strings.NewReader("abcd"), 4, nil)
 
@@ -100,7 +100,7 @@ func TestMultipartErrors(t *testing.T) {
 		{"too small", []CompletePart{{1, p1.ETag}, {2, p2.ETag}}, ErrEntityTooSmall},
 	}
 	for _, tc := range cases {
-		if _, err := s.CompleteUpload(context.Background(), "bkt", "k", id, tc.parts, Conditions{}, 0); !errors.Is(err, tc.want) {
+		if _, err := s.CompleteUpload(context.Background(), "bkt", "k", id, tc.parts, Conditions{}, 0, CompleteChecksums{}); !errors.Is(err, tc.want) {
 			t.Errorf("%s: %v, want %v", tc.name, err, tc.want)
 		}
 	}
@@ -121,16 +121,16 @@ func TestMultipartErrors(t *testing.T) {
 	if _, err := s.PutPart("bkt", "k", id, 1, strings.NewReader("ab"), 3, nil); !errors.Is(err, ErrShortBody) {
 		t.Errorf("short part: %v", err)
 	}
-	if _, err := s.CreateUpload("bkt", "dir/", Metadata{}); !errors.Is(err, ErrMarkerNotEmpty) {
+	if _, err := s.CreateUpload("bkt", "dir/", Metadata{}, MultipartChecksum{}); !errors.Is(err, ErrMarkerNotEmpty) {
 		t.Errorf("upload to a marker key: %v", err)
 	}
-	if _, err := s.CreateUpload("nope", "k", Metadata{}); !errors.Is(err, ErrNoSuchBucket) {
+	if _, err := s.CreateUpload("nope", "k", Metadata{}, MultipartChecksum{}); !errors.Is(err, ErrNoSuchBucket) {
 		t.Errorf("missing bucket: %v", err)
 	}
 
 	// The last part may be small; the condition is checked on completion.
 	put(t, s, "k", "existing")
-	_, err := s.CompleteUpload(context.Background(), "bkt", "k", id, []CompletePart{{2, p2.ETag}}, Conditions{IfNoneMatch: "*"}, 0)
+	_, err := s.CompleteUpload(context.Background(), "bkt", "k", id, []CompletePart{{2, p2.ETag}}, Conditions{IfNoneMatch: "*"}, 0, CompleteChecksums{})
 	if !errors.Is(err, ErrPreconditionFailed) {
 		t.Errorf("conditional complete: %v", err)
 	}
@@ -148,10 +148,10 @@ func TestMultipartErrors(t *testing.T) {
 func TestListUploadsOrderAndMarkers(t *testing.T) {
 	s := newStore(t)
 	_ = s.CreateBucket("other")
-	a1, _ := s.CreateUpload("bkt", "a", Metadata{})
-	a2, _ := s.CreateUpload("bkt", "a", Metadata{})
-	b1, _ := s.CreateUpload("bkt", "b", Metadata{})
-	_, _ = s.CreateUpload("other", "a", Metadata{})
+	a1, _ := s.CreateUpload("bkt", "a", Metadata{}, MultipartChecksum{})
+	a2, _ := s.CreateUpload("bkt", "a", Metadata{}, MultipartChecksum{})
+	b1, _ := s.CreateUpload("bkt", "b", Metadata{}, MultipartChecksum{})
+	_, _ = s.CreateUpload("other", "a", Metadata{}, MultipartChecksum{})
 	if a2 < a1 {
 		a1, a2 = a2, a1
 	}
@@ -193,8 +193,8 @@ func TestSweep(t *testing.T) {
 	fresh := s.sys("tmp", "upload-fresh")
 	_ = os.WriteFile(fresh, nil, 0o600)
 
-	expired, _ := s.CreateUpload("bkt", "e", Metadata{})
-	live, _ := s.CreateUpload("bkt", "l", Metadata{})
+	expired, _ := s.CreateUpload("bkt", "e", Metadata{}, MultipartChecksum{})
+	live, _ := s.CreateUpload("bkt", "l", Metadata{}, MultipartChecksum{})
 	raw, _ := os.ReadFile(filepath.Join(s.sys("uploads", expired), uploadMetaFile))
 	_ = os.WriteFile(filepath.Join(s.sys("uploads", expired), uploadMetaFile),
 		[]byte(strings.Replace(string(raw), now.UTC().Format("2006"), "2001", 1)), 0o600)
@@ -280,7 +280,7 @@ func TestPutPartCopy(t *testing.T) {
 	s := newStore(t)
 	s.MinPartSize = 4
 	src := put(t, s, "src", "0123456789")
-	id, err := s.CreateUpload("bkt", "dst", Metadata{})
+	id, err := s.CreateUpload("bkt", "dst", Metadata{}, MultipartChecksum{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestPutPartCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := s.CompleteUpload(ctx, "bkt", "dst", id, []CompletePart{{Number: 1, ETag: p1.ETag}, {Number: 2, ETag: p2.ETag}}, Conditions{}, 0)
+	info, err := s.CompleteUpload(ctx, "bkt", "dst", id, []CompletePart{{Number: 1, ETag: p1.ETag}, {Number: 2, ETag: p2.ETag}}, Conditions{}, 0, CompleteChecksums{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,12 +301,12 @@ func TestPutPartCopy(t *testing.T) {
 		t.Errorf("assembled %q (%d)", got, info.Size)
 	}
 
-	whole, _ := s.CreateUpload("bkt", "whole", Metadata{})
+	whole, _ := s.CreateUpload("bkt", "whole", Metadata{}, MultipartChecksum{})
 	if p, err := s.PutPartCopy(ctx, "bkt", "src", nil, "bkt", "whole", whole, 1, CopyOptions{}); err != nil || p.Size != 10 {
 		t.Errorf("whole object part: %+v %v", p, err)
 	}
 
-	id, _ = s.CreateUpload("bkt", "dst2", Metadata{})
+	id, _ = s.CreateUpload("bkt", "dst2", Metadata{}, MultipartChecksum{})
 	for name, c := range map[string]struct {
 		rng  *ByteRange
 		o    CopyOptions
@@ -326,7 +326,7 @@ func TestPutPartCopy(t *testing.T) {
 			t.Errorf("%s: %v, want %v", name, err, c.want)
 		}
 	}
-	marker, _ := s.CreateUpload("bkt", "m", Metadata{})
+	marker, _ := s.CreateUpload("bkt", "m", Metadata{}, MultipartChecksum{})
 	if _, err := s.PutObject("bkt", "dir/", strings.NewReader(""), 0, PutOptions{}); err != nil {
 		t.Fatal(err)
 	}

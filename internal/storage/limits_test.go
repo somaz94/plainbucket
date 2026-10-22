@@ -131,10 +131,10 @@ func TestQuotaRefusesWrites(t *testing.T) {
 		t.Errorf("usage after delete = %+v", u)
 	}
 	s.MinPartSize = 1
-	id, _ := s.CreateUpload("bkt", "mp", Metadata{})
+	id, _ := s.CreateUpload("bkt", "mp", Metadata{}, MultipartChecksum{})
 	p1, _ := s.PutPart("bkt", "mp", id, 1, strings.NewReader("123456"), 6, nil)
 	p2, _ := s.PutPart("bkt", "mp", id, 2, strings.NewReader("123456"), 6, nil)
-	if _, err := s.CompleteUpload(context.Background(), "bkt", "mp", id, []CompletePart{{1, p1.ETag}, {2, p2.ETag}}, Conditions{}, 0); !errors.Is(err, ErrQuotaExceeded) {
+	if _, err := s.CompleteUpload(context.Background(), "bkt", "mp", id, []CompletePart{{1, p1.ETag}, {2, p2.ETag}}, Conditions{}, 0, CompleteChecksums{}); !errors.Is(err, ErrQuotaExceeded) {
 		t.Errorf("multipart over quota: %v", err)
 	}
 	// The commit-time check catches what the early one cannot see.

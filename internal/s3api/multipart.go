@@ -6,19 +6,42 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/somaz94/plainbucket/internal/checksum"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-const maxListParts = 1000
+const (
+	maxListParts  = 1000
+	maxPartNumber = 10000
+)
 
 func (h *Handler) createMultipartUpload(req *request) error {
-	id, err := h.store.CreateUpload(req.bucket, req.key, metadataFromHeaders(req.r.Header))
+	ck := storage.MultipartChecksum{
+		Algorithm: strings.ToUpper(req.r.Header.Get("X-Amz-Checksum-Algorithm")),
+		Type:      strings.ToUpper(req.r.Header.Get("X-Amz-Checksum-Type")),
+	}
+	if ck.Algorithm == "" && ck.Type != "" {
+		return s3err.InvalidRequest("x-amz-checksum-type requires x-amz-checksum-algorithm.")
+	}
+	if ck.Algorithm != "" {
+		if _, ok := checksum.New(ck.Algorithm); !ok {
+			return s3err.InvalidRequest("Unsupported checksum algorithm " + ck.Algorithm + ".")
+		}
+		if ck.Type == "" {
+			ck.Type = storage.DefaultChecksumType(ck.Algorithm)
+		}
+		if !storage.ValidChecksumType(ck.Algorithm, ck.Type) {
+			return s3err.InvalidRequest("The " + ck.Type + " checksum type cannot be used with " + ck.Algorithm + ".")
+		}
+	}
+	id, err := h.store.CreateUpload(req.bucket, req.key, metadataFromHeaders(req.r.Header), ck)
 	if err != nil {
 		return err
 	}
-	if alg := req.r.Header.Get("X-Amz-Checksum-Algorithm"); alg != "" {
-		req.w.Header().Set("X-Amz-Checksum-Algorithm", alg)
+	if ck.Algorithm != "" {
+		req.w.Header().Set("X-Amz-Checksum-Algorithm", ck.Algorithm)
+		req.w.Header().Set("X-Amz-Checksum-Type", ck.Type)
 	}
 	writeXML(req.w, http.StatusOK, initiateMultipartUploadResult{NS: s3NS, Bucket: req.bucket, Key: req.key, UploadID: id})
 	return nil
@@ -107,7 +130,8 @@ func parseCopyRange(v string) (*storage.ByteRange, error) {
 }
 
 func (h *Handler) completeMultipartUpload(req *request) error {
-	body, err := readXMLBody(req, h.opts.BodyTimeout)
+	// Here x-amz-checksum-* declare the object's checksum, not the document's.
+	body, err := readXMLBody(req, h.opts.BodyTimeout, false)
 	if err != nil {
 		return err
 	}
@@ -115,19 +139,27 @@ func (h *Handler) completeMultipartUpload(req *request) error {
 	if xml.Unmarshal(body, &doc) != nil {
 		return s3err.MalformedXML()
 	}
+	ck := storage.CompleteChecksums{Object: map[string]string{}, Parts: map[int]map[string]string{}}
+	for name := range req.r.Header {
+		if alg, ok := checksum.FromHeader(name); ok {
+			ck.Object[alg] = req.r.Header.Get(name)
+		}
+	}
 	parts := make([]storage.CompletePart, len(doc.Parts))
 	for i, p := range doc.Parts {
 		parts[i] = storage.CompletePart{Number: p.PartNumber, ETag: p.ETag}
+		ck.Parts[p.PartNumber] = p.values()
 	}
-	cond, err := writeConditions(req.r.Header)
+	cond := writeConditions(req.r.Header)
+	info, err := h.store.CompleteUpload(req.r.Context(), req.bucket, req.key, req.q.Get("uploadId"), parts, cond, h.opts.MaxObjectSize, ck)
 	if err != nil {
 		return err
 	}
-	info, err := h.store.CompleteUpload(req.r.Context(), req.bucket, req.key, req.q.Get("uploadId"), parts, cond, h.opts.MaxObjectSize)
-	if err != nil {
-		return err
+	res := completeMultipartUploadResult{NS: s3NS, Location: req.url(req.key), Bucket: req.bucket, Key: req.key, ETag: info.ETag}
+	if len(info.Checksums) > 0 {
+		res.checksumFields, res.ChecksumType = newChecksumFields(info.Checksums), info.ChecksumType
 	}
-	writeXML(req.w, http.StatusOK, completeMultipartUploadResult{NS: s3NS, Location: req.url(req.key), Bucket: req.bucket, Key: req.key, ETag: info.ETag})
+	writeXML(req.w, http.StatusOK, res)
 	return nil
 }
 
@@ -170,7 +202,7 @@ func (h *Handler) listParts(req *request) error {
 	}
 	for _, p := range parts {
 		item := partItem{PartNumber: p.Number, LastModified: isoTime(p.ModTime), ETag: p.ETag, Size: p.Size}
-		partChecksums(&item, p.Checksums)
+		item.checksumFields = newChecksumFields(p.Checksums)
 		res.Parts = append(res.Parts, item)
 		res.NextPartNumberMarker = p.Number
 	}

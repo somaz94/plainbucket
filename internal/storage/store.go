@@ -52,6 +52,8 @@ var (
 	ErrPreconditionFailed = errors.New("precondition failed")
 	ErrNoSuchUpload       = errors.New("no such upload")
 	ErrInvalidPart        = errors.New("invalid part")
+	ErrBadDigest          = errors.New("checksum does not match the object")
+	ErrInvalidChecksum    = errors.New("checksum algorithm or type not valid for this upload")
 	ErrInvalidPartOrder   = errors.New("parts not in ascending order")
 	ErrEntityTooSmall     = errors.New("part too small")
 	ErrMarkerNotEmpty     = errors.New("a key ending in / must have an empty body")
@@ -69,8 +71,17 @@ type ObjectInfo struct {
 	ContentType string
 	UserMeta    map[string]string
 	Headers     map[string]string // Cache-Control, Content-Disposition, ...
-	Checksums   map[string]string // algorithm -> base64, full object only
-	IsDir       bool              // a directory marker key ending in /
+	Checksums   map[string]string // algorithm -> base64; "<digest>-<parts>" when ChecksumType is COMPOSITE
+	// ChecksumType is COMPOSITE or FULL_OBJECT; empty means FULL_OBJECT.
+	ChecksumType string
+	Parts        []PartRecord // the parts a multipart upload was assembled from, in order
+	IsDir        bool         // a directory marker key ending in /
+}
+
+// PartRecord is one part of an object completed from a multipart upload.
+type PartRecord struct {
+	Size      int64             `json:"size"`
+	Checksums map[string]string `json:"checksums,omitempty"`
 }
 
 // Metadata is what a client sets on an object besides its data.
@@ -83,11 +94,13 @@ type Metadata struct {
 // sidecar is stored per object under SysDir/meta. It is trusted only while size and
 // mtime still match the data file, so an edit made outside the server invalidates it.
 type sidecar struct {
-	Key       string            `json:"key"`
-	ETag      string            `json:"etag"`
-	Size      int64             `json:"size"`
-	MtimeNs   int64             `json:"mtime_ns"`
-	Checksums map[string]string `json:"checksums,omitempty"`
+	Key          string            `json:"key"`
+	ETag         string            `json:"etag"`
+	Size         int64             `json:"size"`
+	MtimeNs      int64             `json:"mtime_ns"`
+	Checksums    map[string]string `json:"checksums,omitempty"`
+	ChecksumType string            `json:"checksum_type,omitempty"`
+	Parts        []PartRecord      `json:"parts,omitempty"`
 	// Dir marks an explicit directory marker (a key ending in /); size and mtime are unused.
 	Dir bool `json:"dir,omitempty"`
 	Metadata
@@ -96,7 +109,7 @@ type sidecar struct {
 // Conditions are the If-Match / If-None-Match headers of a write.
 type Conditions struct {
 	IfMatch     string // ETag the current object must have
-	IfNoneMatch string // only "*" is supported: the key must not exist
+	IfNoneMatch string // "*": the key must not exist; an ETag: the current object must not have it
 }
 
 // Store is a filesystem-backed object store. Every path derived from a bucket name or
@@ -394,6 +407,7 @@ func (m sidecar) info(mod time.Time) ObjectInfo {
 	return ObjectInfo{
 		Key: m.Key, Size: m.Size, ModTime: mod, ETag: m.ETag,
 		ContentType: m.ContentType, UserMeta: m.UserMeta, Headers: m.Headers, Checksums: m.Checksums,
+		ChecksumType: m.ChecksumType, Parts: m.Parts,
 	}
 }
 
@@ -410,7 +424,7 @@ func (s *Store) checkConditions(bucket, key string, cond Conditions) error {
 	if err != nil && !errors.Is(err, ErrNoSuchKey) {
 		return err
 	}
-	if cond.IfNoneMatch != "" && exists {
+	if exists && (cond.IfNoneMatch == "*" || cond.IfNoneMatch != "" && trimETag(cond.IfNoneMatch) == trimETag(info.ETag)) {
 		return ErrPreconditionFailed
 	}
 	if cond.IfMatch != "" {
