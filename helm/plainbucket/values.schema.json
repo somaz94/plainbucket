@@ -166,6 +166,80 @@
             "TLS12",
             "TLS13"
           ]
+        },
+        "buckets": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "public": {
+                "type": "boolean"
+              },
+              "website": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "index": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                }
+              },
+              "cors": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "allowed-origins"
+                ],
+                "properties": {
+                  "allowed-origins": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1
+                  },
+                  "allowed-methods": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "GET",
+                        "HEAD",
+                        "PUT",
+                        "POST",
+                        "DELETE"
+                      ]
+                    }
+                  },
+                  "allowed-headers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "expose-headers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "max-age": {
+                    "type": "string",
+                    "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

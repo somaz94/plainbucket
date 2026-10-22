@@ -100,6 +100,15 @@ render "${KEY[@]}" -f "${CHART}/examples/static-site.yaml"
 has 'host: "*.s3.example.com"' "wildcard ingress host"
 ok "ingress"
 
+render "${KEY[@]}" -f "${CHART}/examples/static-site.yaml" --show-only templates/configmap.yaml
+has "error: 404.html" "bucket settings in the config file"
+render "${KEY[@]}" -f "${CHART}/examples/static-site.yaml" --show-only templates/deployment.yaml
+has 'args: ["-c", "/etc/plainbucket/config.yaml"]' "config file argument"
+has "checksum/config:" "config checksum annotation"
+render "${KEY[@]}" --show-only templates/deployment.yaml
+lacks "args:" "no config file without bucket settings"
+ok "bucket settings"
+
 render "${KEY[@]}" --show-only templates/tests/test-connection.yaml
 has "/healthz" "helm test pod"
 render "${KEY[@]}" --set config.tlsSecret=pb-tls --show-only templates/tests/test-connection.yaml
@@ -125,6 +134,9 @@ expect_fail "terminationGracePeriodSeconds" "${KEY[@]}" --set terminationGracePe
 expect_fail "logFormat" "${KEY[@]}" --set config.logFormat=xml
 expect_fail "accessMode" "${KEY[@]}" --set persistence.accessMode=RWX
 expect_fail "port" "${KEY[@]}" --set service.port=99999
+expect_fail "Bad_Name" "${KEY[@]}" --set config.buckets.Bad_Name.public=true
+expect_fail "publik" "${KEY[@]}" --set config.buckets.www.publik=true
+expect_fail "allowed-methods" "${KEY[@]}" --set "config.buckets.www.cors.allowed-origins={*}" --set "config.buckets.www.cors.allowed-methods={PATCH}"
 ok "schema rejects invalid values"
 
 for f in "${CHART}"/examples/*.yaml; do

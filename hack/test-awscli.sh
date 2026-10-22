@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end check with the real aws cli: starts bin/plainbucket on a temporary root and
-# drives mb, cp (single and multipart), ls, sync, conditional put, public-read,
-# virtual-hosted requests (via curl --aws-sigv4), rm and rb against it.
+# drives mb, cp (single, multipart, server-side), ls, sync, conditional put, public-read,
+# a static website with CORS, virtual-hosted requests (via curl --aws-sigv4), rm and rb.
 #
 # Usage: hack/test-awscli.sh   (after `make build`; needs aws cli v2)
 set -euo pipefail
@@ -19,7 +19,14 @@ export AWS_SHARED_CREDENTIALS_FILE=/dev/null
 
 export PLAINBUCKET_PUBLIC_BUCKETS="e2e-pub"
 export PLAINBUCKET_DOMAINS="localhost"
-start_server
+cat >"${WORK}/config.yaml" <<'EOF_CONFIG'
+buckets:
+  e2e-site:
+    public: true
+    website: {error: 404.html}
+    cors: {allowed-origins: ["https://app.example.com"]}
+EOF_CONFIG
+start_server -c "${WORK}/config.yaml"
 s3() { aws --endpoint-url "${ENDPOINT}" "$@"; }
 
 echo "aws cli e2e against ${ENDPOINT}"
@@ -72,6 +79,21 @@ vh -T "${WORK}/small.bin" "http://e2e.localhost:${PORT}/vhost.bin" >/dev/null &&
     cmp -s "${WORK}/small.bin" "${DATA}/e2e/vhost.bin" && ok "virtual-hosted put" || fail "virtual-hosted put"
 vh "http://e2e.localhost:${PORT}/vhost.bin" | cmp -s - "${WORK}/small.bin" && ok "virtual-hosted get" || fail "virtual-hosted get"
 s3 s3 ls s3://e2e/vhost.bin >/dev/null && ok "path-style sees the virtual-hosted upload" || fail "path-style ls"
+
+mkdir -p "${WORK}/www/blog"
+echo "home" >"${WORK}/www/index.html"
+echo "blog" >"${WORK}/www/blog/index.html"
+echo "gone" >"${WORK}/www/404.html"
+s3 s3 mb s3://e2e-site >/dev/null || fail "mb e2e-site"
+s3 s3 sync "${WORK}/www" s3://e2e-site >/dev/null || fail "sync e2e-site"
+[ "$(curl -fsS "${ENDPOINT}/e2e-site/")" = "home" ] && [ "$(curl -fsSL "${ENDPOINT}/e2e-site/blog")" = "blog" ] &&
+    ok "website index documents" || fail "website index"
+[ "$(curl -sS -o "${WORK}/404.out" -w '%{http_code}' "${ENDPOINT}/e2e-site/nope")" = "404" ] &&
+    [ "$(cat "${WORK}/404.out")" = "gone" ] && ok "website error document" || fail "website error document"
+curl -fsS -o /dev/null -D "${WORK}/cors.h" -X OPTIONS -H "Origin: https://app.example.com" \
+    -H "Access-Control-Request-Method: GET" "${ENDPOINT}/e2e-site/index.html" &&
+    grep -qi "^access-control-allow-origin: https://app.example.com" "${WORK}/cors.h" && ok "CORS preflight" || fail "CORS preflight"
+s3 s3 rb s3://e2e-site --force >/dev/null || fail "rb e2e-site"
 
 s3 s3 rm s3://e2e --recursive >/dev/null && ok "rm --recursive"
 s3 s3 rb s3://e2e >/dev/null && ok "rb"

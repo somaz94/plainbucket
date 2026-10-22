@@ -35,7 +35,7 @@ The chart is also published as an OCI artifact under `oci://ghcr.io/somaz94/char
 
 - `minimal.yaml`: one full-access key and a larger volume.
 - `runner-cache.yaml`: a GitLab Runner cache with a key limited to its bucket (see [docs/gitlab-runner.md](https://github.com/somaz94/plainbucket/blob/main/docs/gitlab-runner.md)).
-- `static-site.yaml`: a public bucket served through an Ingress, with virtual-hosted-style hosts.
+- `static-site.yaml`: a website bucket with index and error documents and CORS, served through an Ingress with virtual-hosted-style hosts. Bucket settings under `config.buckets` are rendered into a ConfigMap passed with `-c`.
 - `tls-metrics.yaml`: HTTPS in the pod and a Prometheus Operator `ServiceMonitor`.
 
 For uploads through an Ingress, raise the controller's body size limit (for ingress-nginx, `nginx.ingress.kubernetes.io/proxy-body-size: "0"`). With `config.tlsSecret` set as well, the controller must speak HTTPS to the pod (`nginx.ingress.kubernetes.io/backend-protocol: HTTPS`).

@@ -73,7 +73,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		Handler: s3api.New(s3api.Options{
 			Store:         store,
 			Credentials:   credentials(cfg),
-			PublicBuckets: cfg.PublicBuckets,
+			Buckets:       bucketPolicies(cfg),
 			Domains:       cfg.Domains,
 			Region:        cfg.Region,
 			MaxObjectSize: cfg.MaxObjectSize,
@@ -124,6 +124,22 @@ func credentials(cfg *config.Config) []s3api.Credential {
 	var out []s3api.Credential
 	for _, c := range cfg.AllCredentials() {
 		out = append(out, s3api.Credential{AccessKey: c.AccessKey, SecretKey: c.SecretKey, Buckets: c.Buckets, ReadOnly: c.ReadOnly})
+	}
+	return out
+}
+
+func bucketPolicies(cfg *config.Config) map[string]s3api.BucketPolicy {
+	out := map[string]s3api.BucketPolicy{}
+	for name, b := range cfg.Buckets {
+		p := s3api.BucketPolicy{Public: b.Public}
+		if w := b.Website; w != nil {
+			p.Website = &s3api.Website{Index: w.Index, Error: w.Error}
+		}
+		if c := b.CORS; c != nil {
+			p.CORS = &s3api.CORS{AllowedOrigins: c.AllowedOrigins, AllowedMethods: c.AllowedMethods,
+				AllowedHeaders: c.AllowedHeaders, ExposeHeaders: c.ExposeHeaders, MaxAge: c.MaxAge}
+		}
+		out[name] = p
 	}
 	return out
 }

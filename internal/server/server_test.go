@@ -184,3 +184,17 @@ func writeCert(t *testing.T) (string, string) {
 	_ = os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600)
 	return cert, keyPath
 }
+
+func TestBucketPolicies(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Buckets = map[string]config.Bucket{
+		"www": {Public: true, Website: &config.Website{Index: "index.html", Error: "404.html"},
+			CORS: &config.CORS{AllowedOrigins: []string{"*"}, MaxAge: time.Minute}},
+		"plain": {},
+	}
+	got := bucketPolicies(cfg)
+	www := got["www"]
+	if !www.Public || www.Website.Error != "404.html" || www.CORS.MaxAge != time.Minute || got["plain"].Website != nil {
+		t.Errorf("policies = %+v", got)
+	}
+}

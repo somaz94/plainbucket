@@ -1,10 +1,18 @@
-# Public static hosting: objects in "www" are readable without credentials, and each
-# bucket is also reachable as <bucket>.s3.example.com (wildcard DNS and certificate).
+# Static hosting: "www" serves index.html and 404.html to anyone, as www.s3.example.com/
+# (wildcard DNS and certificate) or s3.example.com/www/, and lets one origin fetch it.
 auth:
   existingSecret: plainbucket-auth
 config:
-  publicBuckets: [www]
   domains: [s3.example.com]
+  buckets:
+    www:
+      public: true
+      website:
+        index: index.html
+        error: 404.html
+      cors:
+        allowed-origins: ["https://app.example.com"]
+        max-age: 1h
 ingress:
   enabled: true
   className: nginx

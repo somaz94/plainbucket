@@ -185,3 +185,47 @@ func TestCredentialsAndPublicBuckets(t *testing.T) {
 		t.Errorf("no keys at all: %v", err)
 	}
 }
+
+func TestBuckets(t *testing.T) {
+	setRequired(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.yaml")
+	_ = os.WriteFile(path, []byte(`buckets:
+  www:
+    public: true
+    website: {error: 404.html}
+    cors:
+      allowed-origins: ["https://*.example.com"]
+      allowed-methods: [get, put]
+      max-age: 1h
+`), 0o600)
+	t.Setenv("PLAINBUCKET_PUBLIC_BUCKETS", "assets")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	www := cfg.Buckets["www"]
+	if !www.Public || www.Website.Index != "index.html" || www.Website.Error != "404.html" ||
+		strings.Join(www.CORS.AllowedMethods, ",") != "GET,PUT" || www.CORS.MaxAge != time.Hour {
+		t.Errorf("www = %+v %+v %+v", www, www.Website, www.CORS)
+	}
+	if !cfg.Buckets["assets"].Public {
+		t.Error("PLAINBUCKET_PUBLIC_BUCKETS not merged")
+	}
+
+	for name, body := range map[string]string{
+		"bad name":        "buckets: {Bad_Name: {public: true}}\n",
+		"private website": "buckets: {www: {website: {}}}\n",
+		"index slash":     "buckets: {www: {public: true, website: {index: /index.html}}}\n",
+		"no origins":      "buckets: {www: {cors: {allowed-methods: [GET]}}}\n",
+		"two wildcards":   "buckets: {www: {cors: {allowed-origins: [\"https://*.*.example.com\"]}}}\n",
+		"bad method":      "buckets: {www: {cors: {allowed-origins: [\"*\"], allowed-methods: [PATCH]}}}\n",
+		"negative age":    "buckets: {www: {cors: {allowed-origins: [\"*\"], max-age: -1s}}}\n",
+		"unknown key":     "buckets: {www: {publik: true}}\n",
+	} {
+		_ = os.WriteFile(path, []byte(body), 0o600)
+		if _, err := Load(path); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

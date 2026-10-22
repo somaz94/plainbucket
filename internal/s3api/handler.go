@@ -24,7 +24,9 @@ type Options struct {
 	Store       *storage.Store
 	Credentials []Credential
 	// PublicBuckets may be read anonymously, object by object; listing still needs a key.
+	// They are merged into Buckets.
 	PublicBuckets []string
+	Buckets       map[string]BucketPolicy
 	// Domains enable virtual-hosted-style requests: Host <bucket>.<domain> names the
 	// bucket and the whole path is the key. Others stay path-style.
 	Domains       []string
@@ -46,7 +48,7 @@ type Handler struct {
 	now     func() time.Time
 	metrics *metrics
 	creds   map[string]*Credential
-	public  map[string]bool
+	buckets map[string]*BucketPolicy
 }
 
 // New returns a Handler.
@@ -56,27 +58,34 @@ func New(opts Options) *Handler {
 		logger = slog.Default()
 	}
 	h := &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics(),
-		creds: map[string]*Credential{}, public: map[string]bool{}}
+		creds: map[string]*Credential{}, buckets: map[string]*BucketPolicy{}}
 	for i := range opts.Credentials {
 		h.creds[opts.Credentials[i].AccessKey] = &opts.Credentials[i]
 	}
+	for name, p := range opts.Buckets {
+		h.buckets[name] = &p
+	}
 	for _, b := range opts.PublicBuckets {
-		h.public[b] = true
+		if h.buckets[b] == nil {
+			h.buckets[b] = &BucketPolicy{}
+		}
+		h.buckets[b].Public = true
 	}
 	return h
 }
 
 // request is one API call. auth and cred are nil for an anonymous one.
 type request struct {
-	w      http.ResponseWriter
-	r      *http.Request
-	id     string
-	auth   *sigv4.Auth
-	cred   *Credential
-	vhost  bool // the bucket came from the Host header
-	bucket string
-	key    string
-	q      url.Values
+	w       http.ResponseWriter
+	r       *http.Request
+	id      string
+	auth    *sigv4.Auth
+	cred    *Credential
+	vhost   bool // the bucket came from the Host header
+	website bool // an unsigned read of a website bucket
+	bucket  string
+	key     string
+	q       url.Values
 }
 
 // Subresources this server does not implement; requests naming one get 501 instead of
@@ -114,7 +123,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec := httpx.NewRecorder(w)
 	start := time.Now()
 	req := &request{w: rec, r: r, id: id, vhost: vhost, bucket: vbucket}
-	if err := h.serve(req); err != nil {
+	if vhost {
+		req.key = strings.TrimPrefix(r.URL.Path, "/")
+	} else {
+		req.bucket, req.key, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	}
+	done, err := h.applyCORS(req)
+	if !done {
+		err = h.serve(req)
+	}
+	if err != nil {
 		h.fail(req, err)
 	}
 	h.metrics.record(httpx.MetricMethod(r.Method), rec.Status, rec.Bytes, time.Since(start))
@@ -138,13 +156,9 @@ func requestID() string {
 }
 
 func (h *Handler) serve(req *request) error {
-	if req.vhost {
-		req.key = strings.TrimPrefix(req.r.URL.Path, "/")
-	} else {
-		req.bucket, req.key, _ = strings.Cut(strings.TrimPrefix(req.r.URL.Path, "/"), "/")
-	}
 	req.q = req.r.URL.Query()
 	if anonymous(req.r, req.q) {
+		h.websiteKey(req)
 		if err := h.authorizeAnonymous(req); err != nil {
 			return err
 		}
@@ -177,6 +191,8 @@ func (h *Handler) serve(req *request) error {
 		return h.listBuckets(req)
 	case req.key == "":
 		return h.bucketOp(req)
+	case req.website:
+		return h.websiteNotFound(req, h.objectOp(req))
 	default:
 		return h.objectOp(req)
 	}

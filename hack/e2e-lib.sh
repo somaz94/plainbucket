@@ -24,11 +24,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# start_server [args...]: extra arguments, such as -c <file>, go to the server.
 start_server() {
     mkdir -p "${DATA}"
     PLAINBUCKET_ROOT="${DATA}" PLAINBUCKET_ADDRESS="127.0.0.1:${PORT}" \
     PLAINBUCKET_ACCESS_KEY="${E2E_ACCESS_KEY}" PLAINBUCKET_SECRET_KEY="${E2E_SECRET_KEY}" \
-        "${BIN}" >"${WORK}/server.log" 2>&1 &
+        "${BIN}" "$@" >"${WORK}/server.log" 2>&1 &
     SERVER_PID=$!
     for _ in $(seq 1 50); do
         curl -fsS "${ENDPOINT}/healthz" >/dev/null 2>&1 && return 0

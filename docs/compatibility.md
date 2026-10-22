@@ -16,7 +16,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 - AWS Signature Version 4 in the `Authorization` header or as a presigned URL, up to seven days.
 - Payload modes: a hex SHA-256 of the body, `UNSIGNED-PAYLOAD`, and aws-chunked bodies `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER` and `STREAMING-UNSIGNED-PAYLOAD-TRAILER`. Chunk and trailer signatures are verified.
 - Every `x-amz-*` header in a request must be covered by its signature, as on S3. An unsigned one is refused with `403 AccessDenied`, so a presigned URL cannot be repurposed with extra headers such as `x-amz-copy-source`.
-- Signature Version 2 is refused. Anonymous requests are refused, except `GET` and `HEAD` of objects in buckets configured as public ([Public Buckets](configuration.md#public-buckets)).
+- Signature Version 2 is refused. Anonymous requests are refused, except `GET` and `HEAD` of objects in buckets configured as public ([Buckets](configuration.md#buckets)).
 
 <br/>
 
@@ -42,7 +42,7 @@ Object details:
 
 ## Not Implemented
 
-These return `501 NotImplemented`: ACLs and policies, versioning other than reading its status, object lock and retention, storing tags, lifecycle, replication, CORS and website configuration, encryption settings, `GetObject` by part number, `SelectObjectContent`, and delimiters in `ListMultipartUploads`.
+These return `501 NotImplemented`: ACLs and policies (public reads are configured instead), versioning other than reading its status, object lock and retention, storing tags, lifecycle, replication, the CORS and website APIs (both are configured per bucket instead, see [Buckets](configuration.md#buckets)), encryption settings, `GetObject` by part number, `SelectObjectContent`, and delimiters in `ListMultipartUploads`.
 
 Tags are not stored. `GetObjectTagging` answers with an empty set because the aws cli and other tools read the tags of an object before copying it, and fail on `501`; `PutObjectTagging` and `DeleteObjectTagging` stay unimplemented.
 

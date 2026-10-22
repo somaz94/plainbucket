@@ -11,7 +11,8 @@ plainbucket is a single binary with no runtime dependencies beyond the Go standa
 ## Features
 
 - **S3 API, path-style and virtual-hosted**: buckets, objects, `ListObjectsV2` and `ListObjects`, multipart upload, `CopyObject`, `DeleteObjects`, ranged and conditional reads, conditional writes (`If-None-Match: *`, `If-Match`). See [docs/compatibility.md](docs/compatibility.md).
-- **Access control**: several access keys, each optionally limited to some buckets or to reads, and public buckets whose objects anyone can fetch, enough to host a static site. See [docs/configuration.md](docs/configuration.md#credentials).
+- **Access control**: several access keys, each optionally limited to some buckets or to reads, and public buckets whose objects anyone can fetch. See [docs/configuration.md](docs/configuration.md#credentials).
+- **Static websites**: a public bucket can serve index and error documents and answer CORS preflights, so a site or a browser app needs no other web server. See [docs/configuration.md](docs/configuration.md#buckets).
 - **AWS Signature Version 4**: `Authorization` header and presigned URLs, every payload mode the AWS SDKs send, including aws-chunked streaming with trailing checksums.
 - **Checksums**: CRC32, CRC32C, CRC64NVME, SHA-1 and SHA-256 are verified on upload and returned on request. An upload that declares none gets a CRC64NVME, as on S3.
 - **Plain files**: objects are files, metadata lives in a separate system directory, and files changed outside the server are detected and re-hashed. See [docs/layout.md](docs/layout.md).

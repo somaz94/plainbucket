@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +34,8 @@ type Config struct {
 	Credentials     []Credential `yaml:"credentials"`
 	CredentialsFile string       `yaml:"credentials-file"`
 	PublicBuckets   []string     `yaml:"public-buckets"`
+	// Buckets holds per-bucket behavior; PublicBuckets marks entries public.
+	Buckets map[string]Bucket `yaml:"buckets"`
 	// Domains enable virtual-hosted-style requests: Host <bucket>.<domain>.
 	Domains       []string      `yaml:"domains"`
 	Region        string        `yaml:"region"`
@@ -54,6 +57,28 @@ type Credential struct {
 	SecretKey string   `yaml:"secret-key"`
 	Buckets   []string `yaml:"buckets"`
 	ReadOnly  bool     `yaml:"read-only"`
+}
+
+// Bucket is the configured behavior of one bucket.
+type Bucket struct {
+	Public  bool     `yaml:"public"`
+	Website *Website `yaml:"website"`
+	CORS    *CORS    `yaml:"cors"`
+}
+
+// Website serves a public bucket as a static site to unsigned requests.
+type Website struct {
+	Index string `yaml:"index"` // default index.html
+	Error string `yaml:"error"`
+}
+
+// CORS lists what browsers on other origins may do with a bucket.
+type CORS struct {
+	AllowedOrigins []string      `yaml:"allowed-origins"`
+	AllowedMethods []string      `yaml:"allowed-methods"` // default GET, HEAD
+	AllowedHeaders []string      `yaml:"allowed-headers"`
+	ExposeHeaders  []string      `yaml:"expose-headers"`
+	MaxAge         time.Duration `yaml:"max-age"`
 }
 
 // Default returns the default configuration.
@@ -262,6 +287,9 @@ func (c *Config) validateAccess() error {
 	if err := checkBuckets("PLAINBUCKET_PUBLIC_BUCKETS", c.PublicBuckets); err != nil {
 		return err
 	}
+	if err := c.validateBuckets(); err != nil {
+		return err
+	}
 	for i, d := range c.Domains {
 		d = strings.ToLower(strings.TrimSpace(d))
 		if !domainRe.MatchString(d) {
@@ -273,6 +301,59 @@ func (c *Config) validateAccess() error {
 }
 
 var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+var corsMethods = []string{"GET", "HEAD", "PUT", "POST", "DELETE"}
+
+// validateBuckets merges PublicBuckets into Buckets and checks every entry.
+func (c *Config) validateBuckets() error {
+	if c.Buckets == nil {
+		c.Buckets = map[string]Bucket{}
+	}
+	for _, name := range c.PublicBuckets {
+		b := c.Buckets[name]
+		b.Public = true
+		c.Buckets[name] = b
+	}
+	for name, b := range c.Buckets {
+		where := "buckets." + name
+		if !storage.ValidBucketName(name) {
+			return fmt.Errorf("%s: %q is not a valid bucket name", where, name)
+		}
+		if w := b.Website; w != nil {
+			if !b.Public {
+				return fmt.Errorf("%s.website requires public: true", where)
+			}
+			if w.Index == "" {
+				w.Index = "index.html"
+			}
+			for _, doc := range []string{w.Index, w.Error} {
+				if strings.HasPrefix(doc, "/") || strings.HasSuffix(doc, "/") {
+					return fmt.Errorf("%s.website: %q must be an object key, without a leading or trailing /", where, doc)
+				}
+			}
+		}
+		if cr := b.CORS; cr != nil {
+			if len(cr.AllowedOrigins) == 0 {
+				return fmt.Errorf("%s.cors.allowed-origins must not be empty", where)
+			}
+			for _, o := range cr.AllowedOrigins {
+				if strings.Count(o, "*") > 1 {
+					return fmt.Errorf("%s.cors.allowed-origins: %q may hold at most one *", where, o)
+				}
+			}
+			for i, m := range cr.AllowedMethods {
+				cr.AllowedMethods[i] = strings.ToUpper(m)
+				if !slices.Contains(corsMethods, cr.AllowedMethods[i]) {
+					return fmt.Errorf("%s.cors.allowed-methods: %q must be one of %s", where, m, strings.Join(corsMethods, ", "))
+				}
+			}
+			if cr.MaxAge < 0 {
+				return fmt.Errorf("%s.cors.max-age must not be negative", where)
+			}
+		}
+	}
+	return nil
+}
 
 func checkBuckets(what string, names []string) error {
 	for _, b := range names {
@@ -320,6 +401,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Bool("secret_key", c.SecretKey != ""),
 		slog.Int("access_keys", len(c.AllCredentials())),
 		slog.Any("public_buckets", c.PublicBuckets),
+		slog.Int("configured_buckets", len(c.Buckets)),
 		slog.Any("domains", c.Domains),
 		slog.String("region", c.Region),
 		slog.Int64("max_object_size", c.MaxObjectSize),

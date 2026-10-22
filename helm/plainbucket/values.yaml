@@ -59,6 +59,12 @@ config:
   region: us-east-1
   # Buckets whose objects anyone may read with an unsigned GET or HEAD.
   publicBuckets: []
+  # Per-bucket behavior (docs/configuration.md#buckets), rendered into a ConfigMap, e.g.
+  #   www:
+  #     public: true
+  #     website: {index: index.html, error: 404.html}
+  #     cors: {allowed-origins: ["https://example.com"]}
+  buckets: {}
   # Domains for virtual-hosted-style requests (<bucket>.<domain>); needs wildcard DNS.
   domains: []
   maxObjectSize: ""  # bytes as a string; empty means unlimited

@@ -33,7 +33,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - A sidecar is trusted only while its recorded size and mtime match the data file; otherwise the object is treated as edited outside the server.
 - Listing order must equal S3 byte order of whole keys. `storage/list_test.go` checks the walker against a brute-force reference; keep it passing when touching `walk`.
 - Path-style always works; virtual-hosted style only for `PLAINBUCKET_DOMAINS`. The request URL is never rewritten, because SigV4 signs the path as sent.
-- Anonymous requests may only `GET` / `HEAD` objects of public buckets; listing, multipart state and writes always need a key. Bucket policy and ACL APIs stay `501`: access is configured, not set through the API.
+- Anonymous requests may only `GET` / `HEAD` objects of public buckets (website buckets add index and error documents), plus CORS preflights on buckets with a `cors` rule; listing, multipart state, tags and writes always need a key. Bucket policy, ACL, website and CORS APIs stay `501`: behavior is configured in the `buckets` map, not set through the API.
 - New operations return `501` until implemented, never a silent success.
 - The Helm chart runs exactly one pod with `Recreate`: locks are in-process. Keep `values.schema.json` closed and in step with `values.yaml` and every `.Values` path the templates read; credentials only ever reach the pod through Secrets.
 - `hack/bump-version.sh` moves the Makefile image tag, Chart `version` / `appVersion` and `values.yaml` `image.tag` together.

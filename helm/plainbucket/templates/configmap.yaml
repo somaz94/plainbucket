@@ -1,0 +1,12 @@
+{{- if .Values.config.buckets }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "plainbucket.fullname" . }}-config
+  labels:
+    {{- include "plainbucket.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    buckets:
+      {{- toYaml .Values.config.buckets | nindent 6 }}
+{{- end }}

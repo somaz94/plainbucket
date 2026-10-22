@@ -14,7 +14,8 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_SECRET_KEY` | `secret-key` | | Its secret key |
 | | `credentials` | | More access keys, each optionally limited; see [Credentials](#credentials) |
 | `PLAINBUCKET_CREDENTIALS_FILE` | `credentials-file` | | YAML file holding a `credentials` list, added to the others |
-| `PLAINBUCKET_PUBLIC_BUCKETS` | `public-buckets` | | Comma-separated buckets whose objects anyone may read; see [Public Buckets](#public-buckets) |
+| `PLAINBUCKET_PUBLIC_BUCKETS` | `public-buckets` | | Comma-separated buckets whose objects anyone may read; see [Buckets](#buckets) |
+| | `buckets` | | Per-bucket settings: public reads, static website, CORS; see [Buckets](#buckets) |
 | `PLAINBUCKET_DOMAINS` | `domains` | | Comma-separated domains for virtual-hosted-style requests; see [Virtual-Hosted Addressing](#virtual-hosted-addressing) |
 | `PLAINBUCKET_REGION` | `region` | `us-east-1` | Region reported by `GetBucketLocation` and `HeadBucket` |
 | `PLAINBUCKET_MAX_OBJECT_SIZE` | `max-object-size` | `0` | Largest object or part in bytes; `0` means no limit |
@@ -68,11 +69,44 @@ The region in a request's credential scope is not checked against `PLAINBUCKET_R
 
 <br/>
 
-## Public Buckets
+## Buckets
 
-Objects in a bucket named in `PLAINBUCKET_PUBLIC_BUCKETS` can be fetched by anyone with an unsigned `GET` or `HEAD`, as with a bucket policy granting `s3:GetObject` to everyone. That is enough to host a static site or downloads straight from plainbucket. Listing the bucket, multipart state and every write still need a key, and an unsigned request may not use the `response-*` overrides, as on S3. Signed requests are unaffected.
+Buckets need no configuration: any valid directory under the root is a bucket. The `buckets` map in the YAML file changes how one behaves:
 
-The setting is the only way to make a bucket public: the bucket policy and ACL APIs are not implemented.
+```yaml
+buckets:
+  www:
+    public: true
+    website:
+      index: index.html     # the default
+      error: 404.html
+    cors:
+      allowed-origins: ["https://app.example.com", "https://*.preview.example.com"]
+      allowed-methods: [GET, HEAD]   # the default
+      allowed-headers: ["*"]
+      expose-headers: [ETag]
+      max-age: 1h
+```
+
+These settings are the only way to change bucket behavior: the bucket policy, ACL, website and CORS APIs are not implemented.
+
+### Public Reads
+
+With `public: true`, or the bucket named in `PLAINBUCKET_PUBLIC_BUCKETS`, anyone can fetch the bucket's objects with an unsigned `GET` or `HEAD`, as with a bucket policy granting `s3:GetObject` to everyone. Listing the bucket, multipart state, tags and every write still need a key, and an unsigned request may not use the `response-*` overrides, as on S3. Signed requests are unaffected.
+
+### Static Website
+
+`website` turns a public bucket into a static site for unsigned requests, as an S3 website endpoint does:
+
+- The bucket root and every path ending in `/` serve that prefix's index document.
+- A path without the trailing `/` whose prefix has an index document is redirected to the path with it (`/docs` to `/docs/`).
+- A missing key serves the error document with status `404`, or S3's XML error when there is none.
+
+Signed requests keep S3 semantics, so clients and the aws cli still list the bucket and get `NoSuchKey`. Combined with [virtual-hosted addressing](#virtual-hosted-addressing), `www.s3.example.com/` serves the site from its own host name.
+
+### CORS
+
+`cors` lets pages on other origins use the bucket from a browser. An allowed origin gets `Access-Control-Allow-Origin` (and `Access-Control-Expose-Headers`) on every response, errors included. A preflight `OPTIONS` request is answered without a signature: `200` when the origin, the method and every requested header are allowed, `403` otherwise. Origins and headers may hold one `*` wildcard; header names compare case-insensitively. A browser that uploads with signed requests needs `PUT` in `allowed-methods` and the signing headers (`Authorization`, `X-Amz-*`, `Content-Type`) in `allowed-headers`.
 
 <br/>
 

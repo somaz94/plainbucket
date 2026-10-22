@@ -51,7 +51,7 @@ func anonymous(r *http.Request, q map[string][]string) bool {
 func (h *Handler) authorizeAnonymous(req *request) error {
 	denied := s3err.AccessDenied("Anonymous access is not allowed.")
 	m := req.r.Method
-	if (m != http.MethodGet && m != http.MethodHead) || req.key == "" || !h.public[req.bucket] {
+	if (m != http.MethodGet && m != http.MethodHead) || req.key == "" || !h.policy(req.bucket).Public {
 		return denied
 	}
 	for k := range req.q {
