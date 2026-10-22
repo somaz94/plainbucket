@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased (2026-10-22)
+
+### Builds
+
+- **deps:** bump docker/setup-qemu-action from 3 to 4 (#2) ([#2](https://github.com/somaz94/plainbucket/pull/2)) ([1eb7c81](https://github.com/somaz94/plainbucket/commit/1eb7c813e8048b16c0ea5f52ae7e7c85af6176c4))
+
+<br/>
+
 ## [v0.1.0](https://github.com/somaz94/plainbucket/releases/tag/v0.1.0) (2026-10-22)
 
 ### Features
