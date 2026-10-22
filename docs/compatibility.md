@@ -1,6 +1,11 @@
 # S3 Compatibility
 
-plainbucket implements the part of the S3 REST API that general-purpose clients use to store and fetch objects. The AWS SDK for Go v2 (`compat/`) and the aws cli (`hack/test-awscli.sh`) run against it in CI.
+plainbucket implements the part of the S3 REST API that general-purpose clients use to store and fetch objects. CI runs these clients against it:
+
+- the AWS SDK for Go v2, including the multipart upload and download managers (`compat/`);
+- the aws cli (`hack/test-awscli.sh`);
+- rclone, including `check` by hash, `sync` with deletion, server-side copy and move, and directory markers (`hack/test-rclone.sh`);
+- the request flow of the GitLab Runner distributed cache: presigned PUT, `HEAD` on the presigned GET URL, presigned GET (`compat/`). A `HEAD` on a URL presigned for `GET` is accepted for that reason; S3 itself would refuse it.
 
 <br/>
 

@@ -14,7 +14,8 @@ plainbucket is a single binary with no runtime dependencies beyond the Go standa
 - **AWS Signature Version 4**: `Authorization` header and presigned URLs, every payload mode the AWS SDKs send, including aws-chunked streaming with trailing checksums.
 - **Checksums**: CRC32, CRC32C, CRC64NVME, SHA-1 and SHA-256 are verified on upload and returned on request. An upload that declares none gets a CRC64NVME, as on S3.
 - **Plain files**: objects are files, metadata lives in a separate system directory, and files changed outside the server are detected and re-hashed. See [docs/layout.md](docs/layout.md).
-- **Tested with real clients**: the official AWS SDK for Go v2 and the aws cli run against the server in CI.
+- **Tested with real clients**: the official AWS SDK for Go v2, the aws cli and rclone run against the server in CI, along with the request flow of the GitLab Runner distributed cache.
+- **Operations**: Prometheus metrics, a `/healthz` endpoint, and protection against uploads that stall.
 
 <br/>
 
@@ -46,6 +47,8 @@ docker run -d -p 9000:9000 \
   -e PLAINBUCKET_ACCESS_KEY=admin -e PLAINBUCKET_SECRET_KEY=change-me \
   -v "$PWD/data:/data" somaz940/plainbucket:latest
 ```
+
+The image runs as UID 65532. A directory mounted at `/data` must be writable by that user (`chown 65532 data`), or start the container with `--user` set to the directory's owner.
 
 SDKs need path-style addressing for a custom endpoint. In the AWS SDK for Go v2:
 
@@ -92,6 +95,7 @@ make test          # unit tests with the race detector and a coverage profile
 make cover-check   # fail below the coverage minimum
 make test-compat   # AWS SDK for Go v2 suite (separate module under compat/)
 make test-awscli   # aws cli end-to-end script
+make test-rclone   # rclone end-to-end script
 make lint
 ```
 

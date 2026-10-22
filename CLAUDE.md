@@ -15,11 +15,11 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - `internal/sigv4/` - SigV4 header and presigned verification, aws-chunked decoder with chunk and trailer signatures. `sigv4test/` is an independent signer for tests.
 - `internal/checksum/` - CRC32, CRC32C, CRC64NVME, SHA1, SHA256 on the standard library.
 - `internal/storage/` - the filesystem store: key mapping, sidecar metadata, atomic commit, S3-order listing walker, multipart, janitor. Knows nothing about HTTP.
-- `internal/s3api/` - HTTP router and handlers, XML documents, payload verification, storage error to S3 error mapping.
+- `internal/s3api/` - HTTP router and handlers, XML documents, payload verification and upload progress deadline, storage error to S3 error mapping, Prometheus metrics.
 - `internal/s3err/` - S3 error type and XML rendering.
 - `internal/server/` - listener lifecycle and the hourly janitor.
 - `compat/` - separate Go module running the AWS SDK for Go v2 against the handler.
-- `hack/test-awscli.sh` - aws cli end-to-end script against `bin/plainbucket`.
+- `hack/test-awscli.sh`, `hack/test-rclone.sh` - client end-to-end scripts against `bin/plainbucket`; `hack/e2e-lib.sh` starts the server for both.
 
 <br/>
 
@@ -27,6 +27,8 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 
 - The main module depends only on the standard library, Cobra and yaml.v3. Test-only SDK use goes in `compat/`, never in the main `go.mod`.
 - Objects are written to `.plainbucket/tmp`, verified, then renamed into place. Nothing writes into a bucket directory in place.
+- Every path built from a bucket name or key goes through the store's `os.Root`, so `..` and symlinks cannot leave the root. Do not reintroduce plain `os.Open` / `os.Rename` on data paths.
+- Every `x-amz-*` request header must be signed (`sigv4.requireSigned`); the GET-for-HEAD presign fallback exists only for the GitLab Runner cache.
 - A sidecar is trusted only while its recorded size and mtime match the data file; otherwise the object is treated as edited outside the server.
 - Listing order must equal S3 byte order of whole keys. `storage/list_test.go` checks the walker against a brute-force reference; keep it passing when touching `walk`.
 - Path-style addressing only. New operations return `501` until implemented, never a silent success.
@@ -41,11 +43,12 @@ make test          # race detector, cross-package coverage profile
 make cover-check   # coverage gate, also run in CI
 make test-compat   # AWS SDK for Go v2 (compat/ module)
 make test-awscli   # aws cli end-to-end
+make test-rclone   # rclone end-to-end
 make test-all      # all of the above
 make lint
 ```
 
-CI (`.github/workflows/test.yml`) runs `test`, `cover-check`, `test-compat` and `test-awscli`.
+CI (`.github/workflows/test.yml`) runs `test`, `cover-check`, `test-compat`, `test-awscli` and `test-rclone`.
 
 <br/>
 
