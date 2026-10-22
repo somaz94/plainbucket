@@ -39,8 +39,18 @@ jobs:
       - name: aws cli end-to-end
         run: make test-awscli
 
+      # Pinned release: the Ubuntu package lags behind and lacks --s3-directory-markers.
       - name: Install rclone
-        run: sudo apt-get update -q && sudo apt-get install -y -q rclone
+        env:
+          RCLONE_VERSION: v1.70.2
+          RCLONE_SHA256: 7bfa813f426820d20436e48a4e0b9bf21977fcd513a48f2d28eede3136b4bacb
+        run: |
+          zip="rclone-${RCLONE_VERSION}-linux-amd64.zip"
+          curl -fsSLO "https://downloads.rclone.org/${RCLONE_VERSION}/${zip}"
+          echo "${RCLONE_SHA256}  ${zip}" | sha256sum -c -
+          unzip -q "${zip}"
+          sudo install -m 0755 "rclone-${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone
+          rclone version | head -1
 
       - name: rclone end-to-end
         run: make test-rclone
