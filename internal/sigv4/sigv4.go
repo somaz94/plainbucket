@@ -157,7 +157,7 @@ func verifyHeader(r *http.Request, header string, creds Credentials, now time.Ti
 		amzDate:     amzDate,
 		scope:       cred.scope(),
 	}
-	if !a.matches(r, r.URL.Query(), "", signedHeaders, payload) {
+	if !a.matches(r, r.Method, r.URL.Query(), "", signedHeaders, payload) {
 		return nil, s3err.SignatureDoesNotMatch()
 	}
 	return a, nil
@@ -211,7 +211,13 @@ func verifyQuery(r *http.Request, q url.Values, creds Credentials, now time.Time
 		amzDate:     amzDate,
 		scope:       cred.scope(),
 	}
-	if !a.matches(r, q, "X-Amz-Signature", signedHeaders, payload) {
+	ok = a.matches(r, r.Method, q, "X-Amz-Signature", signedHeaders, payload)
+	// The GitLab Runner cache helper probes with HEAD on a URL presigned for GET. HEAD
+	// returns nothing GET would not, so the GET signature is accepted for it.
+	if !ok && r.Method == http.MethodHead {
+		ok = a.matches(r, http.MethodGet, q, "X-Amz-Signature", signedHeaders, payload)
+	}
+	if !ok {
 		return nil, s3err.SignatureDoesNotMatch()
 	}
 	return a, nil
@@ -232,7 +238,7 @@ func requireSigned(r *http.Request, signedHeaders string) *s3err.Error {
 
 // matches checks the signature against the strictly re-encoded path first, then the path
 // as the client sent it, since S3 signers differ on which characters they escape.
-func (a *Auth) matches(r *http.Request, q url.Values, skip, signedHeaders, payload string) bool {
+func (a *Auth) matches(r *http.Request, method string, q url.Values, skip, signedHeaders, payload string) bool {
 	paths := []string{uriEncode(r.URL.Path, false)}
 	if raw := r.URL.EscapedPath(); raw != paths[0] {
 		paths = append(paths, raw)
@@ -240,7 +246,7 @@ func (a *Auth) matches(r *http.Request, q url.Values, skip, signedHeaders, paylo
 	query := canonicalQuery(q, skip)
 	headers := canonicalHeaders(r, signedHeaders)
 	for _, p := range paths {
-		canonical := r.Method + "\n" + p + "\n" + query + "\n" + headers + "\n" + signedHeaders + "\n" + payload
+		canonical := method + "\n" + p + "\n" + query + "\n" + headers + "\n" + signedHeaders + "\n" + payload
 		if hmac.Equal([]byte(a.sign(canonical)), []byte(a.signature)) {
 			return true
 		}

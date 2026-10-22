@@ -518,3 +518,21 @@ func TestChunkedTruncatedEnd(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifyQuery_HeadOnGetURL checks the GitLab Runner pattern: HEAD on a URL presigned for GET.
+func TestVerifyQuery_HeadOnGetURL(t *testing.T) {
+	target := "https://examplebucket.s3.amazonaws.com/test.txt" +
+		"?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+		"&X-Amz-Credential=" + docAK + "%2F20130524%2Fus-east-1%2Fs3%2Faws4_request" +
+		"&X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host" +
+		"&X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"
+	if _, e := Verify(httptest.NewRequest(http.MethodHead, target, nil), docCreds, docNow); e != nil {
+		t.Errorf("HEAD on a GET URL: %v", e)
+	}
+	if _, e := Verify(httptest.NewRequest(http.MethodPut, target, nil), docCreds, docNow); code(e) != "SignatureDoesNotMatch" {
+		t.Errorf("PUT on a GET URL: %v", e)
+	}
+	if _, e := Verify(httptest.NewRequest(http.MethodDelete, target, nil), docCreds, docNow); code(e) != "SignatureDoesNotMatch" {
+		t.Errorf("DELETE on a GET URL: %v", e)
+	}
+}

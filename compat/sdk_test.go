@@ -519,3 +519,63 @@ func TestAuthFailures(t *testing.T) {
 		t.Errorf("unknown key: %v", err)
 	}
 }
+
+// TestRunnerCacheFlow replays the GitLab Runner distributed cache: the runner manager
+// presigns a GET and a PUT URL offline, and the job's cache helper uploads with PUT,
+// probes with HEAD on the GET URL, and downloads with GET.
+func TestRunnerCacheFlow(t *testing.T) {
+	forEachTransport(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		mustCreateBucket(t, e, "runner-cache")
+		key := "runner/abc123/project/42/default-protected"
+		ps := s3.NewPresignClient(e.client)
+		put, err := ps.PresignPutObject(ctx, &s3.PutObjectInput{Bucket: aws.String("runner-cache"), Key: aws.String(key)}, s3.WithPresignExpires(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		get, err := ps.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String("runner-cache"), Key: aws.String(key)}, s3.WithPresignExpires(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp, err := e.http.Head(get.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("HEAD before upload: %d", resp.StatusCode)
+		}
+
+		archive := bytes.Repeat([]byte("PK\x03\x04cache"), 50000)
+		req, _ := http.NewRequest(http.MethodPut, put.URL, bytes.NewReader(archive))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		resp, err = e.http.Do(req)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("cache upload: %v %v", resp, err)
+		}
+		_ = resp.Body.Close()
+
+		resp, err = e.http.Head(get.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || resp.ContentLength != int64(len(archive)) || resp.Header.Get("ETag") != `"`+md5hex(archive)+`"` {
+			t.Errorf("HEAD on the GET URL: %d %d %s", resp.StatusCode, resp.ContentLength, resp.Header.Get("ETag"))
+		}
+
+		resp, err = e.http.Get(get.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if !bytes.Equal(got, archive) {
+			t.Errorf("cache download differs: %d bytes", len(got))
+		}
+		if onDisk, _ := os.ReadFile(filepath.Join(e.root, "runner-cache", filepath.FromSlash(key))); !bytes.Equal(onDisk, archive) {
+			t.Error("cache archive is not a plain file")
+		}
+	})
+}
