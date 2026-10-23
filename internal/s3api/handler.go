@@ -151,10 +151,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.bucket, req.key, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	}
 	var err error
+	op := "Console"
 	if h.opts.Console && !vhost && isConsolePath(r.URL.Path) {
 		req.bucket, req.key = "", ""
 		err = h.serveConsole(req)
 	} else {
+		op = operation(r, req.bucket, req.key)
 		if h.opts.Console && !vhost {
 			// A page served from the console's origin could otherwise script a console window.
 			rec.Header().Set("Content-Security-Policy", console.ObjectSandbox)
@@ -167,14 +169,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.fail(req, err)
 	}
-	h.metrics.record(httpx.MetricMethod(r.Method), rec.Status, rec.Bytes, time.Since(start))
+	if req.website {
+		// An anonymous website request for a folder is served its index document.
+		op = map[bool]string{true: "HeadObject", false: "GetObject"}[r.Method == http.MethodHead]
+	}
+	h.metrics.record(op, httpx.MetricMethod(r.Method), rec.Status, rec.Bytes, time.Since(start))
 	if h.opts.AccessLog {
 		accessKey := ""
 		if req.cred != nil {
 			accessKey = req.cred.AccessKey
 		}
 		h.log.LogAttrs(r.Context(), slog.LevelInfo, "request",
-			slog.String("method", r.Method), slog.String("host", r.Host), slog.String("path", r.URL.Path),
+			slog.String("operation", op), slog.String("method", r.Method), slog.String("host", r.Host), slog.String("path", r.URL.Path),
 			slog.String("query", redactQuery(r.URL.RawQuery)), slog.String("bucket", req.bucket), slog.String("key", req.key),
 			slog.Int("status", rec.Status), slog.Int64("bytes", rec.Bytes),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("remote", r.RemoteAddr),

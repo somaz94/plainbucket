@@ -31,10 +31,11 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 	body := scrape()
 	for _, want := range []string{
-		`plainbucket_requests_total{method="PUT",status="200"} 2`,
-		`plainbucket_requests_total{method="GET",status="404"} 1`,
-		`plainbucket_request_duration_seconds_bucket{le="+Inf"} 4`,
-		`plainbucket_request_duration_seconds_count 4`,
+		`plainbucket_requests_total{operation="CreateBucket",method="PUT",status="200"} 1`,
+		`plainbucket_requests_total{operation="PutObject",method="PUT",status="200"} 1`,
+		`plainbucket_requests_total{operation="GetObject",method="GET",status="404"} 1`,
+		`plainbucket_request_duration_seconds_bucket{operation="GetObject",le="+Inf"} 2`,
+		`plainbucket_request_duration_seconds_count{operation="PutObject"} 1`,
 		"plainbucket_received_bytes_total 5",
 	} {
 		if !strings.Contains(body, want) {
