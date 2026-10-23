@@ -48,6 +48,8 @@ type consoleBucket struct {
 	ExpireAfter string    `json:"expire_after,omitempty"`
 	Evict       bool      `json:"evict,omitempty"`
 	Public      bool      `json:"public,omitempty"`
+	Website     bool      `json:"website,omitempty"`
+	CORS        bool      `json:"cors,omitempty"`
 }
 
 type consoleUsageResponse struct {
@@ -87,9 +89,9 @@ func (h *Handler) consoleUsage(req *request) error {
 		if !req.cred.allows(b.Name) {
 			continue
 		}
-		u, l := usage[b.Name], h.store.BucketLimit(b.Name)
+		u, l, p := usage[b.Name], h.store.BucketLimit(b.Name), h.policy(b.Name)
 		item := consoleBucket{Name: b.Name, Objects: u.Objects, Bytes: u.Bytes, MeasuredAt: u.At,
-			MaxSize: l.MaxSize, Evict: l.Evict, Public: h.policy(b.Name).Public}
+			MaxSize: l.MaxSize, Evict: l.Evict, Public: p.Public, Website: p.Website != nil, CORS: p.CORS != nil}
 		if l.ExpireAfter > 0 {
 			item.ExpireAfter = l.ExpireAfter.String()
 		}

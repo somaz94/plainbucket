@@ -1,6 +1,6 @@
 // The plainbucket console. Every action is an S3 request signed in the page with the key
 // typed at login; the key stays in memory only, so a reload signs out.
-import { canonicalKey, displayKey, encodeKey, escapeXML, keyBytes, xmlKey } from "./keys.js";
+import { canonicalKey, displayKey, encodeKey, escapeXML, keyBytes, keyText, xmlKey } from "./keys.js";
 import { encodePath, presign, queryString, signHeaders } from "./sigv4.js";
 
 const host = location.host;
@@ -9,7 +9,9 @@ const minPartSize = 16 * 1024 * 1024;
 const maxParts = 10000;
 const partConcurrency = 3;
 const partAttempts = 3;
-const shareExpiries = [["1 hour", 3600], ["1 day", 86400], ["7 days", 604800]];
+const shareUnits = [["minutes", 60], ["hours", 3600], ["days", 86400]];
+// SigV4 caps a presigned URL at seven days.
+const maxShareSeconds = 7 * 86400;
 
 let cred = null;
 // What the signed-in key may do, as the usage API reports it.
@@ -103,6 +105,17 @@ function formatBytes(n) {
 
 function plural(n, word) {
   return `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function formatDuration(seconds) {
+  if (seconds < 60) return `${Math.ceil(seconds)} s`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`;
+  return `${Math.floor(seconds / 3600)} h ${Math.round((seconds % 3600) / 60)} min`;
+}
+
+// formatGoDuration shortens the server's Go durations: 336h0m0s becomes 336h.
+function formatGoDuration(d) {
+  return d.replace(/m0s$/, "m").replace(/h0m$/, "h");
 }
 
 function formatDate(s) {
@@ -259,9 +272,57 @@ function put(as, bucket, key, params, headers, body, onProgress, pending) {
   });
 }
 
-const uploadList = el("div", { class: "uploads" });
 // Cancel functions of the uploads in progress.
 const uploads = new Set();
+// Size and bytes sent of each upload in progress, for the summary line.
+const transfers = new Set();
+const summaryText = el("span", { class: "muted" });
+const uploadSummary = el("div", { class: "row" }, summaryText,
+  button("Cancel all", () => { for (const stop of [...uploads]) stop(); }, "link danger"));
+uploadSummary.hidden = true;
+const uploadList = el("div", { class: "uploads" }, uploadSummary);
+let rate = 0;
+let lastSent = 0;
+let ticker = null;
+
+function sentTotals() {
+  let size = 0;
+  let sent = 0;
+  for (const t of transfers) {
+    size += t.size;
+    sent += t.sent;
+  }
+  return { size, sent };
+}
+
+// rate is a moving average of bytes per second.
+function tick() {
+  if (!transfers.size) {
+    clearInterval(ticker);
+    ticker = null;
+    rate = 0;
+    uploadSummary.hidden = true;
+    return;
+  }
+  const { size, sent } = sentTotals();
+  rate = 0.7 * rate + 0.3 * Math.max(0, sent - lastSent);
+  lastSent = sent;
+  summaryText.textContent = `${plural(transfers.size, "upload")} · ${formatBytes(sent)} of ${formatBytes(size)}` +
+    (rate >= 1 ? ` · ${formatBytes(rate)}/s · about ${formatDuration((size - sent) / rate)} left` : "");
+  uploadSummary.hidden = false;
+}
+
+function track(t) {
+  transfers.add(t);
+  if (!ticker) {
+    lastSent = sentTotals().sent;
+    ticker = setInterval(tick, 1000);
+  }
+}
+
+function untrack(t) {
+  if (transfers.delete(t)) lastSent -= t.sent;
+}
 // Multipart upload IDs this page is still sending, which uploadsDialog must not abort.
 const liveUploads = new Set();
 
@@ -289,19 +350,33 @@ function upload(bucket, key, file, onDone) {
   const row = el("div", { class: "upload" }, el("span", { class: "name" }, displayKey(key)), bar, status, cancel);
   uploadList.append(row);
   uploads.add(stop);
+  const transfer = { size: file.size, sent: 0 };
+  track(transfer);
+  const progress = (n) => {
+    bar.value = n;
+    transfer.sent = n;
+  };
 
   const finish = (text, kind) => {
     uploads.delete(stop);
+    untrack(transfer);
     status.textContent = text;
     status.className = kind;
     cancel.remove();
-    setTimeout(() => row.remove(), kind === "error" ? 15000 : 4000);
+    if (kind !== "error") {
+      setTimeout(() => row.remove(), 4000);
+      return;
+    }
+    row.append(button("Retry", () => {
+      row.remove();
+      upload(bucket, key, file, onDone);
+    }, "link"), button("Dismiss", () => row.remove(), "link"));
   };
   const headers = { "content-type": file.type || "application/octet-stream" };
 
   const run = async () => {
     if (file.size <= minPartSize) {
-      await put(as, bucket, key, [], headers, file, (n) => { bar.value = n; }, pending);
+      await put(as, bucket, key, [], headers, file, progress, pending);
       return;
     }
     const partSize = Math.max(minPartSize, Math.ceil(file.size / maxParts));
@@ -320,7 +395,7 @@ function upload(bucket, key, file, onDone) {
         try {
           const etag = await put(as, bucket, key, params, {}, part, (n) => {
             sent[i] = n;
-            bar.value = sent.reduce((a, b) => a + b, 0);
+            progress(sent.reduce((a, b) => a + b, 0));
           }, pending);
           if (!etag) throw new Error(`The server returned no ETag for part ${i + 1}.`);
           return etag;
@@ -411,17 +486,6 @@ function copyField(value) {
   return el("div", { class: "row" }, input, copy);
 }
 
-function shareDialog(bucket, key) {
-  const select = el("select", {}, shareExpiries.map(([label, s]) => el("option", { value: s }, label)));
-  const field = el("div");
-  const render = () => field.replaceChildren(copyField(presignedURL(bucket, key, Number(select.value))));
-  select.addEventListener("change", render);
-  render();
-  dialog("Share " + displayKey(key),
-    el("p", { class: "muted" }, "Anyone with this link can download the object until it expires, as long as this key stays valid."),
-    el("label", {}, "Expires in ", select), field);
-}
-
 const previewBytes = 64 * 1024;
 const textTypes = /^text\/|[/+](json|xml|yaml|x-yaml|javascript|x-sh|toml|csv)$/;
 
@@ -446,7 +510,153 @@ function preview(bucket, key, type, size) {
   return pre;
 }
 
-async function detailsDialog(bucket, key, report) {
+function shellQuote(s) {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+function shareDialog(bucket, key) {
+  const amount = el("input", { type: "number", min: 1, value: 1, class: "short" });
+  const unit = el("select", {}, shareUnits.map(([label, s]) => el("option", { value: s, selected: s === 86400 }, label)));
+  const out = el("div");
+  const draw = () => {
+    const seconds = Math.round(Number(amount.value) * Number(unit.value));
+    if (!(seconds >= 1 && seconds <= maxShareSeconds)) {
+      out.replaceChildren(el("p", { class: "error" }, "A presigned URL lasts at most seven days."));
+      return;
+    }
+    const url = presignedURL(bucket, key, seconds);
+    const name = displayKey(key.slice(key.lastIndexOf("/") + 1)) || "download";
+    out.replaceChildren(
+      el("p", { class: "muted" }, "Expires " + new Date(Date.now() + seconds * 1000).toLocaleString() + "."),
+      el("div", { class: "field" }, "Link", copyField(url)),
+      el("div", { class: "field" }, "curl", copyField(`curl -fLo ${shellQuote(name)} ${shellQuote(url)}`)));
+  };
+  amount.addEventListener("input", draw);
+  unit.addEventListener("change", draw);
+  draw();
+  dialog("Share " + displayKey(key),
+    el("p", { class: "muted" }, "Anyone with this link can download the object until it expires, as long as this key stays valid."),
+    el("div", { class: "row" }, "Expires in", amount, unit), out);
+}
+
+// moveKeys copies each [from, to] pair without overwriting anything, then deletes the
+// sources, so a failed copy leaves every source in place.
+async function moveKeys(srcBucket, dstBucket, pairs, onCopied) {
+  for (const [i, [from, to]] of pairs.entries()) {
+    await s3("PUT", dstBucket, to, { headers: { "x-amz-copy-source": encodePath(srcBucket, keyBytes(from)), "if-none-match": "*" } });
+    onCopied(i + 1);
+  }
+  await deleteKeys(srcBucket, pairs.map(([from]) => from));
+}
+
+// moveDialog renames or moves an object, or a folder with everything in it.
+function moveDialog(bucket, key, onDone) {
+  const folder = key.endsWith("/");
+  const text = keyText(key);
+  if (text === null || text !== displayKey(key)) {
+    dialog("Rename or move", el("p", {}, "This key holds bytes or control characters that cannot be edited as text."));
+    return;
+  }
+  const path = el("input", { value: folder ? text.slice(0, -1) : text, class: "wide" });
+  const target = el("select", {}, el("option", { value: bucket }, bucket));
+  const status = el("p", { class: "muted" }, folder
+    ? "Every object in the folder is copied, then the originals are deleted. Nothing at the new name is overwritten."
+    : "The object is copied, then the original is deleted. Nothing at the new name is overwritten.");
+  let copying = true;
+  const save = action(folder ? "Move folder" : "Move", async () => {
+    let name = path.value.trim().replace(/^\/+/, "");
+    if (folder) name = name.replace(/\/+$/, "") + "/";
+    if (!name || name === "/") {
+      status.textContent = "Enter a name.";
+      return;
+    }
+    const to = encodeKey(name);
+    const dstBucket = target.value;
+    if (dstBucket === bucket && to === key) {
+      d.close();
+      return;
+    }
+    if (folder && dstBucket === bucket && to.startsWith(key)) {
+      status.textContent = "A folder cannot move into itself.";
+      return;
+    }
+    try {
+      const pairs = folder ? (await listAll(bucket, key)).map((k) => [k, to + k.slice(key.length)]) : [[key, to]];
+      if (folder && !confirm(`Move ${plural(pairs.length, "object")} to ${dstBucket}/${name}?`)) return;
+      copying = true;
+      await moveKeys(bucket, dstBucket, pairs, (n) => {
+        status.textContent = `Copied ${n} of ${pairs.length}.`;
+        copying = n < pairs.length;
+      });
+      d.close();
+      onDone();
+    } catch (err) {
+      const why = err.code === "PreconditionFailed" ? "Something already exists at the new name. " : "";
+      status.textContent = why + describe(err) +
+        (copying ? " The originals were not deleted." : " Everything was copied, but some originals were not deleted.");
+      status.className = "error";
+    }
+  });
+  const d = dialog(folder ? "Rename or move folder" : "Rename or move",
+    el("div", { class: "field" }, "Bucket", target), el("div", { class: "field" }, "Key", path), status, save);
+  s3xml("GET", "").then((res) => {
+    for (const b of children(res.getElementsByTagNameNS("*", "Buckets")[0] ?? res, "Bucket")) {
+      const n = child(b, "Name");
+      if (n !== bucket) target.append(el("option", { value: n }, n));
+    }
+  }, () => {});
+}
+
+const editableHeaders = ["Content-Type", "Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Expires"];
+
+// metadataDialog rewrites an object's metadata by copying it onto itself; the copy is
+// refused if the object changed since current was read.
+function metadataDialog(bucket, key, current, onDone) {
+  const fields = editableHeaders.map((h) => [h, el("input", { value: current.get(h) ?? "", class: "wide" })]);
+  const userRows = el("div");
+  const addUser = (name = "", value = "") => {
+    const n = el("input", { value: name, placeholder: "name" });
+    const v = el("input", { value, placeholder: "value", class: "wide" });
+    const row = el("div", { class: "row" }, "x-amz-meta-", n, v, button("Remove", () => row.remove(), "link danger"));
+    row.fields = [n, v];
+    userRows.append(row);
+  };
+  for (const [name, value] of current) {
+    if (name.startsWith("x-amz-meta-")) addUser(name.slice("x-amz-meta-".length), value);
+  }
+  const status = el("p", { class: "muted" }, "Saving replaces all of the object's metadata; its data is unchanged.");
+  const save = action("Save", async () => {
+    const headers = { "x-amz-copy-source": encodePath(bucket, keyBytes(key)), "x-amz-metadata-directive": "REPLACE" };
+    if (current.get("etag")) headers["x-amz-copy-source-if-match"] = current.get("etag");
+    for (const [h, input] of fields) {
+      if (input.value.trim()) headers[h.toLowerCase()] = input.value.trim();
+    }
+    for (const row of userRows.children) {
+      const [n, v] = row.fields.map((f) => f.value.trim());
+      if (n) headers["x-amz-meta-" + n.toLowerCase()] = v;
+    }
+    // fetch refuses header values outside Latin-1, and S3 keeps metadata ASCII.
+    const bad = Object.entries(headers).find(([k, v]) => !/^[\x20-\x7e]*$/.test(v) || !/^[a-z0-9-]+$/.test(k));
+    if (bad) {
+      status.textContent = `${bad[0]}: names may hold letters, digits and "-", and values printable ASCII.`;
+      status.className = "error";
+      return;
+    }
+    try {
+      await s3("PUT", bucket, key, { headers });
+      d.close();
+      onDone();
+    } catch (err) {
+      status.textContent = (err.code === "PreconditionFailed" ? "The object changed since it was opened. " : "") + describe(err);
+      status.className = "error";
+    }
+  });
+  const d = dialog("Edit metadata",
+    ...fields.map(([h, input]) => el("div", { class: "field" }, h, input)),
+    el("h3", {}, "User metadata"), userRows, button("Add", () => addUser()), status, save);
+}
+
+async function detailsDialog(bucket, key, report, onChange) {
   try {
     const res = await s3("HEAD", bucket, key);
     const size = Number(res.headers.get("content-length"));
@@ -457,9 +667,24 @@ async function detailsDialog(bucket, key, report) {
       ["Content-Type", type],
     ];
     for (const [name, value] of res.headers) {
-      if (name.startsWith("x-amz-meta-")) rows.push([name, value]);
+      if (name.startsWith("x-amz-meta-") || editableHeaders.slice(1).some((h) => h.toLowerCase() === name)) rows.push([name, value]);
     }
-    dialog("Object", el("table", { class: "details" }, rows.map(([k, v]) => el("tr", {}, el("th", {}, k), el("td", {}, v)))),
+    const then = (open) => () => {
+      d.close();
+      open();
+    };
+    const d = dialog("Object",
+      el("div", { class: "row" },
+        button("Download", () => download(bucket, key)),
+        button("Share", then(() => shareDialog(bucket, key))),
+        keyInfo.readOnly ? null : [
+          button("Rename or move", then(() => moveDialog(bucket, key, onChange))),
+          button("Edit metadata", then(() => metadataDialog(bucket, key, res.headers, () => {
+            onChange();
+            detailsDialog(bucket, key, report, onChange);
+          }))),
+        ]),
+      el("table", { class: "details" }, rows.map(([k, v]) => el("tr", {}, el("th", {}, k), el("td", {}, v)))),
       preview(bucket, key, type, size));
   } catch (err) {
     report(err);
@@ -608,6 +833,24 @@ function download(bucket, key) {
   a.remove();
 }
 
+// bucketInfo summarizes a bucket's settings and usage from the usage API, once it answers.
+function bucketInfo(bucket) {
+  const info = el("div", { class: "row bucket-info" });
+  consoleUsage().then((u) => {
+    const b = u.buckets.find((x) => x.name === bucket);
+    if (!b) return;
+    const badge = (text) => el("span", { class: "badge" }, text);
+    info.replaceChildren(
+      b.public ? badge("public") : null,
+      b.website ? badge("website") : null,
+      b.cors ? badge("CORS") : null,
+      b.max_size ? badge(`limit ${formatBytes(b.max_size)}` + (b.evict ? ", evicts least recently used" : "")) : null,
+      b.expire_after ? badge(`expires after ${formatGoDuration(b.expire_after)}`) : null,
+      el("span", { class: "muted" }, `${plural(b.objects, "object")} · ${formatBytes(b.bytes)}`));
+  }, () => {});
+  return info;
+}
+
 const sortLabels = { name: "Name", size: "Size", modified: "Last modified" };
 const sortOrders = {
   name: (a, b) => a.name.localeCompare(b.name),
@@ -726,7 +969,7 @@ async function browserView(bucket, prefix) {
     el("thead", {}, el("tr", {}, el("th", {}, writable ? all : null), sortHead("name"), sortHead("size", "num"), sortHead("modified"), el("th"))),
     body);
   const view = el("section", { class: "drop" },
-    el("h1", { class: "crumbs" }, crumbs), toolbar, el("div", { class: "row" }, filter, count), uploadList, table, more,
+    el("h1", { class: "crumbs" }, crumbs), bucketInfo(bucket), toolbar, el("div", { class: "row" }, filter, count), uploadList, table, more,
     writable ? el("p", { class: "muted" }, "Drop files or folders here to upload them to this folder.") : null);
   if (writable) {
     view.addEventListener("dragover", (e) => {
@@ -749,7 +992,7 @@ async function browserView(bucket, prefix) {
         el("td"),
         el("td", {}, el("a", { href: bucketHash(bucket, full) }, name)),
         el("td"), el("td"),
-        el("td", { class: "actions" }, writable ? action("Delete folder", async () => {
+        el("td", { class: "actions" }, writable ? button("Rename", () => moveDialog(bucket, full, render), "link") : null, writable ? action("Delete folder", async () => {
           try {
             const keys = await listAll(bucket, full);
             if (!confirm(`Delete the folder ${name} and the ${plural(keys.length, "object")} in it?`)) return;
@@ -781,12 +1024,13 @@ async function browserView(bucket, prefix) {
     }
     e.row = el("tr", {},
       el("td", {}, e.box ?? null),
-      el("td", {}, button(e.name, () => detailsDialog(bucket, key, report), "link")),
+      el("td", {}, button(e.name, () => detailsDialog(bucket, key, report, render), "link")),
       el("td", { class: "num" }, formatBytes(e.size)),
       el("td", {}, formatDate(e.modified)),
       el("td", { class: "actions" },
         button("Download", () => download(bucket, key), "link"),
         button("Share", () => shareDialog(bucket, key), "link"),
+        writable ? button("Rename", () => moveDialog(bucket, key, render), "link") : null,
         writable ? action("Delete", async () => {
           if (!confirm(`Delete ${displayKey(key)}?`)) return;
           try {
@@ -832,13 +1076,13 @@ async function usageView() {
       el("td", { class: "num" }, b.objects.toLocaleString()),
       el("td", { class: "num" }, formatBytes(b.bytes)),
       el("td", { class: "num" }, b.max_size ? formatBytes(b.max_size) + (b.evict ? " (evicts)" : "") : ""),
-      el("td", {}, b.expire_after ?? ""),
-      el("td", {}, b.public ? "public" : ""),
+      el("td", {}, b.expire_after ? formatGoDuration(b.expire_after) : ""),
+      el("td", {}, [b.public && "public", b.website && "website", b.cors && "CORS"].filter(Boolean).join(", ")),
       el("td", { class: "muted" }, formatDate(b.measured_at)));
     view.append(
       el("p", { class: "muted" }, "Writes and deletes through the server count at once; files changed outside the server count from the next hourly measurement."),
       el("table", {},
-        el("thead", {}, el("tr", {}, ["Bucket", "Objects", "Size", "Limit", "Expires after", "Reads", "Measured"].map((h) => el("th", {}, h)))),
+        el("thead", {}, el("tr", {}, ["Bucket", "Objects", "Size", "Limit", "Expires after", "Access", "Measured"].map((h) => el("th", {}, h)))),
         el("tbody", {}, usage.buckets.map((b) => row(b, b.name)), usage.total ? row(usage.total, "All buckets") : null)));
   } catch (err) {
     report(err);

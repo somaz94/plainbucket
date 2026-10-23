@@ -11,7 +11,7 @@ plainbucket is a single binary with no runtime dependencies beyond the Go standa
 ## Features
 
 - **S3 API, path-style and virtual-hosted**: buckets, objects, `ListObjectsV2`, `ListObjects` and `ListObjectVersions`, multipart upload with composite and full-object checksums, reads by part number, `GetObjectAttributes`, `CopyObject`, `DeleteObjects`, ranged and conditional reads, conditional writes (`If-None-Match`, `If-Match`). See [docs/compatibility.md](docs/compatibility.md).
-- **Web console**: browse, preview, upload, download, share by presigned URL and check bucket usage from a browser; the page signs requests itself, so access keys keep their limits. See [docs/configuration.md](docs/configuration.md#web-console).
+- **Web console**: browse, preview, upload, download, rename, edit metadata, share by presigned URL and check bucket usage from a browser; the page signs requests itself, so access keys keep their limits. See [docs/configuration.md](docs/configuration.md#web-console).
 - **Access control**: several access keys, each optionally limited to some buckets or to reads, and public buckets whose objects anyone can fetch. See [docs/configuration.md](docs/configuration.md#credentials).
 - **Bucket limits**: per-bucket expiry by last use and a size cap that either refuses writes or evicts the least recently used objects, so a CI cache bucket looks after itself. See [docs/configuration.md](docs/configuration.md#expiry-and-size-limits).
 - **Static websites**: a public bucket can serve index and error documents and answer CORS preflights, so a site or a browser app needs no other web server. See [docs/configuration.md](docs/configuration.md#buckets).

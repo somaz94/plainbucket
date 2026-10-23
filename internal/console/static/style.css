@@ -86,8 +86,10 @@ h1 {
   margin: 10px 0;
 }
 
-.hidden {
-  display: none;
+.hidden,
+[hidden] {
+  /* A class that sets display, such as .row, would otherwise show a hidden element. */
+  display: none !important;
 }
 
 input,
@@ -292,4 +294,24 @@ pre.preview {
   font-size: 0.85rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+input.short {
+  width: 6em;
+}
+
+.bucket-info {
+  margin: -6px 0 12px;
+}
+
+dialog h3 {
+  font-size: 0.95rem;
+  margin: 16px 0 6px;
 }

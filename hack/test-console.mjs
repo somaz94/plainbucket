@@ -91,6 +91,24 @@ const shared = sigv4.presign(admin, { method: "GET", host, path: sigv4.encodePat
 const sharedRes = await expectStatus("presigned get of an encoded key", await fetch(`${endpoint.origin}${sigv4.encodePath("console-e2e", key)}?${shared}`), 200);
 if ((await sharedRes.text()) !== "hello console") fail("shared body", "differs");
 
+// Rename and metadata edits as the console sends them: a copy that never overwrites, and
+// a copy onto itself guarded by the ETag the dialog was opened with.
+const moved = "moved/ü.txt";
+const copyHeaders = { "x-amz-copy-source": sigv4.encodePath("console-e2e", key), "if-none-match": "*" };
+await expectStatus("copy to a new name", await s3(admin, "PUT", "console-e2e", moved, { headers: copyHeaders }), 200);
+await expectStatus("copy never overwrites", await s3(admin, "PUT", "console-e2e", moved, { headers: copyHeaders }), 412);
+const etag = (await s3(admin, "HEAD", "console-e2e", moved)).headers.get("etag");
+const replace = (ifMatch) => s3(admin, "PUT", "console-e2e", moved, { headers: {
+  "x-amz-copy-source": sigv4.encodePath("console-e2e", moved), "x-amz-metadata-directive": "REPLACE",
+  "x-amz-copy-source-if-match": ifMatch, "content-type": "text/markdown", "cache-control": "no-cache", "x-amz-meta-note": "renamed",
+} });
+await expectStatus("replace metadata", await replace(etag), 200);
+const edited = await s3(admin, "HEAD", "console-e2e", moved);
+if (edited.headers.get("content-type") !== "text/markdown" || edited.headers.get("cache-control") !== "no-cache" ||
+  edited.headers.get("x-amz-meta-note") !== "renamed") fail("replaced metadata", [...edited.headers].join());
+await expectStatus("stale metadata edit refused", await replace('"00000000000000000000000000000000"'), 412);
+await expectStatus("delete the moved copy", await s3(admin, "DELETE", "console-e2e", moved), 204);
+
 // Objects on the console's host run sandboxed, away from the console's origin.
 const csp = (await s3(admin, "GET", "console-e2e", key)).headers.get("content-security-policy") ?? "";
 if (!csp.startsWith("sandbox")) fail("object sandbox", csp);

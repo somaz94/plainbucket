@@ -85,7 +85,7 @@ func TestConsoleFiles(t *testing.T) {
 func TestConsoleUsage(t *testing.T) {
 	x := newHarness(t, func(o *Options) {
 		o.Console = true
-		o.PublicBuckets = []string{"bbb"}
+		o.Buckets = map[string]BucketPolicy{"bbb": {Public: true, Website: &Website{Index: "index.html"}, CORS: &CORS{AllowedOrigins: []string{"*"}}}}
 		o.Credentials = append(o.Credentials, Credential{AccessKey: "scoped", SecretKey: "scoped-secret", Buckets: []string{"aaa"}},
 			Credential{AccessKey: "reader", SecretKey: "reader-secret", ReadOnly: true})
 	})
@@ -120,7 +120,7 @@ func TestConsoleUsage(t *testing.T) {
 	if a.Name != "aaa" || a.Bytes != 3 || a.Objects != 1 || a.MaxSize != 100 || !a.Evict || a.ExpireAfter != "336h0m0s" || a.MeasuredAt.IsZero() {
 		t.Errorf("bucket a: %+v", a)
 	}
-	if !b.Public || b.MaxSize != 0 {
+	if !b.Public || !b.Website || !b.CORS || a.Website || a.CORS || b.MaxSize != 0 {
 		t.Errorf("bucket b: %+v", b)
 	}
 

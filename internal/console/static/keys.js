@@ -34,7 +34,8 @@ export function canonicalKey(enc) {
   return uriEncode(keyBytes(enc), false);
 }
 
-function keyText(enc) {
+// keyText decodes a key, or returns null if it is not UTF-8.
+export function keyText(enc) {
   try {
     return strict.decode(keyBytes(enc));
   } catch {
