@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.0](https://github.com/somaz94/plainbucket/compare/v0.2.0...v0.3.0) (2026-10-23)
+
+### Features
+
+- add console previews, filtering, selection, upload cleanup, themes ([b0162a9](https://github.com/somaz94/plainbucket/commit/b0162a9b2c0e24cff5e79c91bdbc661a8d735931))
+
+### Bug Fixes
+
+- sum the console usage total from the tracked bucket usage ([48361a9](https://github.com/somaz94/plainbucket/commit/48361a978d7978d401f428531e6b6ddba4942aa9))
+
+### Chores
+
+- bump version to v0.3.0 ([4d21825](https://github.com/somaz94/plainbucket/commit/4d218257743175566e6a691eb735150f524e364f))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.2.0](https://github.com/somaz94/plainbucket/compare/v0.1.0...v0.2.0) (2026-10-23)
 
 ### Features
