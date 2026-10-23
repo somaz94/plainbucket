@@ -2,12 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased (2026-10-22)
+## [v0.2.0](https://github.com/somaz94/plainbucket/compare/v0.1.0...v0.2.0) (2026-10-23)
+
+### Features
+
+- add a web console that signs S3 requests in the browser ([ab7e7c9](https://github.com/somaz94/plainbucket/commit/ab7e7c9c4fddff30d7fa691492773209140e1d61))
+- add ListObjectVersions, GetObjectAttributes, partNumber reads and multipart checksums ([3c1ca88](https://github.com/somaz94/plainbucket/commit/3c1ca88a8c317a15d75a87503078320412148511))
+
+### Bug Fixes
+
+- **helm:** keep the test pod so helm test --logs can read it ([fa81754](https://github.com/somaz94/plainbucket/commit/fa81754ff6dcd590aa1cc0d2bf59b736e787b5c1))
 
 ### Builds
 
 - **deps:** bump docker/login-action from 3 to 4 (#3) ([#3](https://github.com/somaz94/plainbucket/pull/3)) ([d0ea7b5](https://github.com/somaz94/plainbucket/commit/d0ea7b55fba6a16c7ae2d7c7403338862d40da24))
 - **deps:** bump docker/setup-qemu-action from 3 to 4 (#2) ([#2](https://github.com/somaz94/plainbucket/pull/2)) ([1eb7c81](https://github.com/somaz94/plainbucket/commit/1eb7c813e8048b16c0ea5f52ae7e7c85af6176c4))
+
+### Continuous Integration
+
+- run a pinned ceph/s3-tests subset against a committed pass list ([14871ca](https://github.com/somaz94/plainbucket/commit/14871ca4a10f091136c2f676387b5db798bdcfd1))
+
+### Chores
+
+- bump version to v0.2.0 ([615e924](https://github.com/somaz94/plainbucket/commit/615e924235a28d1147623f7c46cbb05bf2d2f634))
+
+### Contributors
+
+- somaz
 
 <br/>
 
