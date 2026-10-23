@@ -47,6 +47,18 @@ log-format: json
 
 <br/>
 
+## Reloading
+
+A running server re-reads its configuration on `SIGHUP` (`docker kill --signal=HUP`, `systemctl reload` with `ExecReload=kill -HUP $MAINPID`), and on its own when the config file, the credentials file or the TLS certificate or key changes; it checks them every 30 seconds.
+
+- Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, and the certificate files. A request already authenticated finishes with the key it was signed with.
+- Every other setting changes only on restart; the server logs which ones differ. Environment variables are read again too, but a process's environment does not change after it starts, so values set there need a restart.
+- A file that fails to load or validate leaves the running configuration as it was, and the error is logged.
+
+In Kubernetes, mount the credentials Secret and the TLS Secret as directories, not with `subPath`, so updates reach the files; the [Helm chart](../helm/plainbucket/README.md) does.
+
+<br/>
+
 ## Credentials
 
 Requests are signed with AWS Signature Version 4, in the `Authorization` header or as a presigned URL; Signature Version 2 is refused. At least one access key is required. `PLAINBUCKET_ACCESS_KEY` and `PLAINBUCKET_SECRET_KEY` give one key full access. `credentials` adds more, and each can be limited:

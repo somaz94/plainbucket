@@ -128,7 +128,7 @@ type Store struct {
 	buckets     map[string]*sync.RWMutex // writers hold RLock, bucket deletion holds Lock
 	hashes      flight
 
-	limits      map[string]Limit
+	limits      atomic.Pointer[map[string]Limit] // swapped whole by SetLimits while serving
 	usageMu     sync.Mutex
 	bucketUsage map[string]Usage // tracked between janitor measurements
 	measuring   map[string]Usage // changes made while a measurement runs

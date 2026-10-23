@@ -23,7 +23,7 @@ func (c *Credential) allows(bucket string) bool {
 }
 
 func (h *Handler) credentials(accessKey string) (string, bool) {
-	c, ok := h.creds[accessKey]
+	c, ok := h.access.Load().creds[accessKey]
 	if !ok {
 		return "", false
 	}

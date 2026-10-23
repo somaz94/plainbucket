@@ -70,7 +70,7 @@ func (c *CORS) allowsHeaders(requested string) bool {
 }
 
 func (h *Handler) policy(bucket string) *BucketPolicy {
-	if p, ok := h.buckets[bucket]; ok {
+	if p, ok := h.access.Load().buckets[bucket]; ok {
 		return p
 	}
 	return &BucketPolicy{}

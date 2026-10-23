@@ -40,4 +40,4 @@ The chart is also published as an OCI artifact under `oci://ghcr.io/somaz94/char
 
 For uploads through an Ingress, raise the controller's body size limit (for ingress-nginx, `nginx.ingress.kubernetes.io/proxy-body-size: "0"`). With `config.tlsSecret` set as well, the controller must speak HTTPS to the pod (`nginx.ingress.kubernetes.io/backend-protocol: HTTPS`).
 
-The server reads its keys and TLS certificate at startup, so rotating `auth.existingSecret`, `auth.credentialsSecret` or `config.tlsSecret` takes effect after a pod restart (`kubectl rollout restart`, or a reloader annotation through `podAnnotations`).
+The server re-reads its credentials file and TLS certificate when they change, so rotating `auth.credentialsSecret` or `config.tlsSecret` takes effect without a restart once Kubernetes updates the mounted files, usually within a minute or two. `auth.existingSecret` reaches the server as environment variables, which only a pod restart refreshes (`kubectl rollout restart`, or a reloader annotation through `podAnnotations`). Values the chart renders itself restart the pod on `helm upgrade`.

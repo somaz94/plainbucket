@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -444,4 +445,28 @@ func (c *Config) LogValue() slog.Value {
 		slog.Bool("tls", c.HasTLS()),
 		slog.String("tls_min_vers", c.TLSMinVers),
 	)
+}
+
+// reloadable are the settings, by YAML name, that a running server takes over when it
+// reloads; the certificate files are re-read too, but switching TLS on or off is not.
+var reloadable = map[string]bool{
+	"access-key": true, "secret-key": true, "credentials": true, "credentials-file": true,
+	"public-buckets": true, "buckets": true, "tls-cert": true, "tls-key": true,
+}
+
+// RestartNeeded lists the settings, by YAML name, that differ in next and take effect
+// only when the server restarts.
+func (c *Config) RestartNeeded(next *Config) []string {
+	var out []string
+	a, b := reflect.ValueOf(c).Elem(), reflect.ValueOf(next).Elem()
+	for i := range a.NumField() {
+		name, _, _ := strings.Cut(a.Type().Field(i).Tag.Get("yaml"), ",")
+		if !reloadable[name] && !reflect.DeepEqual(a.Field(i).Interface(), b.Field(i).Interface()) {
+			out = append(out, name)
+		}
+	}
+	if c.HasTLS() != next.HasTLS() {
+		out = append(out, "tls-cert")
+	}
+	return out
 }

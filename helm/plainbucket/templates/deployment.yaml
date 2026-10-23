@@ -86,7 +86,7 @@ spec:
             {{- end }}
             {{- if .Values.auth.credentialsSecret }}
             - name: PLAINBUCKET_CREDENTIALS_FILE
-              value: /etc/plainbucket/credentials.yaml
+              value: /etc/plainbucket/credentials/{{ .Values.auth.credentialsKey }}
             {{- end }}
             - name: PLAINBUCKET_REGION
               value: {{ .Values.config.region | quote }}
@@ -169,9 +169,9 @@ spec:
               readOnly: true
             {{- end }}
             {{- if .Values.auth.credentialsSecret }}
+            # A directory, not a subPath, so Secret updates reach the file and the server reloads it.
             - name: credentials
-              mountPath: /etc/plainbucket/credentials.yaml
-              subPath: {{ .Values.auth.credentialsKey }}
+              mountPath: /etc/plainbucket/credentials
               readOnly: true
             {{- end }}
             {{- if $tls }}

@@ -29,12 +29,20 @@ type Limit struct {
 func (l Limit) evicts() bool { return l.Evict && l.MaxSize > 0 }
 
 // SetLimits sets the per-bucket limits. Call it before serving.
-func (s *Store) SetLimits(limits map[string]Limit) { s.limits = limits }
+func (s *Store) SetLimits(limits map[string]Limit) { s.limits.Store(&limits) }
+
+// limitsNow returns the limits in force; the map is never modified once set.
+func (s *Store) limitsNow() map[string]Limit {
+	if m := s.limits.Load(); m != nil {
+		return *m
+	}
+	return nil
+}
 
 // fits rejects early, before the body is received, a write of size bytes to bucket/key
 // that would pass a refusing limit. commit checks again with the real figures.
 func (s *Store) fits(bucket, key string, size int64) error {
-	l := s.limits[bucket]
+	l := s.limitsNow()[bucket]
 	if l.MaxSize == 0 {
 		return nil
 	}
@@ -59,7 +67,7 @@ func (s *Store) fits(bucket, key string, size int64) error {
 // account adds a change to bucket's usage. A growth that passes a refusing limit is
 // rejected with nothing recorded. over reports an evicting bucket now past its limit.
 func (s *Store) account(bucket string, objects, bytes int64) (over bool, err error) {
-	l := s.limits[bucket]
+	l := s.limitsNow()[bucket]
 	s.usageMu.Lock()
 	defer s.usageMu.Unlock()
 	u := s.bucketUsage[bucket]
@@ -106,7 +114,7 @@ func (s *Store) BucketUsage() map[string]Usage {
 	s.usageMu.Lock()
 	defer s.usageMu.Unlock()
 	out := map[string]Usage{}
-	for name := range s.limits {
+	for name := range s.limitsNow() {
 		out[name] = s.bucketUsage[name]
 	}
 	return out
@@ -121,7 +129,7 @@ func (s *Store) AllBucketUsage() map[string]Usage {
 }
 
 // BucketLimit returns the limits set for bucket.
-func (s *Store) BucketLimit(bucket string) Limit { return s.limits[bucket] }
+func (s *Store) BucketLimit(bucket string) Limit { return s.limitsNow()[bucket] }
 
 // Removed returns how many objects expiry and eviction have deleted since startup.
 func (s *Store) Removed() (expired, evicted int64) { return s.expired.Load(), s.evicted.Load() }
@@ -132,7 +140,7 @@ func (s *Store) Removed() (expired, evicted int64) { return s.expired.Load(), s.
 func (s *Store) touch(bucket, key string) {
 	every := touchInterval
 	// A short expiry needs finer records, or an object read all along would expire.
-	if e := s.limits[bucket].ExpireAfter; e > 0 && e/4 < every {
+	if e := s.limitsNow()[bucket].ExpireAfter; e > 0 && e/4 < every {
 		every = e / 4
 	}
 	p := s.metaPath(bucket, key)
@@ -163,7 +171,7 @@ type candidate struct {
 
 // enforceLimits expires and evicts objects in the buckets that have limits.
 func (s *Store) enforceLimits(ctx context.Context) (expired, evicted int) {
-	for bucket, l := range s.limits {
+	for bucket, l := range s.limitsNow() {
 		if ctx.Err() != nil {
 			return
 		}

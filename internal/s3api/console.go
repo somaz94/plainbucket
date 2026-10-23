@@ -74,7 +74,7 @@ func (h *Handler) consoleUsage(req *request) error {
 	if e != nil {
 		return e
 	}
-	req.auth, req.cred = auth, h.creds[auth.AccessKey]
+	req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
 
 	buckets, err := h.store.ListBuckets()
 	if err != nil {

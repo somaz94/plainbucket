@@ -39,5 +39,5 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return server.Run(ctx, cfg)
+	return server.Run(ctx, cfg, cfgFile)
 }

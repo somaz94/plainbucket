@@ -11,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/config"
@@ -40,16 +42,20 @@ func NewLogger(w io.Writer, cfg *config.Config) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, opts))
 }
 
-// Run serves until ctx is cancelled, then shuts down gracefully.
-func Run(ctx context.Context, cfg *config.Config) error {
+// Run serves until ctx is cancelled, then shuts down gracefully. On SIGHUP, or when a
+// file it was configured from changes, it reloads configFile (see reloader).
+func Run(ctx context.Context, cfg *config.Config, configFile string) error {
 	ln, err := net.Listen("tcp", cfg.Address)
 	if err != nil {
 		return err
 	}
-	return serve(ctx, cfg, NewLogger(os.Stderr, cfg), ln)
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	return serve(ctx, cfg, NewLogger(os.Stderr, cfg), ln, reloadSource{configFile: configFile, hup: hup, every: reloadPoll})
 }
 
-func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.Listener) error {
+func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.Listener, src reloadSource) error {
 	logger.Debug("configuration", "config", cfg)
 	store, err := storage.New(cfg.Root)
 	if err != nil {
@@ -80,35 +86,51 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		janitor.Wait()
 	}()
 
+	handler := s3api.New(s3api.Options{
+		Store:         store,
+		Credentials:   credentials(cfg),
+		Buckets:       bucketPolicies(cfg),
+		Domains:       cfg.Domains,
+		Region:        cfg.Region,
+		MaxObjectSize: cfg.MaxObjectSize,
+		Logger:        logger,
+		Metrics:       cfg.Metrics,
+		Console:       cfg.Console,
+		AccessLog:     cfg.AccessLog || cfg.Debug,
+		BodyTimeout:   cfg.BodyTimeout,
+	})
 	srv := &http.Server{
-		Handler: s3api.New(s3api.Options{
-			Store:         store,
-			Credentials:   credentials(cfg),
-			Buckets:       bucketPolicies(cfg),
-			Domains:       cfg.Domains,
-			Region:        cfg.Region,
-			MaxObjectSize: cfg.MaxObjectSize,
-			Logger:        logger,
-			Metrics:       cfg.Metrics,
-			Console:       cfg.Console,
-			AccessLog:     cfg.AccessLog || cfg.Debug,
-			BodyTimeout:   cfg.BodyTimeout,
-		}),
+		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 	scheme := "http"
+	var cert *certificate
 	if cfg.HasTLS() {
 		scheme = "https"
-		srv.TLSConfig = &tls.Config{MinVersion: cfg.TLSMinVersion()}
+		cert = &certificate{}
+		if err := cert.load(cfg.TLSCert, cfg.TLSKey); err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("loading the TLS certificate: %w", err)
+		}
+		srv.TLSConfig = &tls.Config{MinVersion: cfg.TLSMinVersion(), GetCertificate: cert.get}
 	}
+
+	rl := &reloader{src: src, boot: cfg, cfg: cfg, handler: handler, store: store, cert: cert, logger: logger}
+	reloadCtx, stopReload := context.WithCancel(context.Background())
+	var reloads sync.WaitGroup
+	reloads.Go(func() { rl.run(reloadCtx) })
+	defer func() {
+		stopReload()
+		reloads.Wait()
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("serving", "root", store.Root(), "scheme", scheme, "addr", ln.Addr().String())
 		if cfg.HasTLS() {
-			errCh <- srv.ServeTLS(ln, cfg.TLSCert, cfg.TLSKey)
+			errCh <- srv.ServeTLS(ln, "", "")
 		} else {
 			errCh <- srv.Serve(ln)
 		}

@@ -39,7 +39,7 @@ func start(t *testing.T, cfg *config.Config, logs io.Writer) (string, func() err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve(ctx, cfg, NewLogger(logs, cfg), ln) }()
+	go func() { errCh <- serve(ctx, cfg, NewLogger(logs, cfg), ln, reloadSource{}) }()
 	scheme := "http"
 	if cfg.HasTLS() {
 		scheme = "https"
@@ -113,20 +113,20 @@ func TestServeErrors(t *testing.T) {
 	_ = os.WriteFile(file, nil, 0o600)
 	cfg.Root = file
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
-	if err := serve(context.Background(), cfg, NewLogger(io.Discard, cfg), ln); err == nil {
+	if err := serve(context.Background(), cfg, NewLogger(io.Discard, cfg), ln, reloadSource{}); err == nil {
 		t.Error("root that is a file accepted")
 	}
 
 	cfg = testConfig(t)
 	cfg.TLSCert, cfg.TLSKey = "/missing/cert.pem", "/missing/key.pem"
 	ln, _ = net.Listen("tcp", "127.0.0.1:0")
-	if err := serve(context.Background(), cfg, NewLogger(io.Discard, cfg), ln); err == nil {
+	if err := serve(context.Background(), cfg, NewLogger(io.Discard, cfg), ln, reloadSource{}); err == nil {
 		t.Error("missing TLS files accepted")
 	}
 
 	cfg = testConfig(t)
 	cfg.Address = "256.0.0.1:bad"
-	if err := Run(context.Background(), cfg); err == nil {
+	if err := Run(context.Background(), cfg, ""); err == nil {
 		t.Error("bad address accepted")
 	}
 }
@@ -136,7 +136,7 @@ func TestRunStopsOnCancel(t *testing.T) {
 	cfg.Address = "127.0.0.1:0"
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, cfg) }()
+	go func() { done <- Run(ctx, cfg, "") }()
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 	select {
@@ -212,7 +212,7 @@ func TestSecondServerOnTheSameRootFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = serve(context.Background(), cfg, NewLogger(io.Discard, cfg), ln)
+	err = serve(context.Background(), cfg, NewLogger(io.Discard, cfg), ln, reloadSource{})
 	if err == nil || !strings.Contains(err.Error(), "in use") {
 		t.Errorf("second server: %v", err)
 	}

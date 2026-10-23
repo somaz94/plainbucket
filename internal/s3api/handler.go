@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/console"
@@ -53,6 +54,11 @@ type Handler struct {
 	log     *slog.Logger
 	now     func() time.Time
 	metrics *metrics
+	access  atomic.Pointer[access] // swapped whole by SetAccess while serving
+}
+
+// access is the keys and bucket policies in force.
+type access struct {
 	creds   map[string]*Credential
 	buckets map[string]*BucketPolicy
 }
@@ -63,21 +69,28 @@ func New(opts Options) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	h := &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics(),
-		creds: map[string]*Credential{}, buckets: map[string]*BucketPolicy{}}
-	for i := range opts.Credentials {
-		h.creds[opts.Credentials[i].AccessKey] = &opts.Credentials[i]
-	}
-	for name, p := range opts.Buckets {
-		h.buckets[name] = &p
-	}
-	for _, b := range opts.PublicBuckets {
-		if h.buckets[b] == nil {
-			h.buckets[b] = &BucketPolicy{}
-		}
-		h.buckets[b].Public = true
-	}
+	h := &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics()}
+	h.SetAccess(opts.Credentials, opts.Buckets, opts.PublicBuckets)
 	return h
+}
+
+// SetAccess replaces the access keys and bucket policies; it is safe while serving.
+// A request already authenticated finishes with the key it was signed with.
+func (h *Handler) SetAccess(creds []Credential, buckets map[string]BucketPolicy, public []string) {
+	a := &access{creds: map[string]*Credential{}, buckets: map[string]*BucketPolicy{}}
+	for _, c := range creds {
+		a.creds[c.AccessKey] = &c
+	}
+	for name, p := range buckets {
+		a.buckets[name] = &p
+	}
+	for _, b := range public {
+		if a.buckets[b] == nil {
+			a.buckets[b] = &BucketPolicy{}
+		}
+		a.buckets[b].Public = true
+	}
+	h.access.Store(a)
 }
 
 // request is one API call. auth and cred are nil for an anonymous one.
@@ -206,7 +219,7 @@ func (h *Handler) serve(req *request) error {
 		if e != nil {
 			return e
 		}
-		req.auth, req.cred = auth, h.creds[auth.AccessKey]
+		req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
 		if err := req.authorize(); err != nil {
 			return err
 		}

@@ -62,7 +62,8 @@ ok "chart-created secret"
 render --set auth.credentialsSecret=pb-creds
 has "PLAINBUCKET_CREDENTIALS_FILE" "credentials file env"
 has "secretName: pb-creds" "credentials volume"
-has "subPath: credentials.yaml" "credentials mount"
+has "value: /etc/plainbucket/credentials/credentials.yaml" "credentials file path"
+lacks "subPath: credentials.yaml" "credentials mounted as a directory"
 lacks "PLAINBUCKET_ACCESS_KEY" "no full-access key"
 ok "credentials secret only"
 

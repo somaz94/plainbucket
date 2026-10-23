@@ -132,3 +132,20 @@ func TestRedactQuery(t *testing.T) {
 		t.Error("malformed query not dropped")
 	}
 }
+
+func TestSetAccess(t *testing.T) {
+	x := newHarness(t, nil)
+	x.mustDo(http.MethodPut, "/pub", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/pub/k", []byte("x"), nil, http.StatusOK)
+	x.as("new", "new-secret", func() { x.expectErr(http.MethodGet, "/", nil, nil, "InvalidAccessKeyId") })
+	if rec := x.anon(http.MethodGet, "/pub/k"); rec.Code != http.StatusForbidden {
+		t.Errorf("private before: %d", rec.Code)
+	}
+
+	x.h.SetAccess([]Credential{{AccessKey: "new", SecretKey: "new-secret"}}, nil, []string{"pub"})
+	x.as("new", "new-secret", func() { x.mustDo(http.MethodGet, "/", nil, nil, http.StatusOK) })
+	x.expectErr(http.MethodGet, "/", nil, nil, "InvalidAccessKeyId")
+	if rec := x.anon(http.MethodGet, "/pub/k"); rec.Code != http.StatusOK {
+		t.Errorf("public after: %d", rec.Code)
+	}
+}
