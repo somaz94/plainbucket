@@ -1,0 +1,28 @@
+{{- if .Values.grafanaDashboard.enabled }}
+{{- if not .Values.config.metrics }}
+{{- fail "grafanaDashboard.enabled requires config.metrics=true: the dashboard reads /metrics" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  {{- $ns := .Values.grafanaDashboard.namespace | default .Release.Namespace }}
+  {{- if eq $ns .Release.Namespace }}
+  name: {{ include "plainbucket.fullname" . }}-dashboard
+  {{- else }}
+  {{- /* Releases of one name in several namespaces would otherwise collide here. */}}
+  name: {{ .Release.Namespace }}-{{ include "plainbucket.fullname" . }}-dashboard
+  {{- end }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "plainbucket.labels" . | nindent 4 }}
+    {{- with .Values.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  plainbucket.json: |-
+    {{- .Files.Get "dashboards/plainbucket.json" | nindent 4 }}
+{{- end }}

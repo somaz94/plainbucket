@@ -1,0 +1,85 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- if not .Values.config.metrics }}
+{{- fail "prometheusRule.enabled requires config.metrics=true: the alerts read /metrics" }}
+{{- end }}
+{{- $sel := .Values.prometheusRule.selector | default (printf "job=%q, namespace=%q" (include "plainbucket.fullname" .) .Release.Namespace) }}
+{{- $r := .Values.prometheusRule.rules }}
+{{- $any := .Values.prometheusRule.additionalRules }}
+{{- range $r }}{{ if .enabled }}{{ $any = true }}{{ end }}{{ end }}
+{{- if not $any }}
+{{- fail "prometheusRule.enabled with every rule disabled and no additionalRules would render an empty group" }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "plainbucket.fullname" . }}
+  labels:
+    {{- include "plainbucket.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: plainbucket
+      rules:
+        {{- with $r.down }}{{ if .enabled }}
+        - alert: PlainbucketDown
+          expr: |-
+            up{ {{- $sel -}} } == 0 or absent(up{ {{- $sel -}} })
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: plainbucket is not being scraped as up.
+        {{- end }}{{ end }}
+        {{- with $r.errors }}{{ if .enabled }}
+        - alert: PlainbucketHighErrorRate
+          expr: |-
+            sum by (namespace, job) (rate(plainbucket_requests_total{ {{- $sel }}, status=~"5..", status!~"501|507"}[5m]))
+              / sum by (namespace, job) (rate(plainbucket_requests_total{ {{- $sel -}} }[5m])) > {{ .ratio }}
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: plainbucket answers too many requests with a server error.
+            description: {{ printf "%s of requests failed with 5xx (501 and 507 aside) over the last 5 minutes; the server log has the errors." "{{ $value | humanizePercentage }}" | quote }}
+        {{- end }}{{ end }}
+        {{- with $r.writesRefused }}{{ if .enabled }}
+        - alert: PlainbucketWritesRefused
+          expr: |-
+            sum by (namespace, job) (increase(plainbucket_requests_total{ {{- $sel }}, status="507"}[10m])) > 0
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: plainbucket refuses writes for lack of disk space.
+            description: Writes were answered 507 InsufficientStorage. Free space on the volume is below config.minFreeSpace, or the volume is full; reads and deletes still work.
+        {{- end }}{{ end }}
+        {{- with $r.diskLow }}{{ if .enabled }}
+        - alert: PlainbucketDiskLow
+          expr: |-
+            (plainbucket_filesystem_free_bytes{ {{- $sel -}} } - plainbucket_min_free_bytes{ {{- $sel -}} })
+              / plainbucket_filesystem_size_bytes{ {{- $sel -}} } < {{ .ratio }}
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: plainbucket's volume is running out of space.
+            description: {{ printf "%s of the volume is left before writes are refused." "{{ $value | humanizePercentage }}" | quote }}
+        {{- end }}{{ end }}
+        {{- with $r.bucketNearLimit }}{{ if .enabled }}
+        - alert: PlainbucketBucketNearLimit
+          expr: |-
+            plainbucket_bucket_bytes{ {{- $sel -}} }
+              / ignoring(evict) plainbucket_bucket_max_size_bytes{ {{- $sel }}, evict="false"} > {{ .ratio }}
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: A plainbucket bucket is close to its max-size.
+            description: {{ printf "Bucket %s is %s full; past max-size its writes are refused with 403 QuotaExceeded." "{{ $labels.bucket }}" "{{ $value | humanizePercentage }}" | quote }}
+        {{- end }}{{ end }}
+        {{- with .Values.prometheusRule.additionalRules }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+{{- end }}

@@ -42,6 +42,19 @@ jobs:
       - name: AWS SDK for Go v2 compatibility
         run: make test-compat
 
+      # promtool checks and unit-tests the chart's alert rules.
+      - name: Install promtool
+        env:
+          PROMETHEUS_VERSION: 3.15.1
+          PROMETHEUS_SHA256: 6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84
+        run: |
+          tgz="prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          curl -fsSLO "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${tgz}"
+          echo "${PROMETHEUS_SHA256}  ${tgz}" | sha256sum -c -
+          tar -xzf "${tgz}" "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          sudo install -m 0755 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool --version | head -1
+
       # helm is preinstalled on GitHub-hosted Ubuntu runners.
       - name: Helm chart tests
         run: make test-helm

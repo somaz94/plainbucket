@@ -31,7 +31,8 @@ expect_fail() {
 
 KEY=(--set auth.existingSecret=pb-auth)
 TMP_VALUES="$(mktemp)"
-trap 'rm -f "${TMP_VALUES}"' EXIT
+TMP_DIR="$(mktemp -d)"
+trap 'rm -f "${TMP_VALUES}"; rm -rf "${TMP_DIR:?}"' EXIT
 
 echo "helm chart tests"
 
@@ -90,6 +91,43 @@ has "secretName: pb-tls" "tls volume"
 has "kind: ServiceMonitor" "service monitor"
 ok "tls and service monitor"
 
+METRICS=(--set config.metrics=true --namespace ns)
+render "${KEY[@]}" "${METRICS[@]}" --set prometheusRule.enabled=true --show-only templates/prometheusrule.yaml
+has "kind: PrometheusRule" "prometheus rule"
+has 'absent(up{job="t-plainbucket", namespace="ns"})' "default selector"
+has 'evict="false"' "evicting buckets left out"
+rules="${OUT}"
+render "${KEY[@]}" "${METRICS[@]}" --set prometheusRule.enabled=true --set prometheusRule.rules.diskLow.enabled=false \
+    --set prometheusRule.selector='service="pb"' --set "prometheusRule.additionalRules[0].alert=Extra" \
+    --set "prometheusRule.additionalRules[0].expr=vector(1)" --show-only templates/prometheusrule.yaml
+lacks "PlainbucketDiskLow" "a disabled rule"
+has 'up{service="pb"}' "custom selector"
+has "alert: Extra" "additional rules"
+if command -v promtool >/dev/null 2>&1; then
+    printf '%s\n' "${rules}" | sed -n '/^spec:/,$p' | sed '1d; s/^  //' >"${TMP_DIR}/rules.yaml"
+    cp "${ROOT_DIR}/hack/prometheus-rules-test.yaml" "${TMP_DIR}/"
+    promtool_out="$(cd "${TMP_DIR}" && { promtool check rules rules.yaml && promtool test rules prometheus-rules-test.yaml; } 2>&1)" ||
+        fail "promtool: ${promtool_out}"
+    ok "prometheus rule (checked and unit-tested with promtool)"
+elif [ -n "${CI:-}" ]; then
+    fail "promtool is required in CI"
+else
+    ok "prometheus rule (promtool not installed: rules not unit-tested)"
+fi
+
+render "${KEY[@]}" "${METRICS[@]}" --set grafanaDashboard.enabled=true --set grafanaDashboard.namespace=monitoring \
+    --set grafanaDashboard.annotations.grafana_folder=Storage --show-only templates/grafana-dashboard.yaml
+has "namespace: monitoring" "dashboard namespace"
+has 'grafana_dashboard: "1"' "sidecar label"
+has "grafana_folder: Storage" "folder annotation"
+has '"uid": "plainbucket"' "dashboard json"
+has "name: ns-t-plainbucket-dashboard" "dashboard name carries the release namespace elsewhere"
+render "${KEY[@]}" "${METRICS[@]}" --set grafanaDashboard.enabled=true --show-only templates/grafana-dashboard.yaml
+has "namespace: ns" "dashboard in the release namespace by default"
+has "name: t-plainbucket-dashboard" "dashboard name"
+python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "${CHART}/dashboards/plainbucket.json" || fail "dashboard is not valid JSON"
+ok "grafana dashboard"
+
 render "${KEY[@]}" --set persistence.enabled=false
 has "emptyDir: {}" "emptyDir without persistence"
 lacks "kind: PersistentVolumeClaim" "no claim without persistence"
@@ -132,6 +170,12 @@ ok "helm test pod"
 expect_fail "no access key"
 expect_fail "must be set together" --set auth.accessKey=admin
 expect_fail "requires config.metrics=true" "${KEY[@]}" --set serviceMonitor.enabled=true
+expect_fail "requires config.metrics=true" "${KEY[@]}" --set prometheusRule.enabled=true
+expect_fail "requires config.metrics=true" "${KEY[@]}" --set grafanaDashboard.enabled=true
+expect_fail "empty group" "${KEY[@]}" --set config.metrics=true --set prometheusRule.enabled=true \
+    --set prometheusRule.rules.down.enabled=false --set prometheusRule.rules.errors.enabled=false \
+    --set prometheusRule.rules.writesRefused.enabled=false --set prometheusRule.rules.diskLow.enabled=false \
+    --set prometheusRule.rules.bucketNearLimit.enabled=false
 ok "fail guards"
 
 expect_fail "bogus" "${KEY[@]}" --set bogus=1
@@ -148,6 +192,11 @@ expect_fail "maxObjectSize" "${KEY[@]}" --set-string config.maxObjectSize=999999
 expect_fail "pathType" "${KEY[@]}" --set ingress.enabled=true --set "ingress.hosts[0].host=x" --set "ingress.hosts[0].paths[0].path=/"
 expect_fail "terminationGracePeriodSeconds" "${KEY[@]}" --set terminationGracePeriodSeconds=-5
 expect_fail "logFormat" "${KEY[@]}" --set config.logFormat=xml
+expect_fail "ratio" "${KEY[@]}" --set prometheusRule.rules.diskLow.ratio=2
+expect_fail "down" "${KEY[@]}" --set prometheusRule.rules.down.for=soon
+expect_fail "release" "${KEY[@]}" --set prometheusRule.labels.release=true
+expect_fail "expr" "${KEY[@]}" --set "prometheusRule.additionalRules[0].alert=X"
+expect_fail "warn" "${KEY[@]}" --set prometheusRule.rules.down.warn=true
 expect_fail "accessMode" "${KEY[@]}" --set persistence.accessMode=RWX
 expect_fail "port" "${KEY[@]}" --set service.port=99999
 expect_fail "Bad_Name" "${KEY[@]}" --set config.buckets.Bad_Name.public=true

@@ -36,7 +36,21 @@ The chart is also published as an OCI artifact under `oci://ghcr.io/somaz94/char
 - `minimal.yaml`: one full-access key and a larger volume.
 - `runner-cache.yaml`: a GitLab Runner cache with a key limited to its bucket (see [docs/gitlab-runner.md](https://github.com/somaz94/plainbucket/blob/main/docs/gitlab-runner.md)).
 - `static-site.yaml`: a website bucket with index and error documents and CORS, served through an Ingress with virtual-hosted-style hosts. Bucket settings under `config.buckets` are rendered into a ConfigMap passed with `-c`.
-- `tls-metrics.yaml`: HTTPS in the pod and a Prometheus Operator `ServiceMonitor`.
+- `tls-metrics.yaml`: HTTPS in the pod, a Prometheus Operator `ServiceMonitor`, the alerts and the Grafana dashboard.
+
+<br/>
+
+## Monitoring
+
+With `config.metrics=true` the chart can add, for the Prometheus Operator and Grafana:
+
+- `serviceMonitor`: scrapes `/metrics`.
+- `prometheusRule`: alerts when the server is down, answers too many requests with 5xx (`501` for unsupported APIs aside), refuses writes for disk space (`507`), nears the point where it will, or has a bucket close to a `max-size` that refuses writes. Each alert can be turned off, and its threshold, `for` and severity set, under `prometheusRule.rules`; `prometheusRule.additionalRules` appends your own. The alerts select series by the job and namespace labels the ServiceMonitor gives them; set `prometheusRule.selector` when they are scraped another way.
+- `grafanaDashboard`: a ConfigMap holding the dashboard, labelled for Grafana's dashboard sidecar. The dashboard picks its data source, job and namespace from variables, so one copy covers every release: enable it on one of them. The same JSON (`dashboards/plainbucket.json` in the chart) also imports into a Grafana without the sidecar.
+
+<br/>
+
+## Ingress and Secret Rotation
 
 For uploads through an Ingress, raise the controller's body size limit (for ingress-nginx, `nginx.ingress.kubernetes.io/proxy-body-size: "0"`). With `config.tlsSecret` set as well, the controller must speak HTTPS to the pod (`nginx.ingress.kubernetes.io/backend-protocol: HTTPS`).
 

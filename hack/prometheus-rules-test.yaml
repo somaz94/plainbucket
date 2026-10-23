@@ -1,0 +1,100 @@
+# promtool unit test for the chart's PrometheusRule, rendered as release t in namespace ns.
+# hack/test-helm.sh runs it when promtool is installed.
+rule_files: [rules.yaml]
+evaluation_interval: 1m
+tests:
+  # Every alert firing.
+  - interval: 1m
+    input_series:
+      - series: 'plainbucket_bucket_bytes{job="t-plainbucket",namespace="ns",bucket="full"}'
+        values: '95x20'
+      - series: 'plainbucket_bucket_max_size_bytes{job="t-plainbucket",namespace="ns",bucket="full",evict="false"}'
+        values: '100x20'
+      - series: 'plainbucket_bucket_bytes{job="t-plainbucket",namespace="ns",bucket="cache"}'
+        values: '99x20'
+      - series: 'plainbucket_bucket_max_size_bytes{job="t-plainbucket",namespace="ns",bucket="cache",evict="true"}'
+        values: '100x20'
+      - series: 'up{job="t-plainbucket",namespace="ns"}'
+        values: '0x20'
+      - series: 'plainbucket_filesystem_free_bytes{job="t-plainbucket",namespace="ns"}'
+        values: '15x20'
+      - series: 'plainbucket_min_free_bytes{job="t-plainbucket",namespace="ns"}'
+        values: '10x20'
+      - series: 'plainbucket_filesystem_size_bytes{job="t-plainbucket",namespace="ns"}'
+        values: '100x20'
+      - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="PutObject",method="PUT",status="507"}'
+        values: '0+1x20'
+      - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="GetObject",method="GET",status="500"}'
+        values: '0+1x20'
+      - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="GetObject",method="GET",status="200"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PlainbucketBucketNearLimit
+        exp_alerts:
+          - exp_labels: {severity: warning, job: t-plainbucket, namespace: ns, bucket: full}
+            exp_annotations:
+              summary: A plainbucket bucket is close to its max-size.
+              description: "Bucket full is 95% full; past max-size its writes are refused with 403 QuotaExceeded."
+      - eval_time: 20m
+        alertname: PlainbucketDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: t-plainbucket, namespace: ns}
+            exp_annotations: {summary: plainbucket is not being scraped as up.}
+      - eval_time: 20m
+        alertname: PlainbucketDiskLow
+        exp_alerts:
+          - exp_labels: {severity: warning, job: t-plainbucket, namespace: ns}
+            exp_annotations: {summary: "plainbucket's volume is running out of space.", description: "5% of the volume is left before writes are refused."}
+      - eval_time: 20m
+        alertname: PlainbucketWritesRefused
+        exp_alerts:
+          - exp_labels: {severity: warning, job: t-plainbucket, namespace: ns}
+            exp_annotations:
+              summary: plainbucket refuses writes for lack of disk space.
+              description: Writes were answered 507 InsufficientStorage. Free space on the volume is below config.minFreeSpace, or the volume is full; reads and deletes still work.
+      - eval_time: 20m
+        alertname: PlainbucketHighErrorRate
+        exp_alerts:
+          - exp_labels: {severity: warning, job: t-plainbucket, namespace: ns}
+            exp_annotations:
+              summary: plainbucket answers too many requests with a server error.
+              description: "33.33% of requests failed with 5xx (501 and 507 aside) over the last 5 minutes; the server log has the errors."
+
+  # A healthy server, an evicting bucket at its limit and unsupported APIs probed: quiet.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="t-plainbucket",namespace="ns"}'
+        values: '1x20'
+      - series: 'plainbucket_bucket_bytes{job="t-plainbucket",namespace="ns",bucket="cache"}'
+        values: '100x20'
+      - series: 'plainbucket_bucket_max_size_bytes{job="t-plainbucket",namespace="ns",bucket="cache",evict="true"}'
+        values: '100x20'
+      - series: 'plainbucket_filesystem_free_bytes{job="t-plainbucket",namespace="ns"}'
+        values: '50x20'
+      - series: 'plainbucket_min_free_bytes{job="t-plainbucket",namespace="ns"}'
+        values: '0x20'
+      - series: 'plainbucket_filesystem_size_bytes{job="t-plainbucket",namespace="ns"}'
+        values: '100x20'
+      - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="NotImplemented",method="GET",status="501"}'
+        values: '0+5x20'
+      - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="GetObject",method="GET",status="200"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - {eval_time: 20m, alertname: PlainbucketDown, exp_alerts: []}
+      - {eval_time: 20m, alertname: PlainbucketHighErrorRate, exp_alerts: []}
+      - {eval_time: 20m, alertname: PlainbucketWritesRefused, exp_alerts: []}
+      - {eval_time: 20m, alertname: PlainbucketDiskLow, exp_alerts: []}
+      - {eval_time: 20m, alertname: PlainbucketBucketNearLimit, exp_alerts: []}
+
+  # A target that vanished keeps its job and namespace on the alert.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="other",namespace="ns"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PlainbucketDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: t-plainbucket, namespace: ns}
+            exp_annotations: {summary: plainbucket is not being scraped as up.}

@@ -67,6 +67,7 @@ func (m *metrics) record(op, method string, status int, sent int64, d time.Durat
 type storeStats interface {
 	Usage() storage.Usage
 	BucketUsage() map[string]storage.Usage
+	BucketLimit(bucket string) storage.Limit
 	Removed() (expired, evicted int64)
 	DiskSpace() (free, size int64, err error)
 	MinFree() int64
@@ -139,6 +140,13 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats) {
 		fmt.Fprintln(w, "# TYPE plainbucket_bucket_bytes gauge")
 		for _, n := range names {
 			fmt.Fprintf(w, "plainbucket_bucket_bytes{bucket=%q} %d\n", n, per[n].Bytes)
+		}
+		fmt.Fprintln(w, "# HELP plainbucket_bucket_max_size_bytes A bucket's max-size; evict tells whether reaching it evicts or refuses.")
+		fmt.Fprintln(w, "# TYPE plainbucket_bucket_max_size_bytes gauge")
+		for _, n := range names {
+			if l := st.BucketLimit(n); l.MaxSize > 0 {
+				fmt.Fprintf(w, "plainbucket_bucket_max_size_bytes{bucket=%q,evict=\"%t\"} %d\n", n, l.Evict, l.MaxSize)
+			}
 		}
 	}
 

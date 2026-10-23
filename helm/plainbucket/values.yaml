@@ -141,6 +141,38 @@ serviceMonitor:
   scrapeTimeout: ""
   tlsConfig: {}      # used with config.tlsSecret, e.g. {insecureSkipVerify: true} for a self-signed cert
 
+# Prometheus Operator PrometheusRule alerting on the metrics. Requires config.metrics=true.
+prometheusRule:
+  enabled: false
+  labels: {}
+  # PromQL label matchers selecting this release's series; empty matches the job and
+  # namespace labels the ServiceMonitor gives them.
+  selector: ""
+  rules:
+    # The server is not scraped as up.
+    down: {enabled: true, for: 5m, severity: critical}
+    # More than ratio of requests answered 5xx, leaving out 501 (unsupported APIs, which
+    # tools probe) and 507 (writesRefused).
+    errors: {enabled: true, for: 10m, severity: warning, ratio: 0.05}
+    # Writes refused with 507: below config.minFreeSpace, or the volume is full.
+    writesRefused: {enabled: true, for: 0m, severity: warning}
+    # Less than ratio of the volume left before writes are refused (free minus minFreeSpace).
+    diskLow: {enabled: true, for: 15m, severity: warning, ratio: 0.1}
+    # A bucket whose max-size refuses writes (no evict) is over ratio full.
+    bucketNearLimit: {enabled: true, for: 15m, severity: warning, ratio: 0.9}
+  # Further rules appended to the group as they are.
+  additionalRules: []
+
+# ConfigMap with a Grafana dashboard for the metrics, picked up by Grafana's dashboard
+# sidecar through its label. Requires config.metrics=true. One dashboard covers every
+# release, so enable it on one.
+grafanaDashboard:
+  enabled: false
+  labels:
+    grafana_dashboard: "1"
+  annotations: {}  # e.g. grafana_folder: Storage, for a sidecar with folderAnnotation set
+  namespace: ""    # where the sidecar looks; empty means the release namespace
+
 nodeSelector: {}
 tolerations: []
 affinity: {}

@@ -1,4 +1,5 @@
-# HTTPS in the pod from a kubernetes.io/tls Secret, with Prometheus Operator scraping.
+# HTTPS in the pod from a kubernetes.io/tls Secret, with Prometheus Operator scraping,
+# the chart's alerts and its Grafana dashboard.
 auth:
   existingSecret: plainbucket-auth
 config:
@@ -12,3 +13,9 @@ serviceMonitor:
     release: prometheus
   tlsConfig:
     insecureSkipVerify: true
+prometheusRule:
+  enabled: true
+  labels:
+    release: prometheus
+grafanaDashboard:
+  enabled: true

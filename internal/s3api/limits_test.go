@@ -59,7 +59,8 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 	x.h.store.SetLimits(map[string]storage.Limit{"bkt": {MaxSize: 100}})
 	x.h.store.MeasureUsage(context.Background())
-	if body := scrape(); !strings.Contains(body, `plainbucket_bucket_bytes{bucket="bkt"} 5`) || !strings.Contains(body, `plainbucket_bucket_objects{bucket="bkt"} 1`) {
+	if body := scrape(); !strings.Contains(body, `plainbucket_bucket_bytes{bucket="bkt"} 5`) || !strings.Contains(body, `plainbucket_bucket_objects{bucket="bkt"} 1`) ||
+		!strings.Contains(body, `plainbucket_bucket_max_size_bytes{bucket="bkt",evict="false"} 100`) {
 		t.Errorf("per-bucket gauges:\n%s", body)
 	}
 }
