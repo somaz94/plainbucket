@@ -150,8 +150,16 @@ type copyPartResult struct {
 
 type tagging struct {
 	XMLName xml.Name `xml:"Tagging"`
-	NS      string   `xml:"xmlns,attr"`
-	TagSet  struct{} `xml:"TagSet"`
+	NS      string   `xml:"xmlns,attr,omitempty"`
+	// A struct, so an empty set is still written: the SDKs read a missing TagSet as absent.
+	TagSet struct {
+		Tags []xmlTag `xml:"Tag"`
+	} `xml:"TagSet"`
+}
+
+type xmlTag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
 }
 
 type copyObjectResult struct {

@@ -21,11 +21,11 @@ plainbucket keeps the data a client uploads as ordinary files and everything els
 
 ## Metadata and Files Changed Outside the Server
 
-Each object's ETag, content type, user metadata, stored headers and checksums, and for a multipart object the sizes of its parts, sit in a metadata file under the system directory. That file also records the object's size and modification time, and it is trusted only while both still match the data file. The metadata file's own modification time is the object's last read, used by [expiry and size limits](configuration.md#expiry-and-size-limits).
+Each object's ETag, content type, user metadata, stored headers, tags and checksums, and for a multipart object the sizes of its parts, sit in a metadata file under the system directory. That file also records the object's size and modification time, and it is trusted only while both still match the data file. The metadata file's own modification time is the object's last read, used by [expiry and size limits](configuration.md#expiry-and-size-limits).
 
 When a file was changed, or added, without the server:
 
-- `GetObject` and `HeadObject` recompute the MD5 ETag from the file, keep the previous content type and user metadata, and save the result.
+- `GetObject` and `HeadObject` recompute the MD5 ETag from the file, keep the previous content type, user metadata and tags, and save the result.
 - Listings do not read file contents. They report a placeholder ETag ending in `-1`, the multipart ETag form, so clients do not mistake it for the file's MD5. The next `GetObject` or `HeadObject` replaces it with the real one.
 - A file with no metadata at all gets a content type guessed from its extension.
 

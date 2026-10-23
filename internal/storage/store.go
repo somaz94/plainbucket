@@ -75,7 +75,14 @@ type ObjectInfo struct {
 	// ChecksumType is COMPOSITE or FULL_OBJECT; empty means FULL_OBJECT.
 	ChecksumType string
 	Parts        []PartRecord // the parts a multipart upload was assembled from, in order
-	IsDir        bool         // a directory marker key ending in /
+	Tags         []Tag
+	IsDir        bool // a directory marker key ending in /
+}
+
+// Tag is one object tag.
+type Tag struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // PartRecord is one part of an object completed from a multipart upload.
@@ -89,6 +96,7 @@ type Metadata struct {
 	ContentType string            `json:"content_type,omitempty"`
 	UserMeta    map[string]string `json:"user_meta,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
+	Tags        []Tag             `json:"tags,omitempty"`
 }
 
 // sidecar is stored per object under SysDir/meta. It is trusted only while size and
@@ -422,7 +430,7 @@ func (m sidecar) info(mod time.Time) ObjectInfo {
 	return ObjectInfo{
 		Key: m.Key, Size: m.Size, ModTime: mod, ETag: m.ETag,
 		ContentType: m.ContentType, UserMeta: m.UserMeta, Headers: m.Headers, Checksums: m.Checksums,
-		ChecksumType: m.ChecksumType, Parts: m.Parts,
+		ChecksumType: m.ChecksumType, Parts: m.Parts, Tags: m.Tags,
 	}
 }
 

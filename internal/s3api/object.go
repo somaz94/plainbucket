@@ -103,9 +103,13 @@ func (h *Handler) putObject(req *request) error {
 	if p.size < 0 && h.opts.MaxObjectSize > 0 {
 		p.reader = &capReader{r: p.reader, left: h.opts.MaxObjectSize}
 	}
+	md, err := writeMetadata(req.r.Header)
+	if err != nil {
+		return err
+	}
 	cond := writeConditions(req.r.Header)
 	info, err := h.store.PutObject(req.bucket, req.key, p.reader, p.size, storage.PutOptions{
-		Metadata: metadataFromHeaders(req.r.Header),
+		Metadata: md,
 		Cond:     cond,
 		Verify:   p.verify,
 	})
@@ -157,6 +161,10 @@ func (h *Handler) getObject(req *request) error {
 	hdr.Set("Content-Type", ct)
 	hdr.Set("ETag", info.ETag)
 	hdr.Set("Accept-Ranges", "bytes")
+	if req.auth != nil {
+		// Tags need a key, as GetObjectTagging does; S3 shows the count only to those who may read them.
+		setTagCount(hdr, info.Tags)
+	}
 	for k, v := range info.UserMeta {
 		// Lowercase as S3 sends them: clients take the metadata key from the header name.
 		hdr["x-amz-meta-"+k] = []string{v}
@@ -303,6 +311,17 @@ func (h *Handler) copyObject(req *request) error {
 	default:
 		return s3err.InvalidArgument("Unknown metadata directive.")
 	}
+	switch strings.ToUpper(req.r.Header.Get("X-Amz-Tagging-Directive")) {
+	case "", "COPY":
+	case "REPLACE":
+		tags, err := parseTaggingHeader(req.r.Header.Get("X-Amz-Tagging"))
+		if err != nil {
+			return err
+		}
+		opts.ReplaceTags, opts.Tags = true, tags
+	default:
+		return s3err.InvalidArgument("Unknown tagging directive.")
+	}
 	opts.Cond = writeConditions(req.r.Header)
 	if h.opts.MaxObjectSize > 0 {
 		src, err := h.store.HeadObject(srcBucket, srcKey)
@@ -339,15 +358,6 @@ func parseCopySource(v string) (string, string, error) {
 		return "", "", s3err.InvalidArgument("Copy Source must mention the source bucket and key: sourcebucket/sourcekey.")
 	}
 	return bucket, key, nil
-}
-
-// getObjectTagging reports an empty tag set: tags are not stored.
-func (h *Handler) getObjectTagging(req *request) error {
-	if _, err := h.store.HeadObject(req.bucket, req.key); err != nil {
-		return err
-	}
-	writeXML(req.w, http.StatusOK, tagging{NS: s3NS})
-	return nil
 }
 
 var objectAttributes = map[string]bool{"ETag": true, "Checksum": true, "ObjectParts": true, "StorageClass": true, "ObjectSize": true}

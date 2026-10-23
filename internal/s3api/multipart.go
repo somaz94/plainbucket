@@ -36,7 +36,11 @@ func (h *Handler) createMultipartUpload(req *request) error {
 			return s3err.InvalidRequest("The " + ck.Type + " checksum type cannot be used with " + ck.Algorithm + ".")
 		}
 	}
-	id, err := h.store.CreateUpload(req.bucket, req.key, metadataFromHeaders(req.r.Header), ck)
+	md, err := writeMetadata(req.r.Header)
+	if err != nil {
+		return err
+	}
+	id, err := h.store.CreateUpload(req.bucket, req.key, md, ck)
 	if err != nil {
 		return err
 	}

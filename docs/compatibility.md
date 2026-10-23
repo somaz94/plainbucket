@@ -30,7 +30,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 | Service | `ListBuckets`, paginated with `max-buckets` and `continuation-token`, filtered by `prefix` and `bucket-region` |
 | Bucket | `CreateBucket`, `HeadBucket`, `DeleteBucket` (must be empty), `GetBucketLocation`, `GetBucketVersioning` (always unversioned) |
 | Listing | `ListObjectsV2` and `ListObjects` with `prefix`, `delimiter`, `max-keys`, `start-after`, `continuation-token` / `marker`, `fetch-owner`, `encoding-type=url`; `ListObjectVersions`, which lists every object as its only version, `null`, as S3 does for an unversioned bucket |
-| Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectAttributes`, `GetObjectTagging` (always an empty tag set) |
+| Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectAttributes`, `GetObjectTagging`, `PutObjectTagging`, `DeleteObjectTagging` |
 | Browser upload | `PostObject` (an HTML form signed with a Signature Version 4 POST policy, as `PresignPostObject` in the SDKs produces) |
 | Multipart | `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy` (with `x-amz-copy-source-range`; a range outside the source is `400 InvalidArgument`, as on S3), `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` (with `prefix`, `delimiter` and `encoding-type=url`) |
 
@@ -38,7 +38,7 @@ POST uploads:
 
 - The form must be signed with Signature Version 4 (`x-amz-algorithm`, `x-amz-credential`, `x-amz-date`, `x-amz-signature`, `policy`); the signing key's bucket scope and read-only flag apply. A Signature Version 2 form (`AWSAccessKeyId`) is refused with `403`, and an unsigned one always is: there are no anonymous writes.
 - The policy's `expiration` and every condition are enforced: exact matches, `eq`, `starts-with` and `content-length-range`. Every form field but `policy`, `x-amz-signature`, `file` and `x-ignore-*` must be covered by a condition, as on S3. Field names are matched without regard to case; a field the form leaves out counts as empty.
-- Supported fields: `key` (with `${filename}`), `Content-Type` and the other stored headers, `x-amz-meta-*`, `success_action_status` (`200`, `201` with a `PostResponse` document, otherwise `204`) and `success_action_redirect`. Fields after the file are ignored.
+- Supported fields: `key` (with `${filename}`), `Content-Type` and the other stored headers, `x-amz-meta-*`, `tagging` (a `Tagging` XML document), `success_action_status` (`200`, `201` with a `PostResponse` document, otherwise `204`) and `success_action_redirect`. Fields after the file are ignored.
 
 Object details:
 
@@ -49,15 +49,14 @@ Object details:
 - Stored with the object and returned on read: `Content-Type`, `x-amz-meta-*`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`. Header values are kept as the bytes received: non-ASCII metadata sent as UTF-8 comes back as UTF-8, which clients that read headers as Latin-1 (Python's) decode differently.
 - `Content-MD5`, `x-amz-checksum-*` headers and trailing checksums are verified. Checksums come back on `GetObject` / `HeadObject` with `x-amz-checksum-mode: ENABLED` when the whole object is read.
 - A multipart upload created with `x-amz-checksum-algorithm` gets an object checksum of the type S3 allows for it (`x-amz-checksum-type`): `COMPOSITE`, the digest of the part digests followed by `-<parts>`, or `FULL_OBJECT` for the CRCs, computed over the assembled data. `CompleteMultipartUpload` checks the checksum it is given against it, and the part checksums in its document against the parts. A copy keeps a full-object checksum and drops a composite one.
+- Object tags are stored with the object and returned sorted by key, within S3's limits: ten tags, keys of 1 to 128 characters and values up to 256, no duplicate keys and no `aws:` prefix (`400 InvalidTag`). `PutObject`, `CreateMultipartUpload` and `CopyObject` take them in `x-amz-tagging`, a copy keeps the source's tags unless `x-amz-tagging-directive: REPLACE`, POST uploads take a `tagging` field, and `GetObject` / `HeadObject` report `x-amz-tagging-count`. Bucket tags are not implemented.
 - ETags follow S3: the MD5 of the object, or for a multipart upload the MD5 of the part MD5s followed by `-<parts>`.
 
 <br/>
 
 ## Not Implemented
 
-These return `501 NotImplemented`: ACLs and policies (public reads are configured instead), versioning other than reading its status and listing the `null` versions, object lock and retention, storing tags, lifecycle, replication, the CORS and website APIs (both are configured per bucket instead, see [Buckets](configuration.md#buckets)), encryption settings, and `SelectObjectContent`.
-
-Tags are not stored. `GetObjectTagging` answers with an empty set because the aws cli and other tools read the tags of an object before copying it, and fail on `501`; `PutObjectTagging` and `DeleteObjectTagging` stay unimplemented.
+These return `501 NotImplemented`: ACLs and policies (public reads are configured instead), versioning other than reading its status and listing the `null` versions, object lock and retention, bucket tags, lifecycle, replication, the CORS and website APIs (both are configured per bucket instead, see [Buckets](configuration.md#buckets)), encryption settings, and `SelectObjectContent`.
 
 Storage classes are not modeled; every object reports `STANDARD`.
 

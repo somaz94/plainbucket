@@ -82,8 +82,14 @@ func (h *Handler) postObject(req *request) error {
 	if h.opts.MaxObjectSize > 0 && (maxLen < 0 || h.opts.MaxObjectSize < maxLen) {
 		maxLen = h.opts.MaxObjectSize
 	}
+	md := metadataFromHeaders(hdr)
+	if doc := fields["tagging"]; doc != "" {
+		if md.Tags, err = parseTagging([]byte(doc)); err != nil {
+			return err
+		}
+	}
 	body := &sizeRange{r: file, min: minLen, max: maxLen}
-	info, err := h.store.PutObject(req.bucket, req.key, body, -1, storage.PutOptions{Metadata: metadataFromHeaders(hdr)})
+	info, err := h.store.PutObject(req.bucket, req.key, body, -1, storage.PutOptions{Metadata: md})
 	if err != nil {
 		return err
 	}

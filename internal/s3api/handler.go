@@ -108,8 +108,8 @@ type request struct {
 	q       url.Values
 }
 
-// Subresources this server does not implement; requests naming one get 501 (bar the
-// GETs readableSubresource answers) instead of being mistaken for a plain operation.
+// Subresources this server does not implement; requests naming one get 501 (bar those
+// readableSubresource answers) instead of being mistaken for a plain operation.
 var unsupported = map[string]bool{
 	"accelerate": true, "acl": true, "analytics": true, "attributes": true, "cors": true,
 	"encryption": true, "intelligent-tiering": true, "inventory": true, "legal-hold": true,
@@ -120,18 +120,18 @@ var unsupported = map[string]bool{
 	"versions": true, "website": true,
 }
 
-// readableSubresource reports the GETs of an unsupported subresource that are answered:
-// an object's (empty) tags, which tools copying an object read first, its attributes,
-// and a bucket's versions, which are its objects as the "null" version.
+// readableSubresource reports the requests for an otherwise unsupported subresource
+// that are answered: an object's tags, its attributes, and a bucket's versions, which
+// are its objects as the "null" version. Bucket tags stay unsupported.
 func readableSubresource(k string, req *request) bool {
-	if req.r.Method != http.MethodGet {
-		return false
-	}
+	m := req.r.Method
 	switch k {
-	case "tagging", "attributes":
-		return req.key != ""
+	case "tagging":
+		return req.key != "" && (m == http.MethodGet || m == http.MethodPut || m == http.MethodDelete)
+	case "attributes":
+		return req.key != "" && m == http.MethodGet
 	case "versions":
-		return req.key == ""
+		return req.key == "" && m == http.MethodGet
 	}
 	return false
 }
@@ -307,6 +307,9 @@ func (h *Handler) objectOp(req *request) error {
 		}
 		return h.getObject(req)
 	case http.MethodPut:
+		if q.Has("tagging") {
+			return h.putObjectTagging(req)
+		}
 		if q.Has("uploadId") || q.Has("partNumber") {
 			return h.uploadPart(req)
 		}
@@ -315,6 +318,9 @@ func (h *Handler) objectOp(req *request) error {
 		}
 		return h.putObject(req)
 	case http.MethodDelete:
+		if q.Has("tagging") {
+			return h.deleteObjectTagging(req)
+		}
 		if q.Has("uploadId") {
 			return h.abortMultipartUpload(req)
 		}

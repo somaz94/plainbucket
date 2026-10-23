@@ -55,7 +55,7 @@ func (s *Store) PutObject(bucket, key string, body io.Reader, size int64, o PutO
 	}
 	if isDirKey(key) {
 		_ = os.Remove(tmp)
-		return s.putMarker(bucket, key, o.Cond)
+		return s.putMarker(bucket, key, o.Cond, o.Metadata.Tags)
 	}
 	return s.commit(bucket, key, tmp, sidecar{ETag: md5ETag(sum), Checksums: checks, Metadata: o.Metadata}, o.Cond)
 }
@@ -80,7 +80,7 @@ func (s *Store) fitsReceived(bucket, key, tmp string) error {
 
 // putMarker creates the directory for a key ending in / and records it as an explicit
 // marker, so deleting the last object below it does not remove it.
-func (s *Store) putMarker(bucket, key string, cond Conditions) (ObjectInfo, error) {
+func (s *Store) putMarker(bucket, key string, cond Conditions, tags []Tag) (ObjectInfo, error) {
 	bl := s.bucketLock(bucket)
 	bl.RLock()
 	defer bl.RUnlock()
@@ -99,7 +99,7 @@ func (s *Store) putMarker(bucket, key string, cond Conditions) (ObjectInfo, erro
 		}
 		return ObjectInfo{}, err
 	}
-	raw, err := json.Marshal(sidecar{Key: key, ETag: emptyETag, Dir: true})
+	raw, err := json.Marshal(sidecar{Key: key, ETag: emptyETag, Dir: true, Metadata: Metadata{Tags: tags}})
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -110,7 +110,9 @@ func (s *Store) putMarker(bucket, key string, cond Conditions) (ObjectInfo, erro
 	if fi, err := s.r.Stat(p); err == nil {
 		mod = fi.ModTime()
 	}
-	return markerInfo(key, mod), nil
+	info := markerInfo(key, mod)
+	info.Tags = tags
+	return info, nil
 }
 
 func markerInfo(key string, mod time.Time) ObjectInfo {
@@ -142,22 +144,15 @@ func (s *Store) open(bucket, key string, persist bool) (*os.File, ObjectInfo, er
 		if err != nil || !fi.IsDir() {
 			return nil, ObjectInfo{}, ErrNoSuchKey
 		}
-		return nil, markerInfo(key, fi.ModTime()), nil
+		info := markerInfo(key, fi.ModTime())
+		if m, ok := s.readSidecar(bucket, key); ok {
+			info.Tags = m.Tags
+		}
+		return nil, info, nil
 	}
 
-	f, err := s.r.Open(p)
+	f, fi, err := s.openData(bucket, key)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || escapesRoot(err) {
-			return nil, ObjectInfo{}, ErrNoSuchKey
-		}
-		return nil, ObjectInfo{}, err
-	}
-	fi, err := f.Stat()
-	if err == nil && !fi.Mode().IsRegular() {
-		err = ErrNoSuchKey
-	}
-	if err != nil {
-		_ = f.Close()
 		return nil, ObjectInfo{}, err
 	}
 	m, ok := s.readSidecar(bucket, key)
@@ -168,6 +163,27 @@ func (s *Store) open(bucket, key string, persist bool) (*os.File, ObjectInfo, er
 		}
 	}
 	return f, m.info(fi.ModTime()), nil
+}
+
+// openData opens the data file of bucket/key, a key not ending in /, whose bucket and
+// key the caller has checked.
+func (s *Store) openData(bucket, key string) (*os.File, os.FileInfo, error) {
+	f, err := s.r.Open(s.rel(s.dataPath(bucket, key)))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || escapesRoot(err) {
+			return nil, nil, ErrNoSuchKey
+		}
+		return nil, nil, err
+	}
+	fi, err := f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = ErrNoSuchKey
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	return f, fi, nil
 }
 
 // HeadObject returns the object's metadata.
@@ -329,9 +345,12 @@ type CopyOptions struct {
 	// ReplaceMetadata uses Metadata instead of the source object's.
 	ReplaceMetadata bool
 	Metadata        Metadata
-	Cond            Conditions // on the destination
-	SrcIfMatch      string
-	SrcIfNoneMatch  string
+	// ReplaceTags uses Tags instead of the source object's.
+	ReplaceTags    bool
+	Tags           []Tag
+	Cond           Conditions // on the destination
+	SrcIfMatch     string
+	SrcIfNoneMatch string
 }
 
 func (o CopyOptions) checkSource(src ObjectInfo) error {
@@ -360,8 +379,12 @@ func (s *Store) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, ds
 	if o.ReplaceMetadata {
 		md = o.Metadata
 	}
+	md.Tags = src.Tags
+	if o.ReplaceTags {
+		md.Tags = o.Tags
+	}
 	if src.IsDir {
-		return s.PutObject(dstBucket, dstKey, strings.NewReader(""), 0, PutOptions{Cond: o.Cond})
+		return s.PutObject(dstBucket, dstKey, strings.NewReader(""), 0, PutOptions{Cond: o.Cond, Metadata: Metadata{Tags: md.Tags}})
 	}
 	if err := s.requireBucket(dstBucket); err != nil {
 		return ObjectInfo{}, err

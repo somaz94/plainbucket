@@ -24,7 +24,7 @@ EXCLUDE=(
     fails_without_logging_rollover group group_policy iam_account iam_cross_account iam_role
     iam_tenant iam_user lifecycle lifecycle_expiration lifecycle_transition object_lock
     object_ownership role_policy s3control s3select s3website s3website_redirect_location
-    s3website_routing_rules session_policy sns sse_s3 storage_class tagging target_by_bucket
+    s3website_routing_rules session_policy sns sse_s3 storage_class target_by_bucket
     test_of_sts token_claims_trust_policy_test token_principal_tag_role_policy_test
     token_request_tag_trust_policy_test token_resource_tags_test token_role_tags_test
     token_tag_keys_test user_policy versioning webidentity_test

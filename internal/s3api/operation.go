@@ -91,6 +91,8 @@ func objectOperation(r *http.Request, q url.Values) string {
 		return "GetObject"
 	case http.MethodPut:
 		switch {
+		case q.Has("tagging"):
+			return "PutObjectTagging"
 		case (q.Has("uploadId") || q.Has("partNumber")) && copySource:
 			return "UploadPartCopy"
 		case q.Has("uploadId") || q.Has("partNumber"):
@@ -100,7 +102,10 @@ func objectOperation(r *http.Request, q url.Values) string {
 		}
 		return "PutObject"
 	case http.MethodDelete:
-		if q.Has("uploadId") {
+		switch {
+		case q.Has("tagging"):
+			return "DeleteObjectTagging"
+		case q.Has("uploadId"):
 			return "AbortMultipartUpload"
 		}
 		return "DeleteObject"
