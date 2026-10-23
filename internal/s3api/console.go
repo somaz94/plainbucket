@@ -78,6 +78,9 @@ func (h *Handler) consoleUsage(req *request) error {
 	}
 	usage := h.store.AllBucketUsage()
 	res := consoleUsageResponse{Buckets: []consoleBucket{}}
+	// The total sums the tracked per-bucket figures rather than the last walk, so it
+	// matches the rows; it is dated by that walk.
+	total := consoleBucket{MeasuredAt: h.store.Usage().At}
 	for _, b := range buckets {
 		if !req.cred.allows(b.Name) {
 			continue
@@ -89,10 +92,11 @@ func (h *Handler) consoleUsage(req *request) error {
 			item.ExpireAfter = l.ExpireAfter.String()
 		}
 		res.Buckets = append(res.Buckets, item)
+		total.Objects += item.Objects
+		total.Bytes += item.Bytes
 	}
 	if len(req.cred.Buckets) == 0 {
-		t := h.store.Usage()
-		res.Total = &consoleBucket{Objects: t.Objects, Bytes: t.Bytes, MeasuredAt: t.At}
+		res.Total = &total
 	}
 	body, err := json.Marshal(res)
 	if err != nil {

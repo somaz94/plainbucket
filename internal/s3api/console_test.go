@@ -93,7 +93,7 @@ func TestConsoleUsage(t *testing.T) {
 	}
 	x.mustDo(http.MethodPut, "/aaa/k", []byte("123"), nil, http.StatusOK)
 	if body := x.mustDo(http.MethodGet, consoleUsagePath, nil, nil, http.StatusOK).Body.String(); strings.Contains(body, "measured_at") ||
-		!strings.Contains(body, `"bytes":3`) || strings.Contains(body, `"name":""`) {
+		!strings.Contains(body, `"total":{"objects":1,"bytes":3}`) || strings.Contains(body, `"name":""`) {
 		t.Errorf("before the first measurement: %s", body)
 	}
 	x.h.store.MeasureUsage(t.Context())
