@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.4.0](https://github.com/somaz94/plainbucket/compare/v0.3.0...v0.4.0) (2026-10-23)
+
+### Features
+
+- add rename, metadata editing and upload progress to the console ([4c6d5b7](https://github.com/somaz94/plainbucket/commit/4c6d5b75909c84d477066f8b92c8a11f631c5b26))
+
+### Chores
+
+- bump version to v0.4.0 ([deea05b](https://github.com/somaz94/plainbucket/commit/deea05bba33cbc24cf882d8d1e4ccdf56b327958))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.3.0](https://github.com/somaz94/plainbucket/compare/v0.2.0...v0.3.0) (2026-10-23)
 
 ### Features
