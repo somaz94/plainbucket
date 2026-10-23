@@ -37,7 +37,7 @@ const ObjectSandbox = "sandbox allow-scripts allow-popups allow-forms"
 // page, from loading anything but their own files, and from leaking their URL.
 func SetSecurityHeaders(h http.Header) {
 	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; "+
-		"connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		"connect-src 'self'; img-src 'self'; media-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")

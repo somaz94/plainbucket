@@ -218,23 +218,27 @@ func (h *Handler) listMultipartUploads(req *request) error {
 	if err != nil {
 		return err
 	}
+	enc, err := encodingType(req.q)
+	if err != nil {
+		return err
+	}
 	prefix, keyMarker, idMarker := req.q.Get("prefix"), req.q.Get("key-marker"), req.q.Get("upload-id-marker")
 	ups, truncated, err := h.store.ListUploads(req.bucket, prefix, keyMarker, idMarker, maxUploads)
 	if err != nil {
 		return err
 	}
 	res := listMultipartUploadsResult{
-		NS: s3NS, Bucket: req.bucket, KeyMarker: keyMarker, UploadIDMarker: idMarker, Prefix: prefix,
-		MaxUploads: maxUploads, IsTruncated: truncated,
+		NS: s3NS, Bucket: req.bucket, KeyMarker: enc(keyMarker), UploadIDMarker: idMarker, Prefix: enc(prefix),
+		MaxUploads: maxUploads, IsTruncated: truncated, EncodingType: req.q.Get("encoding-type"),
 	}
 	for _, u := range ups {
 		res.Uploads = append(res.Uploads, uploadItem{
-			Key: u.Key, UploadID: u.UploadID, Initiator: serverOwner, Owner: serverOwner,
+			Key: enc(u.Key), UploadID: u.UploadID, Initiator: serverOwner, Owner: serverOwner,
 			StorageClass: "STANDARD", Initiated: isoTime(u.Initiated),
 		})
 	}
 	if truncated && len(ups) > 0 {
-		res.NextKeyMarker, res.NextUploadIDMarker = ups[len(ups)-1].Key, ups[len(ups)-1].UploadID
+		res.NextKeyMarker, res.NextUploadIDMarker = enc(ups[len(ups)-1].Key), ups[len(ups)-1].UploadID
 	}
 	writeXML(req.w, http.StatusOK, res)
 	return nil

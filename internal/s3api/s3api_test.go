@@ -599,7 +599,18 @@ func TestMultipartAPI(t *testing.T) {
 		t.Errorf("list uploads truncated: %s", rec.Body.String())
 	}
 	x.expectErr(http.MethodGet, "/bkt?uploads&max-uploads=x", nil, nil, "InvalidArgument")
+	x.expectErr(http.MethodGet, "/bkt?uploads&encoding-type=bogus", nil, nil, "InvalidArgument")
 	x.expectErr(http.MethodGet, "/missing?uploads", nil, nil, "NoSuchBucket")
+
+	var spaced initiateMultipartUploadResult
+	_ = xml.Unmarshal(x.mustDo(http.MethodPost, "/bkt/a%20dir/x%2By?uploads", nil, nil, http.StatusOK).Body.Bytes(), &spaced)
+	rec = x.mustDo(http.MethodGet, "/bkt?uploads&encoding-type=url&prefix=a%20dir/", nil, nil, http.StatusOK)
+	lu = listMultipartUploadsResult{}
+	if xml.Unmarshal(rec.Body.Bytes(), &lu) != nil || len(lu.Uploads) != 1 || lu.Uploads[0].Key != "a%20dir/x%2By" ||
+		lu.Prefix != "a%20dir/" || lu.EncodingType != "url" {
+		t.Errorf("list uploads encoded: %s", rec.Body.String())
+	}
+	x.mustDo(http.MethodDelete, "/bkt/a%20dir/x%2By?uploadId="+spaced.UploadID, nil, nil, http.StatusNoContent)
 
 	x.expectErr(http.MethodPost, "/bkt/big?uploadId="+id, []byte("<nope"), nil, "MalformedXML")
 	var doc strings.Builder

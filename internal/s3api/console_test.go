@@ -32,6 +32,7 @@ func TestConsoleFiles(t *testing.T) {
 	h := rec.Header()
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "app.js") ||
 		!strings.Contains(h.Get("Content-Security-Policy"), "default-src 'none'") ||
+		!strings.Contains(h.Get("Content-Security-Policy"), "media-src 'self'") ||
 		h.Get("Cross-Origin-Opener-Policy") != "same-origin" || h.Get("X-Content-Type-Options") != "nosniff" {
 		t.Errorf("index: %d %v %s", rec.Code, h, rec.Body.String())
 	}
@@ -85,7 +86,8 @@ func TestConsoleUsage(t *testing.T) {
 	x := newHarness(t, func(o *Options) {
 		o.Console = true
 		o.PublicBuckets = []string{"bbb"}
-		o.Credentials = append(o.Credentials, Credential{AccessKey: "scoped", SecretKey: "scoped-secret", Buckets: []string{"aaa"}})
+		o.Credentials = append(o.Credentials, Credential{AccessKey: "scoped", SecretKey: "scoped-secret", Buckets: []string{"aaa"}},
+			Credential{AccessKey: "reader", SecretKey: "reader-secret", ReadOnly: true})
 	})
 	x.h.store.SetLimits(map[string]storage.Limit{"aaa": {MaxSize: 100, Evict: true, ExpireAfter: 336 * time.Hour}})
 	for _, b := range []string{"aaa", "bbb"} {
@@ -125,8 +127,14 @@ func TestConsoleUsage(t *testing.T) {
 	x.as("scoped", "scoped-secret", func() {
 		res = get()
 	})
-	if len(res.Buckets) != 1 || res.Buckets[0].Name != "aaa" || res.Total != nil {
+	if len(res.Buckets) != 1 || res.Buckets[0].Name != "aaa" || res.Total != nil || res.ReadOnly {
 		t.Errorf("scoped key: %+v", res)
+	}
+	x.as("reader", "reader-secret", func() {
+		res = get()
+	})
+	if !res.ReadOnly || len(res.Buckets) != 2 {
+		t.Errorf("read-only key: %+v", res)
 	}
 
 	if rec := x.anon(http.MethodGet, consoleUsagePath); rec.Code != http.StatusForbidden {

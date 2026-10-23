@@ -289,6 +289,7 @@ type listMultipartUploadsResult struct {
 	NextKeyMarker      string       `xml:"NextKeyMarker,omitempty"`
 	NextUploadIDMarker string       `xml:"NextUploadIdMarker,omitempty"`
 	Prefix             string       `xml:"Prefix"`
+	EncodingType       string       `xml:"EncodingType,omitempty"`
 	MaxUploads         int          `xml:"MaxUploads"`
 	IsTruncated        bool         `xml:"IsTruncated"`
 	Uploads            []uploadItem `xml:"Upload"`

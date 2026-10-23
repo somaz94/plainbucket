@@ -154,9 +154,10 @@ A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, a
 
 ## Web Console
 
-With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse buckets and folders, upload files (large ones as multipart uploads), download, share an object through a presigned URL that expires after an hour, a day or seven days, delete objects, folders and empty buckets, and see each bucket's usage and limits.
+With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse buckets and folders, filter and sort a folder, preview images, video, audio and the start of text files, upload files and folders (large files as multipart uploads), download, share an object through a presigned URL that expires after an hour, a day or seven days, delete objects, folders and empty buckets, abort multipart uploads left behind, and see each bucket's usage and limits. A read-only key sees no write actions.
 
 - Sign in with an access key and its secret key. The page signs every request itself and sends it to the S3 API, so the key's bucket scope and read-only flag apply as they do to any client. The secret key never leaves the page; it is kept in memory only, so reloading the page signs out.
+- The pages follow the system's light or dark theme; the Theme button forces either one and is remembered in the browser's local storage. Nothing else, and never the key, is stored there.
 - The console works over plain HTTP too: it does not rely on the browser's Web Crypto API, which only secure contexts offer. Over plain HTTP, though, anyone on the network path can read the secret key as it is typed or replace the page's script, so serve the console over TLS anywhere but a trusted network.
 - The pages are served without authentication; they hold no data. Usage comes from `GET /_console/api/usage`, which needs a signed request and lists only the buckets the key may access, with the total across buckets only for a key without a bucket scope. Writes and deletes through the server update it at once; files changed outside the server count from the next hourly measurement.
 - The console answers only on path-style hosts. On a virtual host, `/_console/` is an object key of that bucket.

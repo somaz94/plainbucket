@@ -100,21 +100,19 @@ func listQuery(q url.Values) (maxKeys int, enc func(string) string, err error) {
 		}
 		maxKeys = min(n, maxListKeys)
 	}
-	encodeURL := false
+	enc, err = encodingType(q)
+	return maxKeys, enc, err
+}
+
+// encodingType maps encoding-type to the key encoder of a listing.
+func encodingType(q url.Values) (func(string) string, error) {
 	switch q.Get("encoding-type") {
 	case "":
+		return func(s string) string { return s }, nil
 	case "url":
-		encodeURL = true
-	default:
-		return 0, nil, s3err.InvalidArgument("Invalid Encoding Method specified in Request.")
+		return sigv4.URIEncodePath, nil
 	}
-	enc = func(s string) string {
-		if encodeURL {
-			return sigv4.URIEncodePath(s)
-		}
-		return s
-	}
-	return maxKeys, enc, nil
+	return nil, s3err.InvalidArgument("Invalid Encoding Method specified in Request.")
 }
 
 // listObjects serves ListObjectsV2 (v2) and the original ListObjects.

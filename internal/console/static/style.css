@@ -1,28 +1,24 @@
 :root {
   color-scheme: light dark;
-  --fg: #1d2129;
-  --muted: #6b7280;
-  --line: #e3e6ea;
-  --bg: #ffffff;
-  --panel: #f6f7f9;
-  --accent: #2563eb;
-  --danger: #c0262d;
-  --ok: #15803d;
+  --fg: light-dark(#1d2129, #e6e8eb);
+  --muted: light-dark(#6b7280, #9aa1ab);
+  --line: light-dark(#e3e6ea, #2d3138);
+  --bg: light-dark(#ffffff, #15171a);
+  --panel: light-dark(#f6f7f9, #1d2024);
+  --accent: light-dark(#2563eb, #6ea0ff);
+  --danger: light-dark(#c0262d, #ff6b70);
+  --ok: light-dark(#15803d, #4ade80);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 15px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fg: #e6e8eb;
-    --muted: #9aa1ab;
-    --line: #2d3138;
-    --bg: #15171a;
-    --panel: #1d2024;
-    --accent: #6ea0ff;
-    --danger: #ff6b70;
-    --ok: #4ade80;
-  }
+/* The theme button overrides the system preference. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 body {
@@ -224,6 +220,12 @@ progress {
   outline-offset: 6px;
 }
 
+.topbar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 14px;
+}
+
 form.login {
   max-width: 320px;
   margin: 12vh auto 0;
@@ -255,4 +257,39 @@ dialog .actions {
   display: flex;
   justify-content: flex-end;
   margin-top: 14px;
+}
+
+button.link.sort {
+  padding: 0;
+  color: inherit;
+  font-weight: 600;
+}
+
+input.filter {
+  min-width: 18em;
+}
+
+.badge {
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.preview {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  margin-top: 14px;
+}
+
+pre.preview {
+  overflow: auto;
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

@@ -12,6 +12,8 @@ const partAttempts = 3;
 const shareExpiries = [["1 hour", 3600], ["1 day", 86400], ["7 days", 604800]];
 
 let cred = null;
+// What the signed-in key may do, as the usage API reports it.
+let keyInfo = { readOnly: false };
 const app = document.getElementById("app");
 
 // ---- DOM
@@ -50,6 +52,45 @@ function action(label, run, cls = "") {
   return b;
 }
 
+// ---- Theme
+
+const themes = { auto: "Auto", light: "Light", dark: "Dark" };
+const themeKey = "plainbucket-theme";
+
+// The theme is remembered in localStorage: unlike the key, it is no secret.
+function loadTheme() {
+  try {
+    const t = localStorage.getItem(themeKey);
+    return Object.hasOwn(themes, t ?? "") ? t : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+let theme = loadTheme();
+
+function applyTheme() {
+  if (theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+}
+applyTheme();
+
+function themeButton() {
+  const names = Object.keys(themes);
+  const b = button("Theme: " + themes[theme], () => {
+    theme = names[(names.indexOf(theme) + 1) % names.length];
+    try {
+      localStorage.setItem(themeKey, theme);
+    } catch {
+      // Storage may be disabled; the choice then lasts until the page is reloaded.
+    }
+    applyTheme();
+    b.textContent = "Theme: " + themes[theme];
+  }, "link");
+  b.title = "Follow the system, or force the light or dark theme";
+  return b;
+}
+
 function formatBytes(n) {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let i = 0;
@@ -58,6 +99,10 @@ function formatBytes(n) {
     i++;
   }
   return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
+}
+
+function plural(n, word) {
+  return `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 }
 
 function formatDate(s) {
@@ -85,9 +130,13 @@ function reporter() {
     } else if (err.code === "RequestTimeTooSkewed") {
       notify("The server refused the signature because this computer's clock differs from the server's by more than 15 minutes.");
     } else {
-      notify(err.code ? `${err.code}: ${err.message}` : String(err.message || err));
+      notify(describe(err));
     }
   };
+}
+
+function describe(err) {
+  return err.code ? `${err.code}: ${err.message}` : String(err.message || err);
 }
 
 // ---- S3
@@ -140,6 +189,13 @@ async function s3xml(method, bucket, key, opts) {
 function presignedURL(bucket, key, expires, params = []) {
   const path = encodePath(bucket, keyBytes(key));
   return location.origin + path + "?" + presign(cred, { method: "GET", host, path, params, expires });
+}
+
+async function consoleUsage() {
+  const path = "/_console/api/usage";
+  const res = await fetch(path, { headers: signHeaders(cred, { method: "GET", host, path }) });
+  if (!res.ok) throw await s3Error(res.status, await res.text());
+  return res.json();
 }
 
 // deleteKeys deletes encoded keys, in batches of DeleteObjects, and one by one those
@@ -206,6 +262,8 @@ function put(as, bucket, key, params, headers, body, onProgress, pending) {
 const uploadList = el("div", { class: "uploads" });
 // Cancel functions of the uploads in progress.
 const uploads = new Set();
+// Multipart upload IDs this page is still sending, which uploadsDialog must not abort.
+const liveUploads = new Set();
 
 window.addEventListener("beforeunload", (e) => {
   if (!uploads.size) return;
@@ -249,6 +307,7 @@ function upload(bucket, key, file, onDone) {
     const partSize = Math.max(minPartSize, Math.ceil(file.size / maxParts));
     const created = await s3xml("POST", bucket, key, { params: [["uploads", ""]], headers, as });
     const uploadId = child(created, "UploadId");
+    liveUploads.add(uploadId);
     const count = Math.ceil(file.size / partSize);
     const sent = new Array(count).fill(0);
     const etags = new Array(count);
@@ -292,6 +351,8 @@ function upload(bucket, key, file, onDone) {
       stop();
       await s3("DELETE", bucket, key, { params: [["uploadId", uploadId]], as }).catch(() => {});
       throw err;
+    } finally {
+      liveUploads.delete(uploadId);
     }
   };
 
@@ -299,7 +360,7 @@ function upload(bucket, key, file, onDone) {
   run().then(() => {
     finish("done", "ok");
     onDone();
-  }, (err) => finish(err.code ? `${err.code}: ${err.message}` : err.message, "error"));
+  }, (err) => finish(describe(err), "error"));
 }
 
 // droppedFiles returns [relative path, File] for everything dropped, walking folders.
@@ -361,21 +422,109 @@ function shareDialog(bucket, key) {
     el("label", {}, "Expires in ", select), field);
 }
 
+const previewBytes = 64 * 1024;
+const textTypes = /^text\/|[/+](json|xml|yaml|x-yaml|javascript|x-sh|toml|csv)$/;
+
+// preview shows media through a short-lived presigned URL and text as its first bytes.
+// Stored pages are never rendered here.
+function preview(bucket, key, type, size) {
+  type = (type ?? "").split(";")[0].trim().toLowerCase();
+  const src = () => presignedURL(bucket, key, 300);
+  if (type.startsWith("image/")) return el("img", { src: src(), alt: displayKey(key), class: "preview" });
+  if (type.startsWith("video/")) return el("video", { src: src(), controls: true, preload: "metadata", class: "preview" });
+  if (type.startsWith("audio/")) return el("audio", { src: src(), controls: true, preload: "metadata", class: "preview" });
+  if (!textTypes.test(type)) return null;
+  const pre = el("pre", { class: "preview" }, size ? "Loading…" : "(empty)");
+  if (size) {
+    s3("GET", bucket, key, { headers: { range: `bytes=0-${previewBytes - 1}` } })
+      .then((res) => res.arrayBuffer())
+      .then((buf) => {
+        pre.textContent = new TextDecoder().decode(buf) +
+          (size > previewBytes ? `\n\n… the first ${formatBytes(previewBytes)} of ${formatBytes(size)}` : "");
+      }, (err) => { pre.textContent = "No preview: " + describe(err); });
+  }
+  return pre;
+}
+
 async function detailsDialog(bucket, key, report) {
   try {
     const res = await s3("HEAD", bucket, key);
+    const size = Number(res.headers.get("content-length"));
+    const type = res.headers.get("content-type");
     const rows = [
-      ["Key", displayKey(key)], ["Size", formatBytes(Number(res.headers.get("content-length")))],
+      ["Key", displayKey(key)], ["Size", formatBytes(size)],
       ["Last modified", formatDate(res.headers.get("last-modified"))], ["ETag", res.headers.get("etag")],
-      ["Content-Type", res.headers.get("content-type")],
+      ["Content-Type", type],
     ];
     for (const [name, value] of res.headers) {
       if (name.startsWith("x-amz-meta-")) rows.push([name, value]);
     }
-    dialog("Object", el("table", { class: "details" }, rows.map(([k, v]) => el("tr", {}, el("th", {}, k), el("td", {}, v)))));
+    dialog("Object", el("table", { class: "details" }, rows.map(([k, v]) => el("tr", {}, el("th", {}, k), el("td", {}, v)))),
+      preview(bucket, key, type, size));
   } catch (err) {
     report(err);
   }
+}
+
+// uploadsDialog lists the multipart uploads left under prefix, such as those of a closed
+// browser tab, and aborts them.
+async function uploadsDialog(bucket, prefix) {
+  const found = [];
+  const status = el("p", { class: "muted" }, "Loading…");
+  const body = el("tbody");
+  const abort = async (u) => {
+    await s3("DELETE", bucket, u.key, { params: [["uploadId", u.id]] });
+    found.splice(found.indexOf(u), 1);
+  };
+  const abortAll = action("Abort all", async () => {
+    const stale = found.filter((u) => !liveUploads.has(u.id));
+    if (!confirm(`Abort ${plural(stale.length, "upload")}? Their uploaded parts are deleted.`)) return;
+    try {
+      for (const u of stale) await abort(u);
+    } catch (err) {
+      status.textContent = describe(err);
+    }
+    draw();
+  }, "danger");
+  const draw = () => {
+    status.textContent = found.length
+      ? `${plural(found.length, "upload")} in this folder ${found.length === 1 ? "was" : "were"} started and never completed. The server also removes incomplete uploads once they expire.`
+      : "No incomplete uploads in this folder.";
+    abortAll.hidden = keyInfo.readOnly || !found.some((u) => !liveUploads.has(u.id));
+    body.replaceChildren(...found.map((u) => el("tr", {},
+      el("td", {}, displayKey(u.key)),
+      el("td", {}, formatDate(u.started)),
+      el("td", { class: "actions" }, liveUploads.has(u.id)
+        ? el("span", { class: "muted" }, "uploading in this page")
+        : keyInfo.readOnly ? null : action("Abort", async () => {
+          try {
+            await abort(u);
+          } catch (err) {
+            status.textContent = describe(err);
+          }
+          draw();
+        }, "link danger")))));
+  };
+  dialog("Incomplete uploads", status,
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Key"), el("th", {}, "Started"), el("th"))), body), abortAll);
+  abortAll.hidden = true;
+  try {
+    let keyMarker = "";
+    let idMarker = "";
+    for (;;) {
+      const params = [["uploads", ""], ["prefix", keyBytes(prefix)], ["encoding-type", "url"]];
+      if (keyMarker) params.push(["key-marker", keyBytes(keyMarker)], ["upload-id-marker", idMarker]);
+      const res = await s3xml("GET", bucket, "", { params });
+      for (const u of children(res, "Upload")) found.push({ key: child(u, "Key"), id: child(u, "UploadId"), started: child(u, "Initiated") });
+      if (child(res, "IsTruncated") !== "true") break;
+      keyMarker = child(res, "NextKeyMarker");
+      idMarker = child(res, "NextUploadIdMarker");
+    }
+  } catch (err) {
+    status.textContent = describe(err);
+    return;
+  }
+  draw();
 }
 
 // ---- Views
@@ -387,10 +536,13 @@ function header(active) {
     el("nav", {}, link("Buckets", "#/"), link("Usage", "#/usage")),
     el("span", { class: "spacer" }),
     el("span", { class: "muted" }, cred.accessKey),
+    keyInfo.readOnly ? el("span", { class: "badge" }, "read-only") : null,
+    themeButton(),
     button("Sign out", () => {
-      if (uploads.size && !confirm(`Cancel ${uploads.size} uploads in progress and sign out?`)) return;
+      if (uploads.size && !confirm(`Cancel ${plural(uploads.size, "upload")} in progress and sign out?`)) return;
       for (const stop of uploads) stop();
       cred = null;
+      keyInfo = { readOnly: false };
       location.hash = "";
       render();
     }, "link"));
@@ -414,7 +566,7 @@ async function bucketsView() {
   } }, name, create);
 
   const body = el("tbody");
-  const view = el("section", {}, el("h1", {}, "Buckets"), form,
+  const view = el("section", {}, el("h1", {}, "Buckets"), keyInfo.readOnly ? null : form,
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Created"), el("th"))), body));
   try {
     const res = await s3xml("GET", "");
@@ -425,7 +577,7 @@ async function bucketsView() {
       body.append(el("tr", {},
         el("td", {}, el("a", { href: bucketHash(n, "") }, n)),
         el("td", {}, formatDate(child(b, "CreationDate"))),
-        el("td", { class: "actions" }, action("Delete", async () => {
+        el("td", { class: "actions" }, keyInfo.readOnly ? null : action("Delete", async () => {
           if (!confirm(`Delete the bucket ${n}? It must be empty.`)) return;
           try {
             await s3("DELETE", n);
@@ -456,13 +608,29 @@ function download(bucket, key) {
   a.remove();
 }
 
+const sortLabels = { name: "Name", size: "Size", modified: "Last modified" };
+const sortOrders = {
+  name: (a, b) => a.name.localeCompare(b.name),
+  size: (a, b) => a.size - b.size,
+  modified: (a, b) => (a.modified < b.modified ? -1 : a.modified > b.modified ? 1 : 0),
+};
+
 async function browserView(bucket, prefix) {
   const report = reporter();
+  const writable = !keyInfo.readOnly;
+  // The loaded folders and objects; filtering and sorting never modify this.
+  const entries = [];
   const selected = new Set();
+  let anchor = null;
+  let sort = { by: "name", dir: 1 };
   const body = el("tbody");
   const more = el("div");
+  const count = el("span", { class: "muted" });
+  const filter = el("input", { type: "search", placeholder: "Filter this folder", class: "filter" });
+  const all = el("input", { type: "checkbox", title: "Select every object shown" });
+
   const deleteSelected = button("Delete selected", async () => {
-    if (!selected.size || !confirm(`Delete ${selected.size} selected objects?`)) return;
+    if (!selected.size || !confirm(`Delete ${plural(selected.size, "selected object")}?`)) return;
     deleteSelected.disabled = true;
     try {
       await deleteKeys(bucket, [...selected]);
@@ -473,11 +641,57 @@ async function browserView(bucket, prefix) {
     }
   }, "danger");
   deleteSelected.disabled = true;
-  const toggle = (key, on) => {
-    if (on) selected.add(key);
-    else selected.delete(key);
+
+  const shown = () => {
+    const q = filter.value.trim().toLowerCase();
+    const order = sortOrders[sort.by];
+    return entries.filter((e) => !q || e.name.toLowerCase().includes(q))
+      .sort((a, b) => (a.folder !== b.folder ? (a.folder ? -1 : 1) : sort.dir * order(a, b)));
+  };
+  const select = (e, on) => {
+    if (on) selected.add(e.key);
+    else selected.delete(e.key);
+    if (e.box) e.box.checked = on;
+  };
+  const syncSelection = (list) => {
+    const objects = list.filter((e) => !e.folder);
+    const n = objects.filter((e) => selected.has(e.key)).length;
+    all.checked = n > 0 && n === objects.length;
+    all.indeterminate = n > 0 && n < objects.length;
+    all.disabled = !objects.length;
     deleteSelected.disabled = selected.size === 0;
   };
+
+  const heads = {};
+  const sortHead = (by, cls) => {
+    heads[by] = button(sortLabels[by], () => {
+      sort = { by, dir: sort.by === by ? -sort.dir : 1 };
+      draw();
+    }, "link sort");
+    return el("th", { class: cls }, heads[by]);
+  };
+  const upRow = prefix
+    ? el("tr", {}, el("td"), el("td", {}, el("a", { href: bucketHash(bucket, prefix.slice(0, prefix.slice(0, -1).lastIndexOf("/") + 1)) }, "..")), el("td"), el("td"), el("td"))
+    : null;
+
+  const draw = () => {
+    const list = shown();
+    // A selected object the filter hides would otherwise be deleted unseen.
+    for (const e of entries) if (selected.has(e.key) && !list.includes(e)) select(e, false);
+    body.replaceChildren(...(upRow ? [upRow] : []), ...list.map((e) => e.row));
+    if (!list.length) {
+      body.append(el("tr", {}, el("td", { colspan: 5, class: "muted" }, entries.length ? "Nothing matches the filter." : "This folder is empty.")));
+    }
+    const loaded = more.childElementCount ? " loaded so far" : "";
+    count.textContent = (list.length === entries.length ? "" : `${list.length} of `) + plural(entries.length, "item") + loaded;
+    for (const [by, b] of Object.entries(heads)) b.textContent = sortLabels[by] + (sort.by === by ? (sort.dir > 0 ? " ▲" : " ▼") : "");
+    syncSelection(list);
+  };
+  filter.addEventListener("input", draw);
+  all.addEventListener("change", () => {
+    for (const e of shown()) if (!e.folder) select(e, all.checked);
+    syncSelection(shown());
+  });
 
   const crumbs = [el("a", { href: "#/" }, "Buckets"), " / ", el("a", { href: bucketHash(bucket, "") }, bucket)];
   let acc = "";
@@ -493,8 +707,7 @@ async function browserView(bucket, prefix) {
   files.addEventListener("change", () => startUploads([...files.files].map((f) => [f.webkitRelativePath || f.name, f])));
   const folder = el("input", { placeholder: "folder name" });
   const toolbar = el("div", { class: "row" },
-    button("Upload files", () => files.click()), files,
-    folder, action("New folder", async () => {
+    writable ? [button("Upload files", () => files.click()), files, folder, action("New folder", async () => {
       const name = folder.value.replace(/^\/+|\/+$/g, "");
       if (!name) return;
       const marker = prefix + encodeKey(name) + "/";
@@ -504,81 +717,102 @@ async function browserView(bucket, prefix) {
       } catch (err) {
         report(err);
       }
-    }),
+    })] : null,
     button("Refresh", () => render()),
-    el("span", { class: "spacer" }), deleteSelected);
+    button("Incomplete uploads", () => uploadsDialog(bucket, prefix)),
+    el("span", { class: "spacer" }), writable ? deleteSelected : null);
 
   const table = el("table", {},
-    el("thead", {}, el("tr", {}, el("th"), el("th", {}, "Name"), el("th", { class: "num" }, "Size"), el("th", {}, "Last modified"), el("th"))),
+    el("thead", {}, el("tr", {}, el("th", {}, writable ? all : null), sortHead("name"), sortHead("size", "num"), sortHead("modified"), el("th"))),
     body);
   const view = el("section", { class: "drop" },
-    el("h1", { class: "crumbs" }, crumbs), toolbar, uploadList, table, more,
-    el("p", { class: "muted" }, "Drop files or folders here to upload them to this folder."));
-  view.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    view.classList.add("over");
-  });
-  view.addEventListener("dragleave", () => view.classList.remove("over"));
-  view.addEventListener("drop", (e) => {
-    e.preventDefault();
-    view.classList.remove("over");
-    droppedFiles(e.dataTransfer).then(startUploads, report);
-  });
-
-  if (prefix) {
-    const up = prefix.slice(0, prefix.slice(0, -1).lastIndexOf("/") + 1);
-    body.append(el("tr", {}, el("td"), el("td", {}, el("a", { href: bucketHash(bucket, up) }, "..")), el("td"), el("td"), el("td")));
+    el("h1", { class: "crumbs" }, crumbs), toolbar, el("div", { class: "row" }, filter, count), uploadList, table, more,
+    writable ? el("p", { class: "muted" }, "Drop files or folders here to upload them to this folder.") : null);
+  if (writable) {
+    view.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      view.classList.add("over");
+    });
+    view.addEventListener("dragleave", () => view.classList.remove("over"));
+    view.addEventListener("drop", (e) => {
+      e.preventDefault();
+      view.classList.remove("over");
+      droppedFiles(e.dataTransfer).then(startUploads, report);
+    });
   }
 
-  const loadPage = async (token) => {
-    const params = [["list-type", "2"], ["prefix", keyBytes(prefix)], ["delimiter", "/"], ["encoding-type", "url"]];
-    if (token) params.push(["continuation-token", token]);
-    const res = await s3xml("GET", bucket, "", { params });
-    for (const p of children(res, "CommonPrefixes")) {
-      const full = child(p, "Prefix");
-      const name = displayKey(full.slice(prefix.length));
-      body.append(el("tr", { class: "folder" },
+  const folderEntry = (full) => {
+    const name = displayKey(full.slice(prefix.length));
+    return {
+      folder: true, key: full, name, size: 0, modified: "",
+      row: el("tr", { class: "folder" },
         el("td"),
         el("td", {}, el("a", { href: bucketHash(bucket, full) }, name)),
         el("td"), el("td"),
-        el("td", { class: "actions" }, action("Delete folder", async () => {
+        el("td", { class: "actions" }, writable ? action("Delete folder", async () => {
           try {
             const keys = await listAll(bucket, full);
-            if (!confirm(`Delete the folder ${name} and the ${keys.length} objects in it?`)) return;
+            if (!confirm(`Delete the folder ${name} and the ${plural(keys.length, "object")} in it?`)) return;
             await deleteKeys(bucket, keys);
             render();
           } catch (err) {
             report(err);
           }
-        }, "link danger"))));
+        }, "link danger") : null)),
+    };
+  };
+  const objectEntry = (c) => {
+    const key = child(c, "Key");
+    const e = { folder: false, key, name: displayKey(key.slice(prefix.length)), size: Number(child(c, "Size")), modified: child(c, "LastModified") };
+    if (writable) {
+      e.box = el("input", { type: "checkbox" });
+      e.box.addEventListener("click", (ev) => {
+        const objects = shown().filter((x) => !x.folder);
+        const from = objects.findIndex((x) => x.key === anchor);
+        const to = objects.indexOf(e);
+        if (ev.shiftKey && from >= 0 && to >= 0) {
+          for (const x of objects.slice(Math.min(from, to), Math.max(from, to) + 1)) select(x, e.box.checked);
+        } else {
+          select(e, e.box.checked);
+        }
+        anchor = key;
+        syncSelection(shown());
+      });
     }
+    e.row = el("tr", {},
+      el("td", {}, e.box ?? null),
+      el("td", {}, button(e.name, () => detailsDialog(bucket, key, report), "link")),
+      el("td", { class: "num" }, formatBytes(e.size)),
+      el("td", {}, formatDate(e.modified)),
+      el("td", { class: "actions" },
+        button("Download", () => download(bucket, key), "link"),
+        button("Share", () => shareDialog(bucket, key), "link"),
+        writable ? action("Delete", async () => {
+          if (!confirm(`Delete ${displayKey(key)}?`)) return;
+          try {
+            await s3("DELETE", bucket, key);
+            render();
+          } catch (err) {
+            report(err);
+          }
+        }, "link danger") : null));
+    return e;
+  };
+
+  const loadPage = async (token) => {
+    const params = [["list-type", "2"], ["prefix", keyBytes(prefix)], ["delimiter", "/"], ["encoding-type", "url"]];
+    if (token) params.push(["continuation-token", token]);
+    const res = await s3xml("GET", bucket, "", { params });
+    for (const p of children(res, "CommonPrefixes")) entries.push(folderEntry(child(p, "Prefix")));
     for (const c of children(res, "Contents")) {
-      const key = child(c, "Key");
-      if (key === prefix) continue; // the folder's own marker
-      const box = el("input", { type: "checkbox", onchange: (e) => toggle(key, e.target.checked) });
-      body.append(el("tr", {},
-        el("td", {}, box),
-        el("td", {}, button(displayKey(key.slice(prefix.length)), () => detailsDialog(bucket, key, report), "link")),
-        el("td", { class: "num" }, formatBytes(Number(child(c, "Size")))),
-        el("td", {}, formatDate(child(c, "LastModified"))),
-        el("td", { class: "actions" },
-          button("Download", () => download(bucket, key), "link"),
-          button("Share", () => shareDialog(bucket, key), "link"),
-          action("Delete", async () => {
-            if (!confirm(`Delete ${displayKey(key)}?`)) return;
-            try {
-              await s3("DELETE", bucket, key);
-              render();
-            } catch (err) {
-              report(err);
-            }
-          }, "link danger"))));
+      if (child(c, "Key") !== prefix) entries.push(objectEntry(c)); // skips the folder's own marker
     }
     more.replaceChildren();
     if (child(res, "IsTruncated") === "true") {
       const next = child(res, "NextContinuationToken");
       more.append(action("Load more", () => loadPage(next).catch(report)));
     }
+    draw();
   };
   try {
     await loadPage("");
@@ -592,10 +826,7 @@ async function usageView() {
   const report = reporter();
   const view = el("section", {}, el("h1", {}, "Usage"));
   try {
-    const path = "/_console/api/usage";
-    const res = await fetch(path, { headers: signHeaders(cred, { method: "GET", host, path }) });
-    if (!res.ok) throw await s3Error(res.status, await res.text());
-    const usage = await res.json();
+    const usage = await consoleUsage();
     const row = (b, name) => el("tr", {},
       el("td", {}, name),
       el("td", { class: "num" }, b.objects.toLocaleString()),
@@ -627,6 +858,7 @@ function loginView() {
     cred = { accessKey: accessKey.value.trim(), secretKey: secretKey.value, region };
     try {
       await s3("GET", "");
+      keyInfo = { readOnly: Boolean((await consoleUsage().catch(() => ({}))).read_only) };
       render();
     } catch (err) {
       cred = null;
@@ -656,7 +888,7 @@ async function render() {
   const mine = ++generation;
   banner = null;
   if (!cred) {
-    app.replaceChildren(loginView());
+    app.replaceChildren(el("div", { class: "topbar" }, themeButton()), loginView());
     return;
   }
   let hash = location.hash || "#/";
