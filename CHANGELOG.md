@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.0](https://github.com/somaz94/plainbucket/compare/v0.4.0...v0.5.0) (2026-10-23)
+
+### Features
+
+- accept browser POST uploads signed with a SigV4 policy ([39ec016](https://github.com/somaz94/plainbucket/commit/39ec0169d7bd5271e8849269092243bbb684da43))
+- reload keys, bucket settings and the TLS certificate live ([f5316d8](https://github.com/somaz94/plainbucket/commit/f5316d8d6e1ff512c08adc261e31636da9c0619a))
+- label request metrics and the access log with the S3 operation ([f79fb6e](https://github.com/somaz94/plainbucket/commit/f79fb6ef50ab1a64c4a64b75e68391f67e9316ac))
+- page ListBuckets and accept chunked PutObject bodies ([449d716](https://github.com/somaz94/plainbucket/commit/449d7168cce96eaf60eb2323386fe30b79727709))
+- add console overwrite guard, idle sign-out, search and attributes ([5993250](https://github.com/somaz94/plainbucket/commit/59932507c7fcbc77b63440e6aa95fca1da8ac83e))
+
+### Chores
+
+- bump version to v0.5.0 ([d01e14b](https://github.com/somaz94/plainbucket/commit/d01e14ba9c1cd372898d1f0883dc3cf7eabcde9e))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.4.0](https://github.com/somaz94/plainbucket/compare/v0.3.0...v0.4.0) (2026-10-23)
 
 ### Features
