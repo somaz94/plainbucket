@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -110,6 +111,17 @@ func (s *Store) BucketUsage() map[string]Usage {
 	}
 	return out
 }
+
+// AllBucketUsage returns every bucket's tracked usage. Writes and deletes update it as
+// they happen; each janitor round re-measures it.
+func (s *Store) AllBucketUsage() map[string]Usage {
+	s.usageMu.Lock()
+	defer s.usageMu.Unlock()
+	return maps.Clone(s.bucketUsage)
+}
+
+// BucketLimit returns the limits set for bucket.
+func (s *Store) BucketLimit(bucket string) Limit { return s.limits[bucket] }
 
 // Removed returns how many objects expiry and eviction have deleted since startup.
 func (s *Store) Removed() (expired, evicted int64) { return s.expired.Load(), s.evicted.Load() }

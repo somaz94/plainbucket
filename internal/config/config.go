@@ -43,6 +43,7 @@ type Config struct {
 	UploadExpiry  time.Duration `yaml:"upload-expiry"`
 	BodyTimeout   time.Duration `yaml:"body-timeout"`
 	Metrics       bool          `yaml:"metrics"`
+	Console       bool          `yaml:"console"`
 	LogFormat     string        `yaml:"log-format"`
 	Debug         bool          `yaml:"debug"`
 	AccessLog     bool          `yaml:"access-log"`
@@ -166,6 +167,7 @@ func (c *Config) loadEnv() error {
 	e.duration("UPLOAD_EXPIRY", &c.UploadExpiry)
 	e.duration("BODY_TIMEOUT", &c.BodyTimeout)
 	e.bool("METRICS", &c.Metrics)
+	e.bool("CONSOLE", &c.Console)
 	e.string("LOG_FORMAT", &c.LogFormat)
 	e.bool("DEBUG", &c.Debug)
 	e.bool("ACCESS_LOG", &c.AccessLog)
@@ -435,6 +437,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Duration("upload_expiry", c.UploadExpiry),
 		slog.Duration("body_timeout", c.BodyTimeout),
 		slog.Bool("metrics", c.Metrics),
+		slog.Bool("console", c.Console),
 		slog.String("log_format", c.LogFormat),
 		slog.Bool("debug", c.Debug),
 		slog.Bool("access_log", c.AccessLog),

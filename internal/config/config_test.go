@@ -22,7 +22,7 @@ func TestDefaultsAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Root != "/data" || cfg.Address != ":9000" || cfg.Region != "us-east-1" || cfg.UploadExpiry != 7*24*time.Hour ||
-		cfg.BodyTimeout != time.Minute || cfg.Metrics || cfg.HasTLS() {
+		cfg.BodyTimeout != time.Minute || cfg.Metrics || cfg.Console || cfg.HasTLS() {
 		t.Errorf("defaults = %+v", cfg)
 	}
 
@@ -33,6 +33,7 @@ func TestDefaultsAndEnv(t *testing.T) {
 	t.Setenv("PLAINBUCKET_UPLOAD_EXPIRY", "2h")
 	t.Setenv("PLAINBUCKET_BODY_TIMEOUT", "0s")
 	t.Setenv("PLAINBUCKET_METRICS", "true")
+	t.Setenv("PLAINBUCKET_CONSOLE", "1")
 	t.Setenv("PLAINBUCKET_LOG_FORMAT", "JSON")
 	t.Setenv("PLAINBUCKET_DEBUG", "yes")
 	t.Setenv("PLAINBUCKET_TLS_CERT", "c.pem")
@@ -43,7 +44,7 @@ func TestDefaultsAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Root != "/srv" || cfg.Address != "127.0.0.1:9100" || cfg.Region != "eu-west-1" || cfg.MaxObjectSize != 1024 ||
-		cfg.UploadExpiry != 2*time.Hour || cfg.BodyTimeout != 0 || !cfg.Metrics || cfg.LogFormat != "json" || !cfg.Debug || !cfg.HasTLS() || cfg.TLSMinVersion() != tls.VersionTLS13 {
+		cfg.UploadExpiry != 2*time.Hour || cfg.BodyTimeout != 0 || !cfg.Metrics || !cfg.Console || cfg.LogFormat != "json" || !cfg.Debug || !cfg.HasTLS() || cfg.TLSMinVersion() != tls.VersionTLS13 {
 		t.Errorf("env = %+v", cfg)
 	}
 }

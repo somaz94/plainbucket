@@ -177,6 +177,22 @@ func TestMeasureUsagePerBucket(t *testing.T) {
 	if u["bkt"].Bytes != 8 || u["bkt"].Objects != 2 || u["none"].Bytes != 0 {
 		t.Errorf("usage = %+v", u)
 	}
+	if err := s.CreateBucket("free"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutObject("free", "x", strings.NewReader("xy"), 2, PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s.MeasureUsage(context.Background())
+	if all := s.AllBucketUsage(); all["free"].Bytes != 2 || all["bkt"].Bytes != 8 || all["free"].At.IsZero() {
+		t.Errorf("all buckets = %+v", all)
+	}
+	if _, ok := s.BucketUsage()["free"]; ok {
+		t.Error("BucketUsage lists a bucket without limits")
+	}
+	if l := s.BucketLimit("bkt"); l.MaxSize != 100 || s.BucketLimit("free") != (Limit{}) {
+		t.Errorf("limits = %+v", l)
+	}
 	if err := s.CreateBucket("gone"); err != nil {
 		t.Fatal(err)
 	}

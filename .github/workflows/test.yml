@@ -76,6 +76,10 @@ jobs:
       - name: GitLab Runner cache end-to-end
         run: make test-runner
 
+      # node is preinstalled on GitHub-hosted Ubuntu runners.
+      - name: Web console end-to-end
+        run: make test-console
+
   s3-tests:
     name: ceph/s3-tests subset
     runs-on: ubuntu-latest

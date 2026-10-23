@@ -10,14 +10,15 @@ plainbucket is a single binary with no runtime dependencies beyond the Go standa
 
 ## Features
 
-- **S3 API, path-style and virtual-hosted**: buckets, objects, `ListObjectsV2` and `ListObjects`, multipart upload, `CopyObject`, `DeleteObjects`, ranged and conditional reads, conditional writes (`If-None-Match: *`, `If-Match`). See [docs/compatibility.md](docs/compatibility.md).
+- **S3 API, path-style and virtual-hosted**: buckets, objects, `ListObjectsV2`, `ListObjects` and `ListObjectVersions`, multipart upload with composite and full-object checksums, reads by part number, `GetObjectAttributes`, `CopyObject`, `DeleteObjects`, ranged and conditional reads, conditional writes (`If-None-Match`, `If-Match`). See [docs/compatibility.md](docs/compatibility.md).
+- **Web console**: browse, upload, download, share by presigned URL and check bucket usage from a browser; the page signs requests itself, so access keys keep their limits. See [docs/configuration.md](docs/configuration.md#web-console).
 - **Access control**: several access keys, each optionally limited to some buckets or to reads, and public buckets whose objects anyone can fetch. See [docs/configuration.md](docs/configuration.md#credentials).
 - **Bucket limits**: per-bucket expiry by last use and a size cap that either refuses writes or evicts the least recently used objects, so a CI cache bucket looks after itself. See [docs/configuration.md](docs/configuration.md#expiry-and-size-limits).
 - **Static websites**: a public bucket can serve index and error documents and answer CORS preflights, so a site or a browser app needs no other web server. See [docs/configuration.md](docs/configuration.md#buckets).
 - **AWS Signature Version 4**: `Authorization` header and presigned URLs, every payload mode the AWS SDKs send, including aws-chunked streaming with trailing checksums.
 - **Checksums**: CRC32, CRC32C, CRC64NVME, SHA-1 and SHA-256 are verified on upload and returned on request. An upload that declares none gets a CRC64NVME, as on S3.
 - **Plain files**: objects are files, metadata lives in a separate system directory, and files changed outside the server are detected and re-hashed. See [docs/layout.md](docs/layout.md).
-- **Tested with real clients**: the official AWS SDK for Go v2, the aws cli, rclone and the `gitlab-runner` cache helper run against the server in CI. See [docs/gitlab-runner.md](docs/gitlab-runner.md) for using it as a runner cache.
+- **Tested with real clients**: the official AWS SDK for Go v2, the aws cli, rclone, the `gitlab-runner` cache helper and a subset of the ceph/s3-tests conformance suite run against the server in CI. See [docs/gitlab-runner.md](docs/gitlab-runner.md) for using it as a runner cache.
 - **Operations**: Prometheus metrics, an access log, a `/healthz` endpoint with a `healthcheck` command for the shell-less image, an offline `fsck`, and protection against uploads that stall.
 
 <br/>
@@ -110,6 +111,8 @@ make test-compat   # AWS SDK for Go v2 suite (separate module under compat/)
 make test-awscli   # aws cli end-to-end script
 make test-rclone   # rclone end-to-end script
 make test-runner   # gitlab-runner cache end-to-end script (downloads a pinned gitlab-runner)
+make test-console  # web console end-to-end script (needs node)
+make test-s3tests  # ceph/s3-tests subset (needs python3; pinned and cached in bin/)
 make test-helm     # Helm chart lint, renders and schema checks
 make lint
 ```

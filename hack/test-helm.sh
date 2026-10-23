@@ -74,6 +74,8 @@ has 'value: "10737418240"' "max object size kept as digits"
 has 'value: "24h"' "upload expiry"
 render "${KEY[@]}" --set config.accessLog=true
 has 'value: "true"' "access log"
+render "${KEY[@]}" --set config.console=true --show-only templates/deployment.yaml
+grep -A1 -F "name: PLAINBUCKET_CONSOLE" <<<"${OUT}" | grep -qF 'value: "true"' || fail "console: PLAINBUCKET_CONSOLE not true"
 render "${KEY[@]}" --set-string config.bodyTimeout=0
 has 'value: "0"' "body timeout disabled"
 ok "config values"
@@ -133,6 +135,7 @@ expect_fail "bogus" "${KEY[@]}" --set bogus=1
 expect_fail "replicaCount" "${KEY[@]}" --set replicaCount=2
 expect_fail "metrics" "${KEY[@]}" --set config.metrics=yes
 expect_fail "accessLog" "${KEY[@]}" --set config.accessLog=yes
+expect_fail "console" "${KEY[@]}" --set config.console=yes
 expect_fail "publicBuckets" "${KEY[@]}" --set "config.publicBuckets={Bad_Name}"
 expect_fail "maxObjectSize" "${KEY[@]}" --set config.maxObjectSize=10Gi
 expect_fail "uploadExpiry" "${KEY[@]}" --set config.uploadExpiry=7d

@@ -112,6 +112,8 @@ spec:
             {{- end }}
             - name: PLAINBUCKET_METRICS
               value: {{ .Values.config.metrics | quote }}
+            - name: PLAINBUCKET_CONSOLE
+              value: {{ .Values.config.console | quote }}
             - name: PLAINBUCKET_LOG_FORMAT
               value: {{ .Values.config.logFormat | quote }}
             - name: PLAINBUCKET_DEBUG

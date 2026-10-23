@@ -10,6 +10,13 @@ Through the Ingress:
 {{- end }}
 {{- end }}
 
+{{- if .Values.config.console }}
+
+Web console: add /_console/ to a path-style endpoint above (not a wildcard host), or
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "plainbucket.fullname" . }} {{ .Values.service.port }}
+  and open http{{ if .Values.config.tlsSecret }}s{{ end }}://localhost:{{ .Values.service.port }}/_console/
+{{- end }}
+
 Use path-style addressing{{ with .Values.config.domains }}, or virtual-hosted style under {{ join ", " . }}{{ end }}.
 {{- with .Values.config.publicBuckets }}
 Objects in {{ join ", " . }} can be read without credentials.

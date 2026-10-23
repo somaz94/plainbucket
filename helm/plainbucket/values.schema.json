@@ -151,6 +151,9 @@
         "metrics": {
           "type": "boolean"
         },
+        "console": {
+          "type": "boolean"
+        },
         "logFormat": {
           "enum": [
             "text",

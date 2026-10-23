@@ -18,6 +18,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 - Payload modes: a hex SHA-256 of the body, `UNSIGNED-PAYLOAD`, and aws-chunked bodies `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER` and `STREAMING-UNSIGNED-PAYLOAD-TRAILER`. Chunk and trailer signatures are verified.
 - Every `x-amz-*` header in a request must be covered by its signature, as on S3. An unsigned one is refused with `403 AccessDenied`, so a presigned URL cannot be repurposed with extra headers such as `x-amz-copy-source`.
 - Signature Version 2 is refused. Anonymous requests are refused, except `GET` and `HEAD` of objects in buckets configured as public ([Buckets](configuration.md#buckets)).
+- With the [web console](configuration.md#web-console) on, `/_console/` on a path-style host is the console rather than S3. No bucket can be named `_console`, so no bucket is hidden by it. Objects served on that host then carry a sandboxing `Content-Security-Policy`.
 
 <br/>
 

@@ -71,14 +71,14 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats) {
 	buckets, inf, sum := slices.Clone(m.buckets), m.inf, m.sumSec
 	m.mu.Unlock()
 
-	fmt.Fprintln(w, "# HELP plainbucket_requests_total S3 API requests by method and status.")
+	fmt.Fprintln(w, "# HELP plainbucket_requests_total HTTP requests (S3 API and console) by method and status.")
 	fmt.Fprintln(w, "# TYPE plainbucket_requests_total counter")
 	for i, k := range keys {
 		method, status, _ := strings.Cut(k, ":")
 		fmt.Fprintf(w, "plainbucket_requests_total{method=%q,status=%q} %d\n", method, status, counts[i])
 	}
 
-	fmt.Fprintln(w, "# HELP plainbucket_request_duration_seconds S3 API request duration.")
+	fmt.Fprintln(w, "# HELP plainbucket_request_duration_seconds HTTP request duration (S3 API and console).")
 	fmt.Fprintln(w, "# TYPE plainbucket_request_duration_seconds histogram")
 	var cum int64
 	for i, le := range durationBuckets {

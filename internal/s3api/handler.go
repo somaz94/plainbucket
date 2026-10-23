@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/somaz94/plainbucket/internal/console"
 	"github.com/somaz94/plainbucket/internal/httpx"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/sigv4"
@@ -41,6 +42,8 @@ type Options struct {
 	// BodyTimeout is how long an upload may go without delivering minProgress bytes
 	// before the connection is cut; 0 disables it.
 	BodyTimeout time.Duration
+	// Console serves the browser console under /_console/ on path-style hosts.
+	Console bool
 }
 
 // Handler is the S3 API http.Handler.
@@ -147,9 +150,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		req.bucket, req.key, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	}
-	done, err := h.applyCORS(req)
-	if !done {
-		err = h.serve(req)
+	var err error
+	if h.opts.Console && !vhost && isConsolePath(r.URL.Path) {
+		req.bucket, req.key = "", ""
+		err = h.serveConsole(req)
+	} else {
+		if h.opts.Console && !vhost {
+			// A page served from the console's origin could otherwise script a console window.
+			rec.Header().Set("Content-Security-Policy", console.ObjectSandbox)
+		}
+		var done bool
+		if done, err = h.applyCORS(req); !done {
+			err = h.serve(req)
+		}
 	}
 	if err != nil {
 		h.fail(req, err)

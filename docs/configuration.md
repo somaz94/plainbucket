@@ -22,6 +22,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_UPLOAD_EXPIRY` | `upload-expiry` | `168h` | Age after which an unfinished multipart upload is removed |
 | `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut an upload that delivers less than 32 KiB in this long; `0` disables it |
 | `PLAINBUCKET_METRICS` | `metrics` | `false` | Serve Prometheus metrics at `GET /metrics` |
+| `PLAINBUCKET_CONSOLE` | `console` | `false` | Serve the web console at `/_console/`; see [Web Console](#web-console) |
 | `PLAINBUCKET_LOG_FORMAT` | `log-format` | `text` | `text` or `json` |
 | `PLAINBUCKET_DEBUG` | `debug` | `false` | Log the startup configuration, denied requests and, like `PLAINBUCKET_ACCESS_LOG`, every request |
 | `PLAINBUCKET_ACCESS_LOG` | `access-log` | `false` | Log every request at info level; see [Access Log](#access-log) |
@@ -148,6 +149,18 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - For buckets with `expire-after` or `max-size`: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.
 
 A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, and only unsigned `GET` requests are answered by these endpoints.
+
+<br/>
+
+## Web Console
+
+With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse buckets and folders, upload files (large ones as multipart uploads), download, share an object through a presigned URL that expires after an hour, a day or seven days, delete objects, folders and empty buckets, and see each bucket's usage and limits.
+
+- Sign in with an access key and its secret key. The page signs every request itself and sends it to the S3 API, so the key's bucket scope and read-only flag apply as they do to any client. The secret key never leaves the page; it is kept in memory only, so reloading the page signs out.
+- The console works over plain HTTP too: it does not rely on the browser's Web Crypto API, which only secure contexts offer. Over plain HTTP, though, anyone on the network path can read the secret key as it is typed or replace the page's script, so serve the console over TLS anywhere but a trusted network.
+- The pages are served without authentication; they hold no data. Usage comes from `GET /_console/api/usage`, which needs a signed request and lists only the buckets the key may access, with the total across buckets only for a key without a bucket scope. Writes and deletes through the server update it at once; files changed outside the server count from the next hourly measurement.
+- The console answers only on path-style hosts. On a virtual host, `/_console/` is an object key of that bucket.
+- Every object the console's host serves (public and website buckets, presigned and shared links, signed reads) would otherwise share the console's origin, so a stored page could script a console window in the same browser. With the console on, those responses carry `Content-Security-Policy: sandbox allow-scripts allow-popups allow-forms`: the page still renders and runs its scripts, but in an opaque origin, so it cannot reach the console, its own server through `fetch`, cookies or local storage. Serve a website bucket that needs any of those through [virtual-hosted addressing](#virtual-hosted-addressing), which gives it its own origin and no sandbox.
 
 <br/>
 

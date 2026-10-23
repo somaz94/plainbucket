@@ -70,6 +70,8 @@ config:
   uploadExpiry: ""   # Go duration; empty keeps the server default
   bodyTimeout: ""    # Go duration; empty keeps the server default
   metrics: false
+  # Web console at /_console/ (signs requests in the browser; see docs/configuration.md).
+  console: false
   logFormat: text
   debug: false
   # One info-level line per request (method, bucket, key, status, bytes, access key, ...).
