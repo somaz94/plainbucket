@@ -27,6 +27,8 @@ func operation(r *http.Request, bucket, key string) string {
 		if r.Method == http.MethodGet {
 			return "ListBuckets"
 		}
+	case isPostUpload(r, key, q):
+		return "PostObject"
 	case key == "":
 		return bucketOperation(r.Method, q)
 	default:

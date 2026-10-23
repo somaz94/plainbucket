@@ -209,6 +209,9 @@ func requestID() string {
 
 func (h *Handler) serve(req *request) error {
 	req.q = req.r.URL.Query()
+	if req.bucket != "" && isPostUpload(req.r, req.key, req.q) {
+		return h.postObject(req)
+	}
 	if anonymous(req.r, req.q) {
 		h.websiteKey(req)
 		if err := h.authorizeAnonymous(req); err != nil {

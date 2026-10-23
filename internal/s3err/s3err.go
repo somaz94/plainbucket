@@ -75,6 +75,18 @@ func EntityTooLarge() *Error {
 	return newErr(http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size.")
 }
 
+func InvalidPolicyDocument(msg string) *Error {
+	return newErr(http.StatusBadRequest, "InvalidPolicyDocument", msg)
+}
+
+func MalformedPOSTRequest() *Error {
+	return newErr(http.StatusBadRequest, "MalformedPOSTRequest", "The body of your POST request is not well-formed multipart/form-data.")
+}
+
+func MaxPostPreDataLengthExceeded() *Error {
+	return newErr(http.StatusBadRequest, "MaxPostPreDataLengthExceededError", "Your POST request fields preceding the upload file were too large.")
+}
+
 func EntityTooSmall() *Error {
 	return newErr(http.StatusBadRequest, "EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size.")
 }

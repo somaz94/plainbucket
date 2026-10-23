@@ -15,11 +15,11 @@ plainbucket is a single binary with no runtime dependencies beyond the Go standa
 - **Access control**: several access keys, each optionally limited to some buckets or to reads, and public buckets whose objects anyone can fetch. See [docs/configuration.md](docs/configuration.md#credentials).
 - **Bucket limits**: per-bucket expiry by last use and a size cap that either refuses writes or evicts the least recently used objects, so a CI cache bucket looks after itself. See [docs/configuration.md](docs/configuration.md#expiry-and-size-limits).
 - **Static websites**: a public bucket can serve index and error documents and answer CORS preflights, so a site or a browser app needs no other web server. See [docs/configuration.md](docs/configuration.md#buckets).
-- **AWS Signature Version 4**: `Authorization` header and presigned URLs, every payload mode the AWS SDKs send, including aws-chunked streaming with trailing checksums.
+- **AWS Signature Version 4**: `Authorization` header, presigned URLs and presigned POST forms for uploads straight from a browser, every payload mode the AWS SDKs send, including aws-chunked streaming with trailing checksums.
 - **Checksums**: CRC32, CRC32C, CRC64NVME, SHA-1 and SHA-256 are verified on upload and returned on request. An upload that declares none gets a CRC64NVME, as on S3.
 - **Plain files**: objects are files, metadata lives in a separate system directory, and files changed outside the server are detected and re-hashed. See [docs/layout.md](docs/layout.md).
 - **Tested with real clients**: the official AWS SDK for Go v2, the aws cli, rclone, the `gitlab-runner` cache helper and a subset of the ceph/s3-tests conformance suite run against the server in CI. See [docs/gitlab-runner.md](docs/gitlab-runner.md) for using it as a runner cache.
-- **Operations**: Prometheus metrics, an access log, a `/healthz` endpoint with a `healthcheck` command for the shell-less image, an offline `fsck`, and protection against uploads that stall.
+- **Operations**: Prometheus metrics per S3 operation, an access log, configuration and certificate reloads without a restart, a `/healthz` endpoint with a `healthcheck` command for the shell-less image, an offline `fsck`, and protection against uploads that stall.
 
 <br/>
 

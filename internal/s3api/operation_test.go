@@ -63,6 +63,19 @@ func TestOperation(t *testing.T) {
 	}
 }
 
+func TestOperationOfPostUploads(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "http://pb.test/b", nil)
+	r.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+	if got := operation(r, "b", ""); got != "PostObject" {
+		t.Errorf("form post: %s", got)
+	}
+	r = httptest.NewRequest(http.MethodPost, "http://pb.test/b?delete", nil)
+	r.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+	if got := operation(r, "b", ""); got != "DeleteObjects" {
+		t.Errorf("delete with a form type: %s", got)
+	}
+}
+
 func TestOperationOfWebsiteRequests(t *testing.T) {
 	x := websiteHarness(t)
 	x.h.opts.Metrics = true

@@ -87,3 +87,16 @@ func (s Signer) ChunkSignature(at time.Time, prev string, chunk []byte) string {
 		hex.EncodeToString(empty[:]) + "\n" + hex.EncodeToString(h[:])
 	return hex.EncodeToString(hmacSHA256(s.key(amzDate[:8]), sts))
 }
+
+// PostFields returns the form fields that sign a browser POST upload of the base64
+// policy at a given time, names lowercased as the server compares them.
+func (s Signer) PostFields(policy string, at time.Time) map[string]string {
+	amzDate := at.UTC().Format("20060102T150405Z")
+	return map[string]string{
+		"x-amz-algorithm":  "AWS4-HMAC-SHA256",
+		"x-amz-credential": s.AccessKey + "/" + amzDate[:8] + "/" + s.Region + "/s3/aws4_request",
+		"x-amz-date":       amzDate,
+		"x-amz-signature":  hex.EncodeToString(hmacSHA256(s.key(amzDate[:8]), policy)),
+		"policy":           policy,
+	}
+}
