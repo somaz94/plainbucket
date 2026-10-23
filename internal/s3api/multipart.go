@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/xml"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -211,9 +212,6 @@ func (h *Handler) listParts(req *request) error {
 }
 
 func (h *Handler) listMultipartUploads(req *request) error {
-	if req.q.Get("delimiter") != "" {
-		return s3err.NotImplemented()
-	}
 	maxUploads, err := intParam(req.q.Get("max-uploads"), maxListParts, maxListParts)
 	if err != nil {
 		return err
@@ -222,23 +220,66 @@ func (h *Handler) listMultipartUploads(req *request) error {
 	if err != nil {
 		return err
 	}
-	prefix, keyMarker, idMarker := req.q.Get("prefix"), req.q.Get("key-marker"), req.q.Get("upload-id-marker")
-	ups, truncated, err := h.store.ListUploads(req.bucket, prefix, keyMarker, idMarker, maxUploads)
+	prefix, delim := req.q.Get("prefix"), req.q.Get("delimiter")
+	keyMarker, idMarker := req.q.Get("key-marker"), req.q.Get("upload-id-marker")
+	// The prefix a key rolls up into, or "" when it is listed on its own.
+	rollUp := func(key string) string {
+		if delim == "" || !strings.HasPrefix(key, prefix) {
+			return ""
+		}
+		if i := strings.Index(key[len(prefix):], delim); i >= 0 {
+			return key[:len(prefix)+i+len(delim)]
+		}
+		return ""
+	}
+	limit := maxUploads
+	if delim != "" {
+		// Uploads roll up into fewer entries, so the store cannot cut the page.
+		limit = math.MaxInt
+	}
+	ups, truncated, err := h.store.ListUploads(req.bucket, prefix, keyMarker, idMarker, limit)
 	if err != nil {
 		return err
 	}
 	res := listMultipartUploadsResult{
 		NS: s3NS, Bucket: req.bucket, KeyMarker: enc(keyMarker), UploadIDMarker: idMarker, Prefix: enc(prefix),
-		MaxUploads: maxUploads, IsTruncated: truncated, EncodingType: req.q.Get("encoding-type"),
+		Delimiter: enc(delim), MaxUploads: maxUploads, EncodingType: req.q.Get("encoding-type"),
 	}
+	// A marker that is itself a common prefix was listed whole on the previous page.
+	skip := ""
+	if cp := rollUp(keyMarker); cp != "" && cp == keyMarker {
+		skip = cp
+	}
+	var nextKey, nextID, last string
+	n := 0
 	for _, u := range ups {
+		if skip != "" && strings.HasPrefix(u.Key, skip) {
+			continue
+		}
+		cp := rollUp(u.Key)
+		if cp != "" && cp == last {
+			continue
+		}
+		if n == maxUploads {
+			truncated = true
+			break
+		}
+		n++
+		if cp != "" {
+			res.CommonPrefixes = append(res.CommonPrefixes, commonPrefix{Prefix: enc(cp)})
+			nextKey, nextID, last = cp, "", cp
+			continue
+		}
 		res.Uploads = append(res.Uploads, uploadItem{
 			Key: enc(u.Key), UploadID: u.UploadID, Initiator: serverOwner, Owner: serverOwner,
 			StorageClass: "STANDARD", Initiated: isoTime(u.Initiated),
 		})
+		nextKey, nextID = u.Key, u.UploadID
 	}
-	if truncated && len(ups) > 0 {
-		res.NextKeyMarker, res.NextUploadIDMarker = enc(ups[len(ups)-1].Key), ups[len(ups)-1].UploadID
+	// Truncated with nothing listed (max-uploads=0) would leave a client no marker to follow.
+	res.IsTruncated = truncated && n > 0
+	if res.IsTruncated {
+		res.NextKeyMarker, res.NextUploadIDMarker = enc(nextKey), nextID
 	}
 	writeXML(req.w, http.StatusOK, res)
 	return nil

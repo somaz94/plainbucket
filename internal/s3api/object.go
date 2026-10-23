@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/storage"
@@ -186,8 +187,41 @@ func (h *Handler) getObject(req *request) error {
 	return nil
 }
 
+// deleteConditions reads the headers of a conditional DeleteObject.
+func deleteConditions(hdr http.Header) (storage.DeleteConditions, error) {
+	c := storage.DeleteConditions{IfMatch: hdr.Get("If-Match")}
+	if v := hdr.Get("X-Amz-If-Match-Size"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return c, s3err.InvalidArgument("x-amz-if-match-size must be a non-negative integer.")
+		}
+		c.Size, c.HasSize = n, true
+	}
+	if v := hdr.Get("X-Amz-If-Match-Last-Modified-Time"); v != "" {
+		t, err := parseDate(v)
+		if err != nil {
+			return c, s3err.InvalidArgument("x-amz-if-match-last-modified-time must be a date.")
+		}
+		c.LastModified = t
+	}
+	return c, nil
+}
+
+// parseDate reads an HTTP date or an ISO 8601 one; the SDKs send the former even inside
+// XML documents.
+func parseDate(v string) (time.Time, error) {
+	if t, err := http.ParseTime(v); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, v)
+}
+
 func (h *Handler) deleteObject(req *request) error {
-	if err := h.store.DeleteObject(req.bucket, req.key); err != nil {
+	cond, err := deleteConditions(req.r.Header)
+	if err != nil {
+		return err
+	}
+	if err := h.store.DeleteObjectIf(req.bucket, req.key, cond); err != nil {
 		return err
 	}
 	req.w.WriteHeader(http.StatusNoContent)
@@ -212,7 +246,22 @@ func (h *Handler) deleteObjects(req *request) error {
 		if o.VersionID != "" && o.VersionID != "null" {
 			err = s3err.NotImplemented()
 		} else {
-			err = h.store.DeleteObject(req.bucket, o.Key)
+			cond := storage.DeleteConditions{IfMatch: o.ETag}
+			if o.Size != nil {
+				if *o.Size < 0 {
+					err = s3err.InvalidArgument("Size must be a non-negative integer.")
+				}
+				cond.Size, cond.HasSize = *o.Size, true
+			}
+			if o.LastModifiedTime != "" && err == nil {
+				cond.LastModified, err = parseDate(o.LastModifiedTime)
+				if err != nil {
+					err = s3err.InvalidArgument("LastModifiedTime must be a date.")
+				}
+			}
+			if err == nil {
+				err = h.store.DeleteObjectIf(req.bucket, o.Key, cond)
+			}
 		}
 		if err != nil {
 			e := toS3(err)

@@ -233,6 +233,36 @@ func (s *Store) refresh(bucket, key string, f *os.File, fi os.FileInfo, old side
 // left empty are removed up to the bucket or the nearest explicit directory marker, so
 // an implicit prefix disappears with its last object.
 func (s *Store) DeleteObject(bucket, key string) error {
+	return s.DeleteObjectIf(bucket, key, DeleteConditions{})
+}
+
+// DeleteConditions make a delete conditional. A missing object counts as deleted
+// whatever they say, as on S3.
+type DeleteConditions struct {
+	// IfMatch is the ETag the object must have, or "*".
+	IfMatch string
+	// Size is the size the object must have, checked when HasSize is set.
+	Size    int64
+	HasSize bool
+	// LastModified is the modification time the object must have, to the second; the
+	// zero time skips the check.
+	LastModified time.Time
+}
+
+func (c DeleteConditions) any() bool { return c.IfMatch != "" || c.HasSize || !c.LastModified.IsZero() }
+
+func (c DeleteConditions) check(info ObjectInfo) error {
+	switch {
+	case c.IfMatch != "" && c.IfMatch != "*" && trimETag(c.IfMatch) != trimETag(info.ETag),
+		c.HasSize && c.Size != info.Size,
+		!c.LastModified.IsZero() && !c.LastModified.Truncate(time.Second).Equal(info.ModTime.Truncate(time.Second)):
+		return ErrPreconditionFailed
+	}
+	return nil
+}
+
+// DeleteObjectIf deletes bucket/key when it meets cond.
+func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) error {
 	bl := s.bucketLock(bucket)
 	bl.RLock()
 	defer bl.RUnlock()
@@ -244,6 +274,22 @@ func (s *Store) DeleteObject(bucket, key string) error {
 	}
 	unlock := s.lock(bucket, key)
 	defer unlock()
+	if cond.any() {
+		// persist=false: refreshing the sidecar would take the key lock held here.
+		f, info, err := s.open(bucket, key, false)
+		if f != nil {
+			_ = f.Close()
+		}
+		if errors.Is(err, ErrNoSuchKey) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := cond.check(info); err != nil {
+			return err
+		}
+	}
 
 	p := s.dataPath(bucket, key)
 	if isDirKey(key) {

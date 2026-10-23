@@ -183,7 +183,6 @@ func TestUnsupportedRequests(t *testing.T) {
 		{http.MethodGet, "/bkt?attributes"},
 		{http.MethodPut, "/bkt?versioning"},
 		{http.MethodGet, "/bkt/k?versioning"},
-		{http.MethodGet, "/bkt?uploads&delimiter=/"},
 		{http.MethodGet, "/bkt/k?versions"},
 		{http.MethodPut, "/bkt?versions"},
 	} {

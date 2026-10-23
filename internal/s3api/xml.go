@@ -165,8 +165,11 @@ type deleteRequest struct {
 	XMLName xml.Name `xml:"Delete"`
 	Quiet   bool     `xml:"Quiet"`
 	Objects []struct {
-		Key       string `xml:"Key"`
-		VersionID string `xml:"VersionId"`
+		Key              string `xml:"Key"`
+		VersionID        string `xml:"VersionId"`
+		ETag             string `xml:"ETag"`
+		Size             *int64 `xml:"Size"`
+		LastModifiedTime string `xml:"LastModifiedTime"`
 	} `xml:"Object"`
 }
 
@@ -284,18 +287,20 @@ type uploadItem struct {
 }
 
 type listMultipartUploadsResult struct {
-	XMLName            xml.Name     `xml:"ListMultipartUploadsResult"`
-	NS                 string       `xml:"xmlns,attr"`
-	Bucket             string       `xml:"Bucket"`
-	KeyMarker          string       `xml:"KeyMarker"`
-	UploadIDMarker     string       `xml:"UploadIdMarker"`
-	NextKeyMarker      string       `xml:"NextKeyMarker,omitempty"`
-	NextUploadIDMarker string       `xml:"NextUploadIdMarker,omitempty"`
-	Prefix             string       `xml:"Prefix"`
-	EncodingType       string       `xml:"EncodingType,omitempty"`
-	MaxUploads         int          `xml:"MaxUploads"`
-	IsTruncated        bool         `xml:"IsTruncated"`
-	Uploads            []uploadItem `xml:"Upload"`
+	XMLName            xml.Name       `xml:"ListMultipartUploadsResult"`
+	NS                 string         `xml:"xmlns,attr"`
+	Bucket             string         `xml:"Bucket"`
+	KeyMarker          string         `xml:"KeyMarker"`
+	UploadIDMarker     string         `xml:"UploadIdMarker"`
+	NextKeyMarker      string         `xml:"NextKeyMarker,omitempty"`
+	NextUploadIDMarker string         `xml:"NextUploadIdMarker,omitempty"`
+	Prefix             string         `xml:"Prefix"`
+	Delimiter          string         `xml:"Delimiter,omitempty"`
+	EncodingType       string         `xml:"EncodingType,omitempty"`
+	MaxUploads         int            `xml:"MaxUploads"`
+	IsTruncated        bool           `xml:"IsTruncated"`
+	Uploads            []uploadItem   `xml:"Upload"`
+	CommonPrefixes     []commonPrefix `xml:"CommonPrefixes"`
 }
 
 func writeXML(w http.ResponseWriter, status int, v any) {
