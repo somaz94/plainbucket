@@ -280,7 +280,19 @@ const summaryText = el("span", { class: "muted" });
 const uploadSummary = el("div", { class: "row" }, summaryText,
   button("Cancel all", () => { for (const stop of [...uploads]) stop(); }, "link danger"));
 uploadSummary.hidden = true;
-const uploadList = el("div", { class: "uploads" }, uploadSummary);
+// Decisions pending for uploads refused because the key exists: true overwrites.
+const conflicts = new Set();
+const conflictText = el("span", { class: "muted" });
+const conflictBar = el("div", { class: "row" }, conflictText,
+  button("Overwrite all", () => { for (const decide of [...conflicts]) decide(true); }, "link danger"),
+  button("Skip all", () => { for (const decide of [...conflicts]) decide(false); }, "link"));
+conflictBar.hidden = true;
+const uploadList = el("div", { class: "uploads" }, uploadSummary, conflictBar);
+
+function showConflicts() {
+  conflictBar.hidden = conflicts.size < 2;
+  conflictText.textContent = `${conflicts.size} files already exist.`;
+}
 let rate = 0;
 let lastSent = 0;
 let ticker = null;
@@ -335,8 +347,9 @@ window.addEventListener("beforeunload", (e) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // upload sends file to an encoded key. It signs with the key that was signed in when it
-// started, so signing out cancels it instead of leaving it to another key.
-function upload(bucket, key, file, onDone) {
+// started, so signing out cancels it instead of leaving it to another key. Unless
+// overwrite is set, the write is conditional on the key not existing.
+function upload(bucket, key, file, onDone, overwrite = false) {
   const as = cred;
   const bar = el("progress", { max: file.size || 1, value: 0 });
   const status = el("span", { class: "muted" }, "starting");
@@ -363,22 +376,41 @@ function upload(bucket, key, file, onDone) {
     status.textContent = text;
     status.className = kind;
     cancel.remove();
-    if (kind !== "error") {
-      setTimeout(() => row.remove(), 4000);
+    if (kind !== "error") setTimeout(() => row.remove(), 4000);
+  };
+  const failed = (err) => {
+    if (err.status !== 412) {
+      finish(describe(err), "error");
+      row.append(button("Retry", () => {
+        row.remove();
+        upload(bucket, key, file, onDone, overwrite);
+      }, "link"), button("Dismiss", () => row.remove(), "link"));
       return;
     }
-    row.append(button("Retry", () => {
+    finish("already exists", "error");
+    const decide = (yes) => {
+      conflicts.delete(decide);
+      showConflicts();
       row.remove();
-      upload(bucket, key, file, onDone);
-    }, "link"), button("Dismiss", () => row.remove(), "link"));
+      if (yes) upload(bucket, key, file, onDone, true);
+    };
+    conflicts.add(decide);
+    showConflicts();
+    row.append(button("Overwrite", () => decide(true), "link danger"), button("Skip", () => decide(false), "link"));
   };
   const headers = { "content-type": file.type || "application/octet-stream" };
+  const guard = overwrite ? {} : { "if-none-match": "*" };
 
   const run = async () => {
     if (file.size <= minPartSize) {
-      await put(as, bucket, key, [], headers, file, progress, pending);
+      await put(as, bucket, key, [], { ...headers, ...guard }, file, progress, pending);
       return;
     }
+    // The final write checks again; this only saves sending the parts for nothing.
+    if (!overwrite && await s3("HEAD", bucket, key, { as }).then(() => true, (err) => {
+      if (err.status === 404) return false;
+      throw err;
+    })) throw new S3Error(412, "PreconditionFailed", "An object with this name already exists.");
     const partSize = Math.max(minPartSize, Math.ceil(file.size / maxParts));
     const created = await s3xml("POST", bucket, key, { params: [["uploads", ""]], headers, as });
     const uploadId = child(created, "UploadId");
@@ -421,7 +453,7 @@ function upload(bucket, key, file, onDone) {
       const body = "<CompleteMultipartUpload>" +
         etags.map((e, i) => `<Part><PartNumber>${i + 1}</PartNumber><ETag>${escapeXML(e)}</ETag></Part>`).join("") +
         "</CompleteMultipartUpload>";
-      await s3("POST", bucket, key, { params: [["uploadId", uploadId]], body, as });
+      await s3("POST", bucket, key, { params: [["uploadId", uploadId]], headers: guard, body, as });
     } catch (err) {
       stop();
       await s3("DELETE", bucket, key, { params: [["uploadId", uploadId]], as }).catch(() => {});
@@ -435,7 +467,7 @@ function upload(bucket, key, file, onDone) {
   run().then(() => {
     finish("done", "ok");
     onDone();
-  }, (err) => finish(describe(err), "error"));
+  }, failed);
 }
 
 // droppedFiles returns [relative path, File] for everything dropped, walking folders.
@@ -669,6 +701,16 @@ async function detailsDialog(bucket, key, report, onChange) {
     for (const [name, value] of res.headers) {
       if (name.startsWith("x-amz-meta-") || editableHeaders.slice(1).some((h) => h.toLowerCase() === name)) rows.push([name, value]);
     }
+    const attrs = await s3xml("GET", bucket, key, {
+      params: [["attributes", ""]], headers: { "x-amz-object-attributes": "Checksum,ObjectParts" },
+    }).catch(() => null);
+    const checksum = attrs && children(attrs, "Checksum")[0];
+    for (const c of checksum ? checksum.children : []) {
+      rows.push([c.localName === "ChecksumType" ? "Checksum type" : "Checksum " + c.localName.replace(/^Checksum/, ""), c.textContent]);
+    }
+    const parts = attrs && children(attrs, "ObjectParts")[0];
+    if (parts) rows.push(["Parts", child(parts, "PartsCount") || child(parts, "TotalPartsCount")]);
+    rows.push(["S3 URI", copyField(`s3://${bucket}/${keyText(key) ?? displayKey(key)}`)]);
     const then = (open) => () => {
       d.close();
       open();
@@ -689,6 +731,68 @@ async function detailsDialog(bucket, key, report, onChange) {
   } catch (err) {
     report(err);
   }
+}
+
+const maxSearchResults = 500;
+
+// searchDialog finds keys below prefix whose path contains the query, listing the bucket
+// page by page; the server has no search, so this reads every key under prefix.
+function searchDialog(bucket, prefix, report) {
+  const query = el("input", { type: "search", placeholder: "Part of a name or path", class: "wide" });
+  const status = el("p", { class: "muted" }, "Searches every folder below " + (prefix ? displayKey(prefix) : "the bucket root") + ".");
+  const body = el("tbody");
+  let run = 0;
+  const stop = button("Stop", () => {
+    run++;
+    stop.hidden = true;
+    status.textContent += " Stopped.";
+  }, "link");
+  stop.hidden = true;
+  const matches = (n) => (n === 1 ? "1 match" : `${n.toLocaleString()} matches`);
+  const search = async () => {
+    const mine = ++run;
+    const q = query.value.trim().toLowerCase();
+    body.replaceChildren();
+    if (!q) return;
+    let token = "";
+    let scanned = 0;
+    let found = 0;
+    stop.hidden = false;
+    try {
+      for (;;) {
+        const params = [["list-type", "2"], ["prefix", keyBytes(prefix)], ["encoding-type", "url"]];
+        if (token) params.push(["continuation-token", token]);
+        const res = await s3xml("GET", bucket, "", { params });
+        if (mine !== run) return;
+        for (const c of children(res, "Contents")) {
+          scanned++;
+          const key = child(c, "Key");
+          const path = displayKey(key.slice(prefix.length));
+          if (key.endsWith("/") || !path.toLowerCase().includes(q) || found === maxSearchResults) continue;
+          found++;
+          const folder = key.slice(0, key.lastIndexOf("/") + 1);
+          body.append(el("tr", {},
+            el("td", {}, button(path, () => detailsDialog(bucket, key, report, render), "link")),
+            el("td", { class: "num" }, formatBytes(Number(child(c, "Size")))),
+            el("td", { class: "actions" }, el("a", { href: bucketHash(bucket, folder), onclick: () => d.close() }, "Open folder"))));
+        }
+        status.textContent = `${matches(found)} in ${plural(scanned, "key")} scanned.` +
+          (found === maxSearchResults ? ` Stopped at ${maxSearchResults}; narrow the search to see more.` : "");
+        if (found === maxSearchResults || child(res, "IsTruncated") !== "true") break;
+        token = child(res, "NextContinuationToken");
+      }
+    } catch (err) {
+      if (mine === run) status.textContent = describe(err);
+    }
+    if (mine === run) stop.hidden = true;
+  };
+  query.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") search();
+  });
+  const d = dialog("Search " + bucket, el("div", { class: "row" }, query, button("Search", search), stop), status,
+    el("table", {}, body));
+  d.addEventListener("close", () => run++);
+  query.focus();
 }
 
 // uploadsDialog lists the multipart uploads left under prefix, such as those of a closed
@@ -765,13 +869,32 @@ function header(active) {
     themeButton(),
     button("Sign out", () => {
       if (uploads.size && !confirm(`Cancel ${plural(uploads.size, "upload")} in progress and sign out?`)) return;
-      for (const stop of uploads) stop();
-      cred = null;
-      keyInfo = { readOnly: false };
-      location.hash = "";
-      render();
+      signOut();
     }, "link"));
 }
+
+// signOut forgets the key and everything opened with it.
+function signOut() {
+  for (const stop of uploads) stop();
+  for (const d of document.querySelectorAll("dialog")) d.close();
+  cred = null;
+  keyInfo = { readOnly: false };
+  // replaceState fires no hashchange, whose render would drop the banner set after this one.
+  history.replaceState(null, "", location.pathname + location.search);
+  render();
+}
+
+const idleLimit = 30 * 60 * 1000;
+let lastActive = Date.now();
+for (const type of ["pointerdown", "keydown", "wheel"]) {
+  window.addEventListener(type, () => { lastActive = Date.now(); }, { passive: true });
+}
+// The secret key should not outlive the person at the keyboard; a running upload defers it.
+setInterval(() => {
+  if (!cred || uploads.size || Date.now() - lastActive < idleLimit) return;
+  signOut();
+  notify("Signed out after 30 minutes without activity.", "status");
+}, 30 * 1000);
 
 async function bucketsView() {
   const report = reporter();
@@ -962,6 +1085,7 @@ async function browserView(bucket, prefix) {
       }
     })] : null,
     button("Refresh", () => render()),
+    button("Search", () => searchDialog(bucket, prefix, report)),
     button("Incomplete uploads", () => uploadsDialog(bucket, prefix)),
     el("span", { class: "spacer" }), writable ? deleteSelected : null);
 
