@@ -70,6 +70,20 @@ func writeConditions(h http.Header) storage.Conditions {
 	return storage.Conditions{IfMatch: h.Get("If-Match"), IfNoneMatch: h.Get("If-None-Match")}
 }
 
+// capReader fails a body of unknown length once it passes the maximum object size.
+type capReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (c *capReader) Read(b []byte) (int, error) {
+	n, err := c.r.Read(b)
+	if c.left -= int64(n); c.left < 0 {
+		return n, s3err.EntityTooLarge()
+	}
+	return n, err
+}
+
 func (h *Handler) checkSize(n int64) error {
 	if h.opts.MaxObjectSize > 0 && n > h.opts.MaxObjectSize {
 		return s3err.EntityTooLarge()
@@ -85,6 +99,9 @@ func (h *Handler) putObject(req *request) error {
 	if err := h.checkSize(p.size); err != nil {
 		return err
 	}
+	if p.size < 0 && h.opts.MaxObjectSize > 0 {
+		p.reader = &capReader{r: p.reader, left: h.opts.MaxObjectSize}
+	}
 	cond := writeConditions(req.r.Header)
 	info, err := h.store.PutObject(req.bucket, req.key, p.reader, p.size, storage.PutOptions{
 		Metadata: metadataFromHeaders(req.r.Header),
@@ -94,7 +111,7 @@ func (h *Handler) putObject(req *request) error {
 	if err != nil {
 		return err
 	}
-	h.metrics.receivedBytes.Add(p.size)
+	h.metrics.receivedBytes.Add(info.Size)
 	req.w.Header().Set("ETag", info.ETag)
 	setChecksumHeaders(req.w.Header(), info.Checksums)
 	req.w.WriteHeader(http.StatusOK)

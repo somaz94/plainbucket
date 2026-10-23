@@ -6,23 +6,57 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/sigv4"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-const maxListKeys = 1000
+const (
+	maxListKeys    = 1000
+	maxListBuckets = 10000
+)
 
+// listBuckets serves ListBuckets, paginated when max-buckets or continuation-token is
+// given; the token is the last bucket name returned, encoded.
 func (h *Handler) listBuckets(req *request) error {
+	limit := -1
+	if v := req.q.Get("max-buckets"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxListBuckets {
+			return s3err.InvalidArgument("max-buckets must be an integer from 1 to 10000.")
+		}
+		limit = n
+	}
+	after := ""
+	if t := req.q.Get("continuation-token"); t != "" {
+		name, err := base64.RawURLEncoding.DecodeString(t)
+		if err != nil || !storage.ValidBucketName(string(name)) {
+			return s3err.InvalidArgument("The continuation token provided is incorrect.")
+		}
+		after = string(name)
+		if limit < 0 {
+			limit = maxListBuckets
+		}
+	}
+	prefix := req.q.Get("prefix")
+	res := listAllMyBucketsResult{NS: s3NS, Owner: serverOwner, Buckets: []bucketItem{}, Prefix: prefix}
+	if r := req.q.Get("bucket-region"); r != "" && r != h.opts.Region {
+		writeXML(req.w, http.StatusOK, res)
+		return nil
+	}
 	bs, err := h.store.ListBuckets()
 	if err != nil {
 		return err
 	}
-	res := listAllMyBucketsResult{NS: s3NS, Owner: serverOwner, Buckets: []bucketItem{}}
 	for _, b := range bs {
-		if !req.mayRead(b.Name) {
+		if b.Name <= after || !strings.HasPrefix(b.Name, prefix) || !req.mayRead(b.Name) {
 			continue
+		}
+		if len(res.Buckets) == limit {
+			res.ContinuationToken = base64.RawURLEncoding.EncodeToString([]byte(res.Buckets[limit-1].Name))
+			break
 		}
 		res.Buckets = append(res.Buckets, bucketItem{Name: b.Name, CreationDate: isoTime(b.Created)})
 	}

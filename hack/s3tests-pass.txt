@@ -132,6 +132,7 @@ test_s3::test_get_paginated_multipart_object_attributes
 test_s3::test_get_single_multipart_object_attributes
 test_s3::test_list_buckets_bad_auth
 test_s3::test_list_buckets_invalid_auth
+test_s3::test_list_buckets_paginated
 test_s3::test_list_multipart_upload
 test_s3::test_multi_object_delete
 test_s3::test_multi_object_delete_key_limit
@@ -197,6 +198,7 @@ test_s3::test_object_write_expires
 test_s3::test_object_write_file
 test_s3::test_object_write_read_update_read_delete
 test_s3::test_object_write_to_nonexist_bucket
+test_s3::test_object_write_with_chunked_transfer_encoding
 test_s3::test_post_object_authenticated_request_bad_access_key
 test_s3::test_post_object_expired_policy
 test_s3::test_post_object_invalid_access_key

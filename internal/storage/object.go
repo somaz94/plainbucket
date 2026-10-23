@@ -27,8 +27,9 @@ type PutOptions struct {
 
 func isDirKey(key string) bool { return strings.HasSuffix(key, "/") }
 
-// PutObject stores exactly size bytes from body as bucket/key, replacing it atomically.
-// A key ending in / with an empty body creates a directory.
+// PutObject stores exactly size bytes from body as bucket/key, replacing it atomically;
+// a negative size reads body to its end. A key ending in / with an empty body creates a
+// directory.
 func (s *Store) PutObject(bucket, key string, body io.Reader, size int64, o PutOptions) (ObjectInfo, error) {
 	if err := s.requireBucket(bucket); err != nil {
 		return ObjectInfo{}, err
@@ -36,7 +37,7 @@ func (s *Store) PutObject(bucket, key string, body io.Reader, size int64, o PutO
 	if err := checkKey(key); err != nil {
 		return ObjectInfo{}, err
 	}
-	if isDirKey(key) && size != 0 {
+	if isDirKey(key) && size > 0 {
 		return ObjectInfo{}, ErrMarkerNotEmpty
 	}
 	if err := s.fits(bucket, key, size); err != nil {
@@ -46,11 +47,29 @@ func (s *Store) PutObject(bucket, key string, body io.Reader, size int64, o PutO
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+	if size < 0 {
+		if err := s.fitsReceived(bucket, key, tmp); err != nil {
+			_ = os.Remove(tmp)
+			return ObjectInfo{}, err
+		}
+	}
 	if isDirKey(key) {
 		_ = os.Remove(tmp)
 		return s.putMarker(bucket, key, o.Cond)
 	}
 	return s.commit(bucket, key, tmp, sidecar{ETag: md5ETag(sum), Checksums: checks, Metadata: o.Metadata}, o.Cond)
+}
+
+// fitsReceived checks the limits against a body whose size was unknown until received.
+func (s *Store) fitsReceived(bucket, key, tmp string) error {
+	fi, err := os.Stat(tmp)
+	if err != nil {
+		return err
+	}
+	if isDirKey(key) && fi.Size() != 0 {
+		return ErrMarkerNotEmpty
+	}
+	return s.fits(bucket, key, fi.Size())
 }
 
 // putMarker creates the directory for a key ending in / and records it as an explicit

@@ -305,6 +305,30 @@ func TestPayloadErrors(t *testing.T) {
 		t.Errorf("unknown length: %s", rec.Body.String())
 	}
 
+	// An HTTP chunked body of unknown length is accepted for a whole object, up to the
+	// maximum size, but not for a part.
+	chunked := func(target, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPut, "http://pb.test"+target, strings.NewReader(body))
+		r.ContentLength, r.TransferEncoding = -1, []string{"chunked"}
+		x.signer.Sign(r, sigv4.UnsignedPayload, testNow)
+		rec := httptest.NewRecorder()
+		x.h.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := chunked("/bkt/te", "chunky"); rec.Code != http.StatusOK {
+		t.Errorf("chunked put: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := x.mustDo(http.MethodGet, "/bkt/te", nil, nil, http.StatusOK).Body.String(); got != "chunky" {
+		t.Errorf("chunked body = %q", got)
+	}
+	if rec := chunked("/bkt/te-big", strings.Repeat("x", 11)); errCode(rec) != "EntityTooLarge" {
+		t.Errorf("chunked over the maximum: %d %s", rec.Code, rec.Body.String())
+	}
+	x.mustDo(http.MethodGet, "/bkt/te-big", nil, nil, http.StatusNotFound)
+	if rec := chunked("/bkt/te?partNumber=1&uploadId=x", "part"); errCode(rec) != "MissingContentLength" {
+		t.Errorf("chunked part: %s", rec.Body.String())
+	}
+
 	r = httptest.NewRequest(http.MethodPut, "http://pb.test/bkt/k", io.MultiReader(strings.NewReader("ab"), errReader{}))
 	r.ContentLength = 4
 	x.signer.Sign(r, sigv4.UnsignedPayload, testNow)
@@ -970,5 +994,68 @@ func TestGetObjectTagging(t *testing.T) {
 	x.expectErr(http.MethodGet, "/bkt/missing?tagging", nil, nil, "NoSuchKey")
 	if rec := x.anon(http.MethodGet, "/bkt/k?tagging"); rec.Code != http.StatusForbidden {
 		t.Errorf("anonymous tagging: %d", rec.Code)
+	}
+}
+
+func TestListBucketsPaginated(t *testing.T) {
+	x := newHarness(t, func(o *Options) {
+		o.Credentials = append(o.Credentials, Credential{AccessKey: "scoped", SecretKey: "scoped-secret", Buckets: []string{"b-two"}})
+	})
+	for _, b := range []string{"a-one", "b-two", "b-three"} {
+		x.mustDo(http.MethodPut, "/"+b, nil, nil, http.StatusOK)
+	}
+	page := func(query string) listAllMyBucketsResult {
+		t.Helper()
+		var res listAllMyBucketsResult
+		if err := xml.Unmarshal(x.mustDo(http.MethodGet, "/"+query, nil, nil, http.StatusOK).Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	names := func(res listAllMyBucketsResult) (out []string) {
+		for _, b := range res.Buckets {
+			out = append(out, b.Name)
+		}
+		return out
+	}
+
+	if res := page(""); len(res.Buckets) != 3 || res.ContinuationToken != "" {
+		t.Errorf("unpaginated: %+v", res)
+	}
+	var got []string
+	token := ""
+	for range 3 {
+		q := "?max-buckets=2"
+		if token != "" {
+			q += "&continuation-token=" + token
+		}
+		res := page(q)
+		got = append(got, names(res)...)
+		if token = res.ContinuationToken; token == "" {
+			break
+		}
+	}
+	if strings.Join(got, ",") != "a-one,b-three,b-two" {
+		t.Errorf("pages: %v", got)
+	}
+	if res := page("?max-buckets=3"); res.ContinuationToken != "" {
+		t.Errorf("a full last page has no token: %+v", res)
+	}
+	if res := page("?prefix=b-"); strings.Join(names(res), ",") != "b-three,b-two" || res.Prefix != "b-" {
+		t.Errorf("prefix: %+v", res)
+	}
+	if res := page("?bucket-region=eu-west-1"); len(res.Buckets) != 0 {
+		t.Errorf("other region: %+v", res)
+	}
+	if res := page("?bucket-region=us-east-1"); len(res.Buckets) != 3 {
+		t.Errorf("own region: %+v", res)
+	}
+	x.as("scoped", "scoped-secret", func() {
+		if res := page("?max-buckets=1"); strings.Join(names(res), ",") != "b-two" || res.ContinuationToken != "" {
+			t.Errorf("scoped: %+v", res)
+		}
+	})
+	for _, q := range []string{"?max-buckets=0", "?max-buckets=10001", "?max-buckets=x", "?continuation-token=%21%21", "?continuation-token=QQ"} {
+		x.expectErr(http.MethodGet, "/"+q, nil, nil, "InvalidArgument")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"hash"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -98,7 +99,9 @@ func newPayload(req *request, timeout time.Duration, withDefault bool) (*payload
 		p.chunked = req.auth.NewChunkedReader(newBodyReader(req, timeout))
 		p.reader = p.chunked
 	} else {
-		if p.size < 0 {
+		// A whole object may come as an HTTP chunked body of unknown length; parts and XML
+		// documents must declare theirs.
+		if p.size < 0 && (!withDefault || !slices.Contains(r.TransferEncoding, "chunked")) {
 			return nil, s3err.MissingContentLength()
 		}
 		p.reader = newBodyReader(req, timeout)

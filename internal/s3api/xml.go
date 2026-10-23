@@ -25,6 +25,9 @@ type listAllMyBucketsResult struct {
 	NS      string       `xml:"xmlns,attr"`
 	Owner   owner        `xml:"Owner"`
 	Buckets []bucketItem `xml:"Buckets>Bucket"`
+	// ContinuationToken asks for the next page; absent on the last one.
+	ContinuationToken string `xml:"ContinuationToken,omitempty"`
+	Prefix            string `xml:"Prefix,omitempty"`
 }
 
 type bucketItem struct {

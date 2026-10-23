@@ -317,8 +317,11 @@ func (s *Store) receive(body io.Reader, size int64, verify Verifier) (string, []
 	}
 	name := tmp.Name()
 	h := md5.New() //nolint:gosec // S3 ETag format
-	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(body, size))
-	if err == nil && n != size {
+	if size >= 0 {
+		body = io.LimitReader(body, size)
+	}
+	n, err := io.Copy(io.MultiWriter(tmp, h), body)
+	if err == nil && size >= 0 && n != size {
 		err = ErrShortBody
 	}
 	sum := h.Sum(nil)

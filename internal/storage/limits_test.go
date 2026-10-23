@@ -301,3 +301,24 @@ func TestEvictionKeepsObjectReadAfterScan(t *testing.T) {
 		t.Error("an object read after the scan was evicted")
 	}
 }
+
+func TestPutUnknownSize(t *testing.T) {
+	s := newStore(t)
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 10}})
+	info, err := s.PutObject("bkt", "a", strings.NewReader("123456"), -1, PutOptions{})
+	if err != nil || info.Size != 6 {
+		t.Fatalf("unknown size: %+v %v", info, err)
+	}
+	if _, err := s.PutObject("bkt", "b", strings.NewReader("12345"), -1, PutOptions{}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Errorf("over quota once received: %v", err)
+	}
+	if exists(s, "b") {
+		t.Error("refused object stored")
+	}
+	if _, err := s.PutObject("bkt", "dir/", strings.NewReader("x"), -1, PutOptions{}); !errors.Is(err, ErrMarkerNotEmpty) {
+		t.Errorf("marker with a body: %v", err)
+	}
+	if _, err := s.PutObject("bkt", "dir/", strings.NewReader(""), -1, PutOptions{}); err != nil {
+		t.Errorf("empty marker: %v", err)
+	}
+}
