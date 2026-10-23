@@ -69,6 +69,12 @@ func (s *Store) fitsReceived(bucket, key, tmp string) error {
 	if isDirKey(key) && fi.Size() != 0 {
 		return ErrMarkerNotEmpty
 	}
+	// The body is already on disk, so only what is left counts.
+	release, _, err := s.reserve(0)
+	if err != nil {
+		return err
+	}
+	release()
 	return s.fits(bucket, key, fi.Size())
 }
 

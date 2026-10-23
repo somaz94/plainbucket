@@ -272,6 +272,12 @@ func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, part
 	if err := s.fits(bucket, key, total); err != nil {
 		return ObjectInfo{}, err
 	}
+	// The parts are copied into one file, so the object needs its size again.
+	release, _, err := s.reserve(total)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	defer release()
 
 	tmp, err := os.CreateTemp(s.sys("tmp"), "complete-*")
 	if err != nil {

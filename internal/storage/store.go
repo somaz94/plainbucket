@@ -136,6 +136,10 @@ type Store struct {
 	expired     atomic.Int64
 	evicted     atomic.Int64
 
+	minFree atomic.Int64 // bytes a write must leave free
+	pending atomic.Int64 // bytes reserved by writes in progress
+	statfs  func(path string) (free, size int64, err error)
+
 	lockFile *os.File // held by Lock
 
 	usage atomic.Pointer[Usage]
@@ -148,7 +152,7 @@ func New(root string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{root: abs, now: time.Now, MinPartSize: 5 << 20, buckets: map[string]*sync.RWMutex{},
-		bucketUsage: map[string]Usage{}, kick: make(chan struct{}, 1)}
+		bucketUsage: map[string]Usage{}, kick: make(chan struct{}, 1), statfs: diskSpace}
 	for _, d := range []string{"meta", "tmp", "uploads", "buckets"} {
 		if err := os.MkdirAll(s.sys(d), sysDirPerm); err != nil {
 			return nil, err
@@ -311,6 +315,14 @@ type Verifier func(md5 []byte) (map[string]string, error)
 // receive streams exactly size bytes from body into a temporary file and returns its
 // path, MD5 and verified checksums. The caller removes the file.
 func (s *Store) receive(body io.Reader, size int64, verify Verifier) (string, []byte, map[string]string, error) {
+	release, room, err := s.reserve(size)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	defer release()
+	if size < 0 && room >= 0 {
+		body = &roomReader{r: body, n: room}
+	}
 	tmp, err := os.CreateTemp(s.sys("tmp"), "upload-*")
 	if err != nil {
 		return "", nil, nil, err

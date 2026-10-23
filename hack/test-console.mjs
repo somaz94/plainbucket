@@ -144,13 +144,14 @@ const usage = await (await expectStatus("usage api", await fetch(endpoint.origin
   headers: sigv4.signHeaders(admin, { method: "GET", host, path: usagePath }),
 }), 200)).json();
 if (!usage.total || !usage.buckets.some((b) => b.name === "console-e2e")) fail("usage api", JSON.stringify(usage));
+if (!(usage.disk?.size > 0) || usage.disk.free > usage.disk.size) fail("usage api disk", JSON.stringify(usage.disk));
 const presignedUsage = sigv4.presign(admin, { method: "GET", host, path: usagePath, expires: 60 });
 await expectStatus("presigned usage api", await fetch(`${endpoint.origin}${usagePath}?${presignedUsage}`), 200);
 
 const scopedUsage = await (await expectStatus("scoped usage api", await fetch(endpoint.origin + usagePath, {
   headers: sigv4.signHeaders(scoped, { method: "GET", host, path: usagePath }),
 }), 200)).json();
-if (scopedUsage.total || scopedUsage.buckets.some((b) => b.name === "console-e2e")) fail("scoped usage", JSON.stringify(scopedUsage));
+if (scopedUsage.total || scopedUsage.disk || scopedUsage.buckets.some((b) => b.name === "console-e2e")) fail("scoped usage", JSON.stringify(scopedUsage));
 await expectStatus("scoped key denied", await s3(scoped, "GET", "console-e2e", "big.bin"), 403);
 
 const del = "<Delete><Object><Key>big.bin</Key></Object><Object><Key>" + key + "</Key></Object></Delete>";

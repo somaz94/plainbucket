@@ -68,11 +68,13 @@ lacks "PLAINBUCKET_ACCESS_KEY" "no full-access key"
 ok "credentials secret only"
 
 render "${KEY[@]}" --set "config.publicBuckets={www,assets}" --set "config.domains={s3.example.com}" \
-    --set-string config.maxObjectSize=10737418240 --set config.uploadExpiry=24h
+    --set-string config.maxObjectSize=10737418240 --set config.uploadExpiry=24h \
+    --set-string config.minFreeSpace=1073741824
 has 'value: "www,assets"' "public buckets"
 has 'value: "s3.example.com"' "domains"
 has 'value: "10737418240"' "max object size kept as digits"
 has 'value: "24h"' "upload expiry"
+has 'value: "1073741824"' "min free space"
 render "${KEY[@]}" --set config.accessLog=true
 has 'value: "true"' "access log"
 render "${KEY[@]}" --set config.console=true --show-only templates/deployment.yaml
@@ -139,6 +141,7 @@ expect_fail "accessLog" "${KEY[@]}" --set config.accessLog=yes
 expect_fail "console" "${KEY[@]}" --set config.console=yes
 expect_fail "publicBuckets" "${KEY[@]}" --set "config.publicBuckets={Bad_Name}"
 expect_fail "maxObjectSize" "${KEY[@]}" --set config.maxObjectSize=10Gi
+expect_fail "minFreeSpace" "${KEY[@]}" --set-string config.minFreeSpace=1Gi
 expect_fail "uploadExpiry" "${KEY[@]}" --set config.uploadExpiry=7d
 expect_fail "uploadExpiry" "${KEY[@]}" --set config.uploadExpiry=0s
 expect_fail "maxObjectSize" "${KEY[@]}" --set-string config.maxObjectSize=99999999999999999999

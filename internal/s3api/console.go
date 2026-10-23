@@ -56,8 +56,15 @@ type consoleUsageResponse struct {
 	// ReadOnly tells the console to hide what the signing key may not do.
 	ReadOnly bool            `json:"read_only,omitempty"`
 	Buckets  []consoleBucket `json:"buckets"`
-	// Total is reported only to a key that may see every bucket.
+	// Total and Disk are reported only to a key that may see every bucket.
 	Total *consoleBucket `json:"total,omitempty"`
+	Disk  *consoleDisk   `json:"disk,omitempty"`
+}
+
+type consoleDisk struct {
+	Free    int64 `json:"free"`
+	Size    int64 `json:"size"`
+	MinFree int64 `json:"min_free,omitempty"`
 }
 
 // consoleUsage reports the usage of the buckets the signing key may access, as writes
@@ -101,6 +108,9 @@ func (h *Handler) consoleUsage(req *request) error {
 	}
 	if len(req.cred.Buckets) == 0 {
 		res.Total = &total
+		if free, size, err := h.store.DiskSpace(); err == nil {
+			res.Disk = &consoleDisk{Free: free, Size: size, MinFree: h.store.MinFree()}
+		}
 	}
 	body, err := json.Marshal(res)
 	if err != nil {

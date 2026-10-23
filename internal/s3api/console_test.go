@@ -112,9 +112,13 @@ func TestConsoleUsage(t *testing.T) {
 		}
 		return res
 	}
+	x.h.store.SetMinFree(1)
 	res := get()
 	if len(res.Buckets) != 2 || res.Total == nil || res.Total.Bytes != 3 {
 		t.Fatalf("full key: %+v", res)
+	}
+	if d := res.Disk; d == nil || d.Size <= 0 || d.Free > d.Size || d.MinFree != 1 {
+		t.Errorf("disk: %+v", d)
 	}
 	a, b := res.Buckets[0], res.Buckets[1]
 	if a.Name != "aaa" || a.Bytes != 3 || a.Objects != 1 || a.MaxSize != 100 || !a.Evict || a.ExpireAfter != "336h0m0s" || a.MeasuredAt.IsZero() {
@@ -127,7 +131,7 @@ func TestConsoleUsage(t *testing.T) {
 	x.as("scoped", "scoped-secret", func() {
 		res = get()
 	})
-	if len(res.Buckets) != 1 || res.Buckets[0].Name != "aaa" || res.Total != nil || res.ReadOnly {
+	if len(res.Buckets) != 1 || res.Buckets[0].Name != "aaa" || res.Total != nil || res.Disk != nil || res.ReadOnly {
 		t.Errorf("scoped key: %+v", res)
 	}
 	x.as("reader", "reader-secret", func() {

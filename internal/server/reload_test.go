@@ -77,7 +77,12 @@ func eventually(t *testing.T, what string, ok func() bool) {
 
 func listAs(t *testing.T, url, ak, sk string) int {
 	t.Helper()
-	r, _ := http.NewRequest(http.MethodGet, url+"/", nil)
+	return doAs(t, http.MethodGet, url+"/", ak, sk, "")
+}
+
+func doAs(t *testing.T, method, url, ak, sk, body string) int {
+	t.Helper()
+	r, _ := http.NewRequest(method, url, strings.NewReader(body))
 	sigv4test.Signer{AccessKey: ak, SecretKey: sk, Region: "us-east-1"}.Sign(r, "UNSIGNED-PAYLOAD", time.Now())
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
@@ -124,6 +129,15 @@ func TestReloadOnFileChangeAndSignal(t *testing.T) {
 	// The first limit measures usage, which a refusing limit checks writes against.
 	writeFile(t, file, base+"buckets: {lim: {max-size: 100}}\n")
 	eventually(t, "the limit", func() bool { return strings.Contains(logs.String(), "buckets=1") })
+
+	// More free space than any test machine has refuses writes once reloaded.
+	if code := doAs(t, http.MethodPut, url+"/full", "ak", "sk", ""); code != http.StatusOK {
+		t.Fatalf("create bucket: %d", code)
+	}
+	writeFile(t, file, base+"min-free-space: 4611686018427387904\n")
+	eventually(t, "min-free-space", func() bool {
+		return doAs(t, http.MethodPut, url+"/full/k", "ak", "sk", "x") == http.StatusInsufficientStorage
+	})
 
 	// A setting that needs a restart is reported; a signal reloads without a file change.
 	writeFile(t, file, base+"metrics: true\n")
@@ -178,7 +192,7 @@ func TestReloadSwapsTheCertificate(t *testing.T) {
 func TestRestartNeededIgnoresReloadableSettings(t *testing.T) {
 	a := config.Default()
 	b := config.Default()
-	b.AccessKey, b.Buckets = "other", map[string]config.Bucket{"x": {Public: true}}
+	b.AccessKey, b.Buckets, b.MinFreeSpace = "other", map[string]config.Bucket{"x": {Public: true}}, 1
 	if got := a.RestartNeeded(b); len(got) != 0 {
 		t.Errorf("reloadable settings reported: %v", got)
 	}

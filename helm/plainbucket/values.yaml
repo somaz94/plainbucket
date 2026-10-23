@@ -67,6 +67,7 @@ config:
   # Domains for virtual-hosted-style requests (<bucket>.<domain>); needs wildcard DNS.
   domains: []
   maxObjectSize: ""  # bytes as a string; empty means unlimited
+  minFreeSpace: ""   # bytes as a string that writes must leave free on the volume; empty means no check
   uploadExpiry: ""   # Go duration; empty keeps the server default
   bodyTimeout: ""    # Go duration; empty keeps the server default
   metrics: false

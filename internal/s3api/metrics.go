@@ -68,6 +68,8 @@ type storeStats interface {
 	Usage() storage.Usage
 	BucketUsage() map[string]storage.Usage
 	Removed() (expired, evicted int64)
+	DiskSpace() (free, size int64, err error)
+	MinFree() int64
 }
 
 func (m *metrics) serve(w http.ResponseWriter, st storeStats) {
@@ -119,6 +121,12 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats) {
 	expired, evicted := st.Removed()
 	metric("counter", "plainbucket_expired_objects_total", "Objects removed by a bucket's expire-after.", expired)
 	metric("counter", "plainbucket_evicted_objects_total", "Objects evicted by a bucket's max-size.", evicted)
+
+	metric("gauge", "plainbucket_min_free_bytes", "Free bytes writes must leave (min-free-space); 0 when off.", st.MinFree())
+	if free, size, err := st.DiskSpace(); err == nil {
+		metric("gauge", "plainbucket_filesystem_free_bytes", "Bytes left for the server on the filesystem holding the root.", free)
+		metric("gauge", "plainbucket_filesystem_size_bytes", "Size of the filesystem holding the root.", size)
+	}
 
 	if per := st.BucketUsage(); len(per) > 0 {
 		names := slices.Sorted(maps.Keys(per))

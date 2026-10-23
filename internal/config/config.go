@@ -41,6 +41,7 @@ type Config struct {
 	Domains       []string      `yaml:"domains"`
 	Region        string        `yaml:"region"`
 	MaxObjectSize int64         `yaml:"max-object-size"`
+	MinFreeSpace  int64         `yaml:"min-free-space"`
 	UploadExpiry  time.Duration `yaml:"upload-expiry"`
 	BodyTimeout   time.Duration `yaml:"body-timeout"`
 	Metrics       bool          `yaml:"metrics"`
@@ -165,6 +166,7 @@ func (c *Config) loadEnv() error {
 	e.list("DOMAINS", &c.Domains)
 	e.string("REGION", &c.Region)
 	e.int64("MAX_OBJECT_SIZE", &c.MaxObjectSize)
+	e.int64("MIN_FREE_SPACE", &c.MinFreeSpace)
 	e.duration("UPLOAD_EXPIRY", &c.UploadExpiry)
 	e.duration("BODY_TIMEOUT", &c.BodyTimeout)
 	e.bool("METRICS", &c.Metrics)
@@ -270,6 +272,8 @@ func (c *Config) validate() error {
 		return errors.New("PLAINBUCKET_REGION must not be empty")
 	case c.MaxObjectSize < 0:
 		return errors.New("PLAINBUCKET_MAX_OBJECT_SIZE must not be negative")
+	case c.MinFreeSpace < 0:
+		return errors.New("PLAINBUCKET_MIN_FREE_SPACE must not be negative")
 	case c.UploadExpiry <= 0:
 		return errors.New("PLAINBUCKET_UPLOAD_EXPIRY must be positive")
 	case c.BodyTimeout < 0:
@@ -435,6 +439,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Any("domains", c.Domains),
 		slog.String("region", c.Region),
 		slog.Int64("max_object_size", c.MaxObjectSize),
+		slog.Int64("min_free_space", c.MinFreeSpace),
 		slog.Duration("upload_expiry", c.UploadExpiry),
 		slog.Duration("body_timeout", c.BodyTimeout),
 		slog.Bool("metrics", c.Metrics),
@@ -451,7 +456,7 @@ func (c *Config) LogValue() slog.Value {
 // reloads; the certificate files are re-read too, but switching TLS on or off is not.
 var reloadable = map[string]bool{
 	"access-key": true, "secret-key": true, "credentials": true, "credentials-file": true,
-	"public-buckets": true, "buckets": true, "tls-cert": true, "tls-key": true,
+	"public-buckets": true, "buckets": true, "min-free-space": true, "tls-cert": true, "tls-key": true,
 }
 
 // RestartNeeded lists the settings, by YAML name, that differ in next and take effect

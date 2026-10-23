@@ -1208,6 +1208,13 @@ async function usageView() {
       el("table", {},
         el("thead", {}, el("tr", {}, ["Bucket", "Objects", "Size", "Limit", "Expires after", "Access", "Measured"].map((h) => el("th", {}, h)))),
         el("tbody", {}, usage.buckets.map((b) => row(b, b.name)), usage.total ? row(usage.total, "All buckets") : null)));
+    const d = usage.disk;
+    if (d) {
+      const low = d.min_free > 0 && d.free < d.min_free;
+      view.append(el("p", { class: low ? "error" : "muted" },
+        `Disk: ${formatBytes(d.free)} free of ${formatBytes(d.size)}` +
+        (d.min_free ? ` · writes are refused below ${formatBytes(d.min_free)} free` : "")));
+    }
   } catch (err) {
     report(err);
   }

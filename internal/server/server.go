@@ -74,6 +74,10 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		// A refusing limit checks writes against this, so it must be real before the first one.
 		store.MeasureUsage(ctx)
 	}
+	store.SetMinFree(cfg.MinFreeSpace)
+	if _, _, err := store.DiskSpace(); err != nil && cfg.MinFreeSpace > 0 {
+		logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
+	}
 	if store.CaseInsensitive() {
 		logger.Warn("the root filesystem is case-insensitive: keys differing only in case refer to the same file", "root", store.Root())
 	}

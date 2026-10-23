@@ -137,6 +137,10 @@
           "type": "string",
           "pattern": "^[0-9]{0,18}$"
         },
+        "minFreeSpace": {
+          "type": "string",
+          "pattern": "^[0-9]{0,18}$"
+        },
         "uploadExpiry": {
           "type": "string",
           "pattern": "^$|^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",

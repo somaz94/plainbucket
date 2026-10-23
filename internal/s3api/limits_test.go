@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -51,6 +53,9 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 	if strings.Contains(body, "plainbucket_bucket_bytes") || !strings.Contains(body, "plainbucket_evicted_objects_total 0") {
 		t.Errorf("limit metrics without limits:\n%s", body)
+	}
+	if !strings.Contains(body, "plainbucket_filesystem_size_bytes ") || !strings.Contains(body, "plainbucket_min_free_bytes 0") {
+		t.Errorf("filesystem gauges:\n%s", body)
 	}
 	x.h.store.SetLimits(map[string]storage.Limit{"bkt": {MaxSize: 100}})
 	x.h.store.MeasureUsage(context.Background())
@@ -145,4 +150,28 @@ func TestSlowUploadIsCut(t *testing.T) {
 		t.Fatalf("steady upload: %v %v", resp, err)
 	}
 	_ = resp.Body.Close()
+}
+
+func TestMinFreeSpace(t *testing.T) {
+	x := newHarness(t, nil)
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/k", []byte("hello"), nil, http.StatusOK)
+	// More than any test machine has free.
+	x.h.store.SetMinFree(1 << 62)
+	rec := x.do(http.MethodPut, "/bkt/k2", []byte("hello"), nil)
+	if rec.Code != http.StatusInsufficientStorage || errCode(rec) != "InsufficientStorage" {
+		t.Errorf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(x.logs.String(), "level=WARN msg=\"write refused: not enough disk space\"") {
+		t.Errorf("507 not logged:\n%s", x.logs.String())
+	}
+	x.mustDo(http.MethodGet, "/bkt/k", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodDelete, "/bkt/k", nil, nil, http.StatusNoContent)
+
+	// A full disk the check did not foresee answers the same.
+	for _, errno := range []syscall.Errno{syscall.ENOSPC, syscall.EDQUOT} {
+		if e := toS3(&os.PathError{Op: "write", Path: "x", Err: errno}); e == nil || e.Code != "InsufficientStorage" {
+			t.Errorf("%v: %+v", errno, e)
+		}
+	}
 }

@@ -19,6 +19,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_DOMAINS` | `domains` | | Comma-separated domains for virtual-hosted-style requests; see [Virtual-Hosted Addressing](#virtual-hosted-addressing) |
 | `PLAINBUCKET_REGION` | `region` | `us-east-1` | Region reported by `GetBucketLocation` and `HeadBucket` |
 | `PLAINBUCKET_MAX_OBJECT_SIZE` | `max-object-size` | `0` | Largest object or part in bytes; `0` means no limit |
+| `PLAINBUCKET_MIN_FREE_SPACE` | `min-free-space` | `0` | Free bytes every write must leave on the root's filesystem; `0` turns the check off. See [Free Space](#free-space) |
 | `PLAINBUCKET_UPLOAD_EXPIRY` | `upload-expiry` | `168h` | Age after which an unfinished multipart upload is removed |
 | `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut an upload that delivers less than 32 KiB in this long; `0` disables it |
 | `PLAINBUCKET_METRICS` | `metrics` | `false` | Serve Prometheus metrics at `GET /metrics` |
@@ -51,7 +52,7 @@ log-format: json
 
 A running server re-reads its configuration on `SIGHUP` (`docker kill --signal=HUP`, `systemctl reload` with `ExecReload=kill -HUP $MAINPID`), and on its own when the config file, the credentials file or the TLS certificate or key changes; it checks them every 30 seconds.
 
-- Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, and the certificate files. A request already authenticated finishes with the key it was signed with.
+- Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, `min-free-space`, and the certificate files. A request already authenticated finishes with the key it was signed with.
 - Every other setting changes only on restart; the server logs which ones differ. Environment variables are read again too, but a process's environment does not change after it starts, so values set there need a restart.
 - A file that fails to load or validate leaves the running configuration as it was, and the error is logged.
 
@@ -151,6 +152,14 @@ The server bounds how long it waits for request headers, but an object body can 
 
 <br/>
 
+## Free Space
+
+With `PLAINBUCKET_MIN_FREE_SPACE` set, a write that would leave less than that many bytes free on the filesystem holding the root is refused with `507 InsufficientStorage` before its body is stored. Every write counts: objects, parts, copies and POST uploads, and completing a multipart upload, which writes the object's size once more while it joins the parts. Writes in progress hold their size against each other, so parallel uploads cannot pass the minimum together. A body sent without a length is cut off with the same error once it would. Reads and deletes go on, so a full server can still be emptied.
+
+A filesystem that fills up anyway (another writer, a quota, or no minimum set) gives the same `507` instead of an internal error. Every `507` is logged as a warning. On platforms where free space cannot be read, the minimum is not enforced and the server logs a warning at startup.
+
+<br/>
+
 ## Metrics
 
 With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format without authentication:
@@ -158,6 +167,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - `plainbucket_requests_total{operation,method,status}` and the `plainbucket_request_duration_seconds{operation}` histogram. `operation` is the S3 operation name (`PutObject`, `UploadPart`, `ListObjectsV2`, ...), decided from the request alone, so refused requests count under the operation they asked for; `Console` covers the web console, `Preflight` CORS preflights, `NotImplemented` unsupported operations and `Unknown` anything else.
 - `plainbucket_received_bytes_total` (stored by successful uploads) and `plainbucket_sent_bytes_total`.
 - `plainbucket_objects`, `plainbucket_stored_bytes` and `plainbucket_usage_scan_timestamp_seconds`, measured at startup and then hourly by walking the buckets, so they lag recent uploads.
+- `plainbucket_filesystem_free_bytes` and `plainbucket_filesystem_size_bytes` for the filesystem holding the root, read at each scrape, and `plainbucket_min_free_bytes`, the configured minimum.
 - For buckets with `expire-after` or `max-size`: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.
 
 A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, and only unsigned `GET` requests are answered by these endpoints.
@@ -174,7 +184,7 @@ With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse bucke
 - After 30 minutes without input the page signs out and forgets the key, unless an upload is still running.
 - Renaming or moving copies each object with `If-None-Match: *`, so nothing at the new name is overwritten, and deletes the originals only after every copy succeeded. It is not atomic: another client can see both names while a folder moves. Editing metadata copies the object onto itself, refused if it changed since the dialog opened.
 - The console works over plain HTTP too: it does not rely on the browser's Web Crypto API, which only secure contexts offer. Over plain HTTP, though, anyone on the network path can read the secret key as it is typed or replace the page's script, so serve the console over TLS anywhere but a trusted network.
-- The pages are served without authentication; they hold no data. Usage comes from `GET /_console/api/usage`, which needs a signed request and lists only the buckets the key may access, with the total across buckets only for a key without a bucket scope. Writes and deletes through the server update it at once; files changed outside the server count from the next hourly measurement.
+- The pages are served without authentication; they hold no data. Usage comes from `GET /_console/api/usage`, which needs a signed request and lists only the buckets the key may access, with the total across buckets and the disk's free space only for a key without a bucket scope. Writes and deletes through the server update it at once; files changed outside the server count from the next hourly measurement.
 - The console answers only on path-style hosts. On a virtual host, `/_console/` is an object key of that bucket.
 - Every object the console's host serves (public and website buckets, presigned and shared links, signed reads) would otherwise share the console's origin, so a stored page could script a console window in the same browser. With the console on, those responses carry `Content-Security-Policy: sandbox allow-scripts allow-popups allow-forms`: the page still renders and runs its scripts, but in an opaque origin, so it cannot reach the console, its own server through `fetch`, cookies or local storage. Serve a website bucket that needs any of those through [virtual-hosted addressing](#virtual-hosted-addressing), which gives it its own origin and no sandbox.
 

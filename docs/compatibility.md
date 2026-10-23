@@ -78,4 +78,5 @@ Storage classes are not modeled; every object reports `STANDARD`.
 | Code | Status | Cause |
 |---|---|---|
 | `KeyConflict` | 409 | The key needs a path whose parent is an existing object, or names an existing directory. See [layout.md](layout.md). |
+| `InsufficientStorage` | 507 | The disk holding the root is full, or the write would leave less free space than `min-free-space`. See [configuration.md](configuration.md#free-space). |
 | `InvalidArgument` | 400 | The key cannot be a relative file path, or a key ending in `/` has a body. |

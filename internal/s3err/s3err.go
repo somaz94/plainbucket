@@ -152,6 +152,12 @@ func QuotaExceeded() *Error {
 	return newErr(http.StatusForbidden, "QuotaExceeded", "The bucket has reached its configured size limit.")
 }
 
+// InsufficientStorage is plainbucket's own: the disk holding the root is full, or would
+// be left with less free space than min-free-space.
+func InsufficientStorage() *Error {
+	return newErr(http.StatusInsufficientStorage, "InsufficientStorage", "There is not enough free disk space to store the data.")
+}
+
 func NotImplemented() *Error {
 	return newErr(http.StatusNotImplemented, "NotImplemented", "A header or query you provided implies functionality that is not implemented.")
 }

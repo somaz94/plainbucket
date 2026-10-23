@@ -102,6 +102,10 @@ spec:
             - name: PLAINBUCKET_MAX_OBJECT_SIZE
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.config.minFreeSpace }}
+            - name: PLAINBUCKET_MIN_FREE_SPACE
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.config.uploadExpiry }}
             - name: PLAINBUCKET_UPLOAD_EXPIRY
               value: {{ . | quote }}

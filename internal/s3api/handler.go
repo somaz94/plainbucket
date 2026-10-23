@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/console"
@@ -348,10 +349,13 @@ var storageErrors = map[error]func() *s3err.Error{
 	storage.ErrBadDigest: func() *s3err.Error {
 		return s3err.BadDigest("The checksum you specified did not match the calculated checksum.")
 	},
-	storage.ErrInvalidPartOrder: s3err.InvalidPartOrder,
-	storage.ErrEntityTooSmall:   s3err.EntityTooSmall,
-	storage.ErrEntityTooLarge:   s3err.EntityTooLarge,
-	storage.ErrQuotaExceeded:    s3err.QuotaExceeded,
+	storage.ErrInvalidPartOrder:    s3err.InvalidPartOrder,
+	storage.ErrEntityTooSmall:      s3err.EntityTooSmall,
+	storage.ErrEntityTooLarge:      s3err.EntityTooLarge,
+	storage.ErrQuotaExceeded:       s3err.QuotaExceeded,
+	storage.ErrInsufficientStorage: s3err.InsufficientStorage,
+	syscall.ENOSPC:                 s3err.InsufficientStorage,
+	syscall.EDQUOT:                 s3err.InsufficientStorage,
 	storage.ErrMarkerNotEmpty: func() *s3err.Error {
 		return s3err.InvalidArgument("An object key ending in / is a directory and must have an empty body.")
 	},
@@ -390,6 +394,8 @@ func (h *Handler) fail(req *request, err error) {
 	} else if e.Status == http.StatusForbidden {
 		// Debug, not warn: unsigned probes would flood the log.
 		h.log.Debug("request denied", "method", req.r.Method, "path", req.r.URL.Path, "code", e.Code, "reason", e.Message)
+	} else if e.Status == http.StatusInsufficientStorage {
+		h.log.Warn("write refused: not enough disk space", "method", req.r.Method, "path", req.r.URL.Path, "request_id", req.id, "err", err)
 	}
 	e.Write(req.w, req.r, req.id)
 }
