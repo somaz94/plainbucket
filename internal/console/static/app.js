@@ -1,7 +1,9 @@
 // The plainbucket console. Every action is an S3 request signed in the page with the key
-// typed at login; the key stays in memory only, so a reload signs out.
+// typed at login, except upload-link pages, which send the POST policy the link carries;
+// the key stays in memory only, so a reload signs out.
 import { canonicalKey, displayKey, encodeKey, escapeXML, keyBytes, keyText, xmlKey } from "./keys.js";
 import { encodePath, presign, queryString, signHeaders } from "./sigv4.js";
+import { makeLink, maxLinkBytes, parseLink } from "./uploadlink.js";
 import { ZipBuilder, crc32, entryName } from "./zip.js";
 
 const host = location.host;
@@ -11,7 +13,7 @@ const maxParts = 10000;
 const partConcurrency = 3;
 const partAttempts = 3;
 const shareUnits = [["minutes", 60], ["hours", 3600], ["days", 86400]];
-// SigV4 caps a presigned URL at seven days.
+// SigV4 caps a presigned URL at seven days; upload links keep the same bound by choice.
 const maxShareSeconds = 7 * 86400;
 
 let cred = null;
@@ -257,6 +259,116 @@ async function listAll(bucket, prefix) {
   return (await listObjects(bucket, prefix)).map((o) => o.key);
 }
 
+// ---- Upload links
+
+// The uploads running on an upload-link page; like uploads they hold off sign-out and
+// closing the page.
+const linkUploads = new Set();
+
+// uploadLinkDialog makes a keyless upload link into a new folder under prefix, shared by
+// everyone holding the link. The signed POST policy travels in the URL fragment, which
+// browsers never send to the server.
+async function uploadLinkDialog(bucket, prefix) {
+  const base = keyText(prefix);
+  if (base === null || base.includes("${filename}")) {
+    dialog("Upload link", el("p", { class: "error" }, "This folder's name cannot take an upload link: it is not UTF-8 or holds ${filename}."));
+    return;
+  }
+  // Uploads to a bucket anyone may read download when served, so they never run as pages.
+  const info = (await consoleUsage().catch(() => ({ buckets: [] }))).buckets.find((b) => b.name === bucket);
+  const attachment = Boolean(info?.public || info?.website);
+  const rand = crypto.getRandomValues(new Uint8Array(4)).reduce((a, b) => a + b.toString(36).padStart(2, "0"), "");
+  const folder = base + new Date().toISOString().slice(0, 10) + "-" + rand + "/";
+  const amount = el("input", { type: "number", min: 1, value: 1, class: "short" });
+  const unit = el("select", {}, shareUnits.map(([label, sec]) => el("option", { value: sec, selected: sec === 86400 }, label)));
+  const size = el("input", { type: "number", min: 1, value: 1024, class: "short" });
+  const out = el("div");
+  const draw = () => {
+    const seconds = Math.round(Number(amount.value) * Number(unit.value));
+    const max = Math.round(Number(size.value) * 1024 * 1024);
+    if (!(seconds >= 1 && seconds <= maxShareSeconds) || !(max >= 1 && max <= maxLinkBytes)) {
+      out.replaceChildren(el("p", { class: "error" }, "A link lasts at most seven days and takes files of at most 5 GiB."));
+      return;
+    }
+    const url = location.origin + location.pathname + makeLink(cred, { bucket, folder, max, seconds, attachment });
+    out.replaceChildren(
+      el("p", { class: "muted" }, `Files go to ${displayKey(encodeKey(folder))} until ${new Date(Date.now() + seconds * 1000).toLocaleString()}.`),
+      el("div", { class: "field" }, "Link", copyField(url)));
+  };
+  for (const input of [amount, unit, size]) input.addEventListener("input", draw);
+  draw();
+  dialog("Upload link for " + (displayKey(prefix) || bucket),
+    el("p", { class: "muted" }, "Anyone with this link can upload files into a new folder until it expires, without a key, as many " +
+      "as the bucket's limits allow; files with the same name in that folder replace each other. It stops working when this " +
+      "key is removed, loses access to the bucket or becomes read-only."),
+    attachment ? el("p", { class: "muted" }, "This bucket is public, so the files will download rather than open when served.") : null,
+    el("div", { class: "row" }, "Expires in", amount, unit),
+    el("div", { class: "row" }, "Largest file", size, "MiB"), out);
+}
+
+// uploadLinkView is the page an upload link opens: no sign-in, and nothing but uploads
+// into the link's folder. What it shows comes from the signed policy.
+function uploadLinkView(hash) {
+  const link = parseLink(hash);
+  const view = el("section", { class: "drop" }, el("h1", {}, "Upload files"));
+  if (!link) {
+    view.append(el("p", { class: "error" }, "This upload link is damaged."));
+    return view;
+  }
+  view.append(el("p", {}, "To ", el("strong", {}, link.bucket + "/" + displayKey(encodeKey(link.folder))),
+    `, files of up to ${formatBytes(link.max)}, until ${link.expires.toLocaleString()}.`));
+  if (Date.now() > link.expires.getTime()) {
+    view.append(el("p", { class: "error" }, "This upload link has expired."));
+    return view;
+  }
+  const list = el("div", { class: "uploads" });
+  const send = (path, file) => {
+    const bar = el("progress", { max: file.size || 1, value: 0 });
+    const state = el("span", { class: "muted" }, "waiting");
+    list.append(el("div", { class: "row" }, el("span", {}, path), bar, state));
+    if (file.size > link.max) {
+      state.textContent = `larger than the ${formatBytes(link.max)} this link takes`;
+      return;
+    }
+    const form = new FormData();
+    form.append("key", link.folder + path);
+    form.append("Content-Type", file.type || "application/octet-stream");
+    if (link.attachment) form.append("Content-Disposition", "attachment");
+    for (const [k, v] of Object.entries(link.fields)) form.append(k, v);
+    form.append("file", file);
+    const xhr = new XMLHttpRequest();
+    linkUploads.add(xhr);
+    xhr.upload.addEventListener("progress", (e) => { bar.value = e.loaded; });
+    xhr.addEventListener("loadend", () => linkUploads.delete(xhr));
+    xhr.addEventListener("load", async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        bar.value = bar.max;
+        state.textContent = "uploaded";
+      } else {
+        state.textContent = describe(await s3Error(xhr.status, xhr.responseText));
+      }
+    });
+    xhr.addEventListener("error", () => { state.textContent = "the upload failed"; });
+    xhr.open("POST", "/" + encodeURIComponent(link.bucket));
+    xhr.send(form);
+  };
+  const files = el("input", { type: "file", multiple: true });
+  files.addEventListener("change", () => [...files.files].forEach((f) => send(f.name, f)));
+  view.append(files, list,
+    el("p", { class: "muted" }, "Drop files or folders here, or choose files above. Files with the same name replace each other."));
+  view.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    view.classList.add("over");
+  });
+  view.addEventListener("dragleave", () => view.classList.remove("over"));
+  view.addEventListener("drop", (e) => {
+    e.preventDefault();
+    view.classList.remove("over");
+    droppedFiles(e.dataTransfer).then((pairs) => pairs.forEach(([path, f]) => send(path, f)));
+  });
+  return view;
+}
+
 // ---- Uploads
 
 // put sends body with XMLHttpRequest, the only browser API that reports upload progress.
@@ -353,7 +465,7 @@ function untrack(t) {
 const liveUploads = new Set();
 
 window.addEventListener("beforeunload", (e) => {
-  if (!uploads.size) return;
+  if (!uploads.size && !linkUploads.size) return;
   e.preventDefault();
   e.returnValue = "";
 });
@@ -907,7 +1019,7 @@ for (const type of ["pointerdown", "keydown", "wheel"]) {
 }
 // The secret key should not outlive the person at the keyboard; a running upload defers it.
 setInterval(() => {
-  if (!cred || uploads.size || downloads.size || Date.now() - lastActive < idleLimit) return;
+  if (!cred || uploads.size || downloads.size || linkUploads.size || Date.now() - lastActive < idleLimit) return;
   signOut();
   notify("Signed out after 30 minutes without activity.", "status");
 }, 30 * 1000);
@@ -1232,6 +1344,7 @@ async function browserView(bucket, prefix) {
     button("Search", () => searchDialog(bucket, prefix, report)),
     button("Incomplete uploads", () => uploadsDialog(bucket, prefix)),
     zipButton,
+    writable ? button("Upload link", () => uploadLinkDialog(bucket, prefix)) : null,
     el("span", { class: "spacer" }), writable ? deleteSelected : null);
 
   const table = el("table", {},
@@ -1540,6 +1653,13 @@ document.addEventListener("keydown", (e) => {
 async function render() {
   const mine = ++generation;
   banner = null;
+  if (location.hash.startsWith("#/u/")) {
+    shortcuts = {};
+    app.replaceChildren(el("div", { class: "topbar" }, themeButton()), uploadLinkView(location.hash));
+    return;
+  }
+  // Leaving an upload-link page stops its uploads, which would otherwise run on unseen.
+  for (const xhr of linkUploads) xhr.abort();
   if (!cred) {
     shortcuts = {};
     app.replaceChildren(el("div", { class: "topbar" }, themeButton()), loginView());

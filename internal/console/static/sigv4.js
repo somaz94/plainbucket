@@ -163,3 +163,28 @@ export function encodePath(bucket, key = "") {
   if (key.length) p += "/" + uriEncode(key, false);
   return p;
 }
+
+export function base64(bytesIn) {
+  let s = "";
+  for (let i = 0; i < bytesIn.length; i += 0x8000) s += String.fromCharCode(...bytesIn.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+// postFields returns the signed fields of a browser POST upload: a policy that expires in
+// expires seconds with the given conditions, which must cover every other field sent.
+export function postFields(cred, { conditions, expires, date = new Date() }) {
+  const stamp = amzDate(date);
+  const credential = `${cred.accessKey}/${stamp.slice(0, 8)}/${cred.region}/s3/aws4_request`;
+  const policy = base64(encoder.encode(JSON.stringify({
+    expiration: new Date(date.getTime() + expires * 1000).toISOString(),
+    conditions: [...conditions,
+      { "x-amz-algorithm": "AWS4-HMAC-SHA256" }, { "x-amz-credential": credential }, { "x-amz-date": stamp }],
+  })));
+  return {
+    "x-amz-algorithm": "AWS4-HMAC-SHA256",
+    "x-amz-credential": credential,
+    "x-amz-date": stamp,
+    policy,
+    "x-amz-signature": hex(hmacSHA256(signingKey(cred.secretKey, stamp.slice(0, 8), cred.region), policy)),
+  };
+}

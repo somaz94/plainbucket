@@ -1,7 +1,7 @@
-// Drives the console's signer, key handling and ZIP writer
-// (internal/console/static/{sigv4,keys,zip}.js) against a running server: header-signed and
-// presigned requests, multipart, keys XML cannot carry, folder archives, the usage API and
-// key scopes.
+// Drives the console's signer, key handling, ZIP writer and upload links
+// (internal/console/static/{sigv4,keys,zip,uploadlink}.js) against a running server:
+// header-signed and presigned requests, multipart, keys XML cannot carry, folder archives,
+// upload links, the usage API and key scopes.
 // Run by hack/test-console.sh, which starts the server and sets the environment.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as keys from "../internal/console/static/keys.js";
 import * as sigv4 from "../internal/console/static/sigv4.js";
+import * as links from "../internal/console/static/uploadlink.js";
 import { ZipBuilder, crc32, entryName } from "../internal/console/static/zip.js";
 
 const endpoint = new URL(process.env.ENDPOINT);
@@ -207,6 +208,49 @@ ok("backslashes and colons leave ZIP entry names");
 const zipDel = "<Delete>" + Object.keys(zipped).map((k) => `<Object><Key>${k}</Key></Object>`).join("") + "</Delete>";
 await expectStatus("delete zipped objects", await s3(admin, "POST", "console-zip", "", { params: [["delete", ""]], body: zipDel }), 200);
 await expectStatus("delete zip bucket", await s3(admin, "DELETE", "console-zip"), 204);
+
+// Upload links (uploadlink.js): made and parsed as the console does, then used without a key.
+await expectStatus("create link bucket", await s3(admin, "PUT", "console-link"), 200);
+const linkFolder = "incoming/ünï 2026-10-26-test/";
+const hash = links.makeLink(admin, { bucket: "console-link", folder: linkFolder, max: 1024, seconds: 3600 });
+const link = links.parseLink(hash);
+if (!link || link.bucket !== "console-link" || link.folder !== linkFolder || link.max !== 1024 || link.attachment ||
+    Math.abs(link.expires - Date.now() - 3600e3) > 60e3) fail("parse link", JSON.stringify(link));
+ok("link round-trips through its fragment");
+// A hand-edited fragment cannot claim what its policy does not say, nor carry other fields.
+const tampered = JSON.parse(Buffer.from(hash.slice(4), "base64url").toString());
+tampered.file = "smuggled";
+if (links.parseLink("#/u/" + Buffer.from(JSON.stringify(tampered)).toString("base64url")).fields.file !== undefined) fail("link fields", "extra field kept");
+for (const bad of ["#/u/", "#/u/not-base64!", "#/u/" + Buffer.from("{}").toString("base64url"), "#/b/x/"]) {
+  if (links.parseLink(bad) !== null) fail("damaged link", bad);
+}
+ok("damaged and edited links");
+async function linkUpload(l, key, data, extra = {}) {
+  const form = new FormData();
+  form.append("key", key);
+  form.append("Content-Type", "text/plain");
+  for (const [k, v] of Object.entries(extra)) form.append(k, v);
+  for (const [k, v] of Object.entries(l.fields)) form.append(k, v);
+  form.append("file", new Blob([data]), "f.txt");
+  return fetch(endpoint.origin + "/" + l.bucket, { method: "POST", body: form });
+}
+await expectStatus("upload through a link", await linkUpload(link, linkFolder + "a.txt", "from a link"), 204);
+const linked = await (await expectStatus("linked object", await s3(admin, "GET", "console-link", linkFolder + "a.txt"), 200)).text();
+if (linked !== "from a link") fail("linked object", linked);
+await expectStatus("link refuses a key outside its folder", await linkUpload(link, "elsewhere.txt", "x"), 403);
+await expectStatus("link refuses a file over its size", await linkUpload(link, linkFolder + "big.txt", "x".repeat(2000)), 400);
+const old = links.parseLink(links.makeLink(admin, { bucket: "console-link", folder: linkFolder, max: 1024, seconds: 60, date: new Date(Date.now() - 3600e3) }));
+await expectStatus("an expired link is refused", await linkUpload(old, linkFolder + "late.txt", "x"), 403);
+// For a bucket anyone may read, uploads must be marked to download.
+const att = links.parseLink(links.makeLink(admin, { bucket: "console-link", folder: linkFolder, max: 1024, seconds: 3600, attachment: true }));
+if (!att.attachment) fail("attachment link", JSON.stringify(att));
+await expectStatus("attachment link needs the disposition", await linkUpload(att, linkFolder + "page.html", "<p>"), 403);
+await expectStatus("attachment link upload", await linkUpload(att, linkFolder + "page.html", "<p>", { "Content-Disposition": "attachment" }), 204);
+const page = await expectStatus("attachment object", await s3(admin, "HEAD", "console-link", linkFolder + "page.html"), 200);
+if (page.headers.get("content-disposition") !== "attachment") fail("attachment object", page.headers.get("content-disposition"));
+const linkDel = "<Delete>" + ["a.txt", "page.html"].map((n) => `<Object><Key>${keys.escapeXML(linkFolder + n)}</Key></Object>`).join("") + "</Delete>";
+await expectStatus("delete linked objects", await s3(admin, "POST", "console-link", "", { params: [["delete", ""]], body: linkDel }), 200);
+await expectStatus("delete link bucket", await s3(admin, "DELETE", "console-link"), 204);
 
 // The trash API, signed with the query the console sends.
 const trashPath = "/_console/api/trash";
