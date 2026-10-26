@@ -123,6 +123,7 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 	}
 	r.store.SetLimits(limits)
 	r.store.SetMinFree(next.MinFreeSpace)
+	r.store.SetTrash(bucketTrash(next))
 	if _, _, err := r.store.DiskSpace(); err != nil && next.MinFreeSpace > 0 {
 		r.logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
 	}

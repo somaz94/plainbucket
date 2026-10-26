@@ -44,6 +44,7 @@ Object details:
 
 - `GetObject` supports `Range`, `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since` and the `response-*` overrides presigned URLs use.
 - `GetObject` and `HeadObject` with `partNumber` serve that part of a multipart object as `206` with `x-amz-mp-parts-count`; an object written in one piece is part 1. A part beyond the last is `416 InvalidPartNumber`, as on S3.
+- In a bucket with [`trash-after`](configuration.md#trash), `DeleteObject` and `DeleteObjects` move objects to a trash the web console restores from, instead of removing them.
 - `DeleteObject` accepts `If-Match` (an ETag or `*`), `x-amz-if-match-size` and `x-amz-if-match-last-modified-time`, and `DeleteObjects` the same as each object's `ETag`, `Size` and `LastModifiedTime`; S3 itself checks the last two only in directory buckets. An object that fails one is kept with `412 PreconditionFailed`. A missing object counts as deleted whatever the conditions, as on S3.
 - Writes accept `If-None-Match: *` (create only if absent, as the Terraform S3 backend lock uses), `If-None-Match: <etag>` and `If-Match: <etag>`. `CopyObject` and `UploadPartCopy` also accept `x-amz-copy-source-if-match` and `-if-none-match`.
 - Stored with the object and returned on read: `Content-Type`, `x-amz-meta-*`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`. Header values are kept as the bytes received: non-ASCII metadata sent as UTF-8 comes back as UTF-8, which clients that read headers as Latin-1 (Python's) decode differently.

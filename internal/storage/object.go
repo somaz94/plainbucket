@@ -320,6 +320,9 @@ func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) error 
 		_ = os.Remove(s.metaPath(bucket, key))
 		return nil
 	}
+	if after := s.TrashAfter(bucket); after > 0 && fi.Mode().IsRegular() {
+		return s.trashFile(bucket, key, p, fi, after)
+	}
 	return s.removeFile(bucket, key, p, fi)
 }
 

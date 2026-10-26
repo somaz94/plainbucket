@@ -144,6 +144,9 @@ type Store struct {
 	expired     atomic.Int64
 	evicted     atomic.Int64
 
+	trashAfter atomic.Pointer[map[string]time.Duration] // swapped whole by SetTrash
+	trashMu    sync.Mutex                               // serializes restores, purges and the sweep's expiry
+
 	minFree atomic.Int64 // bytes a write must leave free
 	pending atomic.Int64 // bytes reserved by writes in progress
 	statfs  func(path string) (free, size int64, err error)
@@ -161,7 +164,7 @@ func New(root string) (*Store, error) {
 	}
 	s := &Store{root: abs, now: time.Now, MinPartSize: 5 << 20, buckets: map[string]*sync.RWMutex{},
 		bucketUsage: map[string]Usage{}, kick: make(chan struct{}, 1), statfs: diskSpace}
-	for _, d := range []string{"meta", "tmp", "uploads", "buckets"} {
+	for _, d := range []string{"meta", "tmp", "uploads", "buckets", "trash"} {
 		if err := os.MkdirAll(s.sys(d), sysDirPerm); err != nil {
 			return nil, err
 		}

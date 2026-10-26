@@ -17,7 +17,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - `internal/storage/` - the filesystem store: key mapping, sidecar metadata, atomic commit, S3-order listing walker, multipart, janitor. Knows nothing about HTTP.
 - `internal/s3api/` - HTTP router and handlers, access keys with bucket scopes and read-only, public-bucket anonymous reads, virtual-hosted routing, XML documents, payload verification and upload progress deadline, storage error to S3 error mapping, Prometheus metrics.
 - `internal/s3err/` - S3 error type and XML rendering.
-- `internal/console/` - the embedded web console (`static/`: vanilla JS, its own SigV4 signer in `sigv4.js`); `s3api` routes `/_console/` to it and serves the signed usage API.
+- `internal/console/` - the embedded web console (`static/`: vanilla JS, its own SigV4 signer in `sigv4.js`); `s3api` routes `/_console/` to it and serves the signed usage and trash APIs.
 - `internal/server/` - listener lifecycle, the hourly janitor, and configuration reloads on `SIGHUP` or a changed config, credentials or certificate file.
 - `compat/` - separate Go module running the AWS SDK for Go v2 against the handler.
 - `helm/plainbucket/` - Helm chart; `hack/test-helm.sh` lints it, renders it and checks the fail guards and schema. Published by `.github/workflows/helm-release.yml` on tags.
@@ -37,11 +37,12 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - Path-style always works; virtual-hosted style only for `PLAINBUCKET_DOMAINS`. The request URL is never rewritten, because SigV4 signs the path as sent.
 - Anonymous requests may only `GET` / `HEAD` objects of public buckets (website buckets add index and error documents), plus CORS preflights on buckets with a `cors` rule; listing, multipart state, tags and writes always need a key. Bucket policy, ACL, website and CORS APIs stay `501`: behavior is configured in the `buckets` map, not set through the API.
 - New operations return `501` until implemented, never a silent success.
-- The console is static files that sign S3 requests in the browser; it gets no server-side session or write path of its own. Its pages load nothing from other origins and use no `innerHTML`, inline script or inline style, because the CSP forbids them. Only the usage API is console-specific, and it needs a signed request. With the console on, every other path-style response carries the `console.ObjectSandbox` CSP, so a stored page never runs in the console's origin.
+- The console is static files that sign S3 requests in the browser; it gets no server-side session. Its pages load nothing from other origins and use no `innerHTML`, inline script or inline style, because the CSP forbids them. Only the usage and trash APIs are console-specific, both need a signed request, and restoring or purging trash are the console's only writes that do not go through the S3 API (decided 2026-10-23: S3 has no operation for them). With the console on, every other path-style response carries the `console.ObjectSandbox` CSP, so a stored page never runs in the console's origin.
 - The Helm chart runs exactly one pod with `Recreate`: locks are in-process. Keep `values.schema.json` closed and in step with `values.yaml` and every `.Values` path the templates read; credentials only ever reach the pod through Secrets.
 - What a reload replaces is swapped whole through atomic pointers (`Handler.SetAccess`, `Store.SetLimits`, the TLS certificate); never modify those maps in place.
 - One process per root: the server and fsck take `storage.Lock` (flock on `.plainbucket/lock`), because object locks live in the process.
 - Expiry and eviction go through `removeIfUnused`, which re-checks size, mtime and last use under the key lock, so a scan never deletes an object rewritten or read after it. Last use is the later of the data file's mtime (write) and the sidecar's (read); reads move only the sidecar's, never the data file's.
+- A delete in a bucket with `trash-after` moves the file into `.plainbucket/trash` (`trashFile`); expiry and eviction never do. A restore goes through `account` and never replaces an object.
 - Bucket usage changes go through `account` (writes, may refuse) or `adjust` (deletes and rollbacks, never refuse); both record into `measuring` while `MeasureUsage` walks, so its swap does not drop them.
 - `hack/bump-version.sh` moves the Makefile image tag, Chart `version` / `appVersion` and `values.yaml` `image.tag` together.
 

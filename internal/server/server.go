@@ -75,6 +75,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		store.MeasureUsage(ctx)
 	}
 	store.SetMinFree(cfg.MinFreeSpace)
+	store.SetTrash(bucketTrash(cfg))
 	if _, _, err := store.DiskSpace(); err != nil && cfg.MinFreeSpace > 0 {
 		logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
 	}
@@ -179,6 +180,16 @@ func bucketPolicies(cfg *config.Config) map[string]s3api.BucketPolicy {
 				AllowedHeaders: c.AllowedHeaders, ExposeHeaders: c.ExposeHeaders, MaxAge: c.MaxAge}
 		}
 		out[name] = p
+	}
+	return out
+}
+
+func bucketTrash(cfg *config.Config) map[string]time.Duration {
+	out := map[string]time.Duration{}
+	for name, b := range cfg.Buckets {
+		if b.TrashAfter > 0 {
+			out[name] = b.TrashAfter
+		}
 	}
 	return out
 }

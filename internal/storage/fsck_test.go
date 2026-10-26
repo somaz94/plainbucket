@@ -39,6 +39,12 @@ func TestFsck(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(s.root, "bkt", "dropped-in"), []byte("new"), 0o644)
 	put(t, s, "deleted", "x")
 	_ = os.Remove(filepath.Join(s.root, "bkt", "deleted"))
+	s.SetTrash(map[string]time.Duration{"bkt": time.Hour})
+	put(t, s, "trashed", "x")
+	if err := s.DeleteObject("bkt", "trashed"); err != nil {
+		t.Fatal(err)
+	}
+	c.t = c.t.Add(2 * time.Hour)
 	stale := s.sys("tmp", "upload-old")
 	_ = os.WriteFile(stale, nil, 0o600)
 	_ = os.Chtimes(stale, c.t.Add(-48*time.Hour), c.t.Add(-48*time.Hour))
@@ -59,7 +65,8 @@ func TestFsck(t *testing.T) {
 		return got
 	}
 	got := run(false)
-	if len(got[ProblemMetadata]) != 2 || len(got[LeftoverMetadata]) != 1 || len(got[LeftoverStaging]) != 1 || len(got[ProblemName]) != wantName {
+	if len(got[ProblemMetadata]) != 2 || len(got[LeftoverMetadata]) != 1 || len(got[LeftoverStaging]) != 1 || len(got[ProblemName]) != wantName ||
+		len(got[LeftoverTrash]) != 1 {
 		t.Errorf("dry run findings = %+v", got)
 	}
 	if _, err := os.Stat(stale); err != nil {

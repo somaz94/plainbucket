@@ -9,9 +9,13 @@ import (
 	"github.com/somaz94/plainbucket/internal/console"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/sigv4"
+	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-const consoleUsagePath = console.Prefix + "api/usage"
+const (
+	consoleUsagePath = console.Prefix + "api/usage"
+	consoleTrashPath = console.Prefix + "api/trash"
+)
 
 var consoleFiles = console.Handler()
 
@@ -20,8 +24,9 @@ func isConsolePath(p string) bool {
 	return p == strings.TrimSuffix(console.Prefix, "/") || strings.HasPrefix(p, console.Prefix)
 }
 
-// serveConsole answers the console's files to anyone and its usage API to signed
-// requests; everything the console does to buckets goes through the S3 API.
+// serveConsole answers the console's files to anyone, and its usage and trash APIs to
+// signed requests. Restoring and purging trash are its only writes outside the S3 API,
+// which has no operation for them.
 func (h *Handler) serveConsole(req *request) error {
 	switch p := req.r.URL.Path; {
 	case p == strings.TrimSuffix(console.Prefix, "/"):
@@ -33,6 +38,8 @@ func (h *Handler) serveConsole(req *request) error {
 		return nil
 	case p == consoleUsagePath:
 		return h.consoleUsage(req)
+	case p == consoleTrashPath:
+		return h.consoleTrash(req)
 	default:
 		consoleFiles.ServeHTTP(req.w, req.r)
 		return nil
@@ -50,6 +57,7 @@ type consoleBucket struct {
 	Public      bool      `json:"public,omitempty"`
 	Website     bool      `json:"website,omitempty"`
 	CORS        bool      `json:"cors,omitempty"`
+	TrashAfter  string    `json:"trash_after,omitempty"`
 }
 
 type consoleUsageResponse struct {
@@ -73,15 +81,9 @@ func (h *Handler) consoleUsage(req *request) error {
 	if req.r.Method != http.MethodGet {
 		return s3err.MethodNotAllowed()
 	}
-	req.q = req.r.URL.Query()
-	if anonymous(req.r, req.q) {
-		return s3err.AccessDenied("The console API needs a signed request.")
+	if err := h.consoleAuth(req); err != nil {
+		return err
 	}
-	auth, e := sigv4.Verify(req.r, h.credentials, h.now())
-	if e != nil {
-		return e
-	}
-	req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
 
 	buckets, err := h.store.ListBuckets()
 	if err != nil {
@@ -102,6 +104,9 @@ func (h *Handler) consoleUsage(req *request) error {
 		if l.ExpireAfter > 0 {
 			item.ExpireAfter = l.ExpireAfter.String()
 		}
+		if t := h.store.TrashAfter(b.Name); t > 0 {
+			item.TrashAfter = t.String()
+		}
 		res.Buckets = append(res.Buckets, item)
 		total.Objects += item.Objects
 		total.Bytes += item.Bytes
@@ -112,7 +117,25 @@ func (h *Handler) consoleUsage(req *request) error {
 			res.Disk = &consoleDisk{Free: free, Size: size, MinFree: h.store.MinFree()}
 		}
 	}
-	body, err := json.Marshal(res)
+	return writeConsoleJSON(req, res)
+}
+
+// consoleAuth verifies a console API request's signature and sets req.q, req.auth and req.cred.
+func (h *Handler) consoleAuth(req *request) error {
+	req.q = req.r.URL.Query()
+	if anonymous(req.r, req.q) {
+		return s3err.AccessDenied("The console API needs a signed request.")
+	}
+	auth, e := sigv4.Verify(req.r, h.credentials, h.now())
+	if e != nil {
+		return e
+	}
+	req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
+	return nil
+}
+
+func writeConsoleJSON(req *request, v any) error {
+	body, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
@@ -122,4 +145,60 @@ func (h *Handler) consoleUsage(req *request) error {
 	hdr.Set("Cache-Control", "no-store")
 	_, _ = req.w.Write(body)
 	return nil
+}
+
+type consoleTrashResponse struct {
+	TrashAfter string `json:"trash_after,omitempty"`
+	// Bytes is the disk space the entries take; they count against no limit.
+	Bytes   int64                `json:"bytes"`
+	Entries []storage.TrashEntry `json:"entries"`
+}
+
+// consoleTrash lists a bucket's trash (GET ?bucket=) or restores or purges one entry
+// (POST ?bucket=&id=&action=restore|purge), within the signing key's limits.
+func (h *Handler) consoleTrash(req *request) error {
+	m := req.r.Method
+	if m != http.MethodGet && m != http.MethodPost {
+		return s3err.MethodNotAllowed()
+	}
+	if err := h.consoleAuth(req); err != nil {
+		return err
+	}
+	req.bucket = req.q.Get("bucket")
+	if err := req.authorize(); err != nil {
+		return err
+	}
+	if err := h.store.HeadBucket(req.bucket); err != nil {
+		return err
+	}
+	if m == http.MethodGet {
+		entries, err := h.store.ListTrash(req.bucket)
+		if err != nil {
+			return err
+		}
+		res := consoleTrashResponse{Entries: entries}
+		for _, e := range entries {
+			res.Bytes += e.Size
+		}
+		if t := h.store.TrashAfter(req.bucket); t > 0 {
+			res.TrashAfter = t.String()
+		}
+		return writeConsoleJSON(req, res)
+	}
+	id := req.q.Get("id")
+	switch req.q.Get("action") {
+	case "restore":
+		info, err := h.store.RestoreTrash(req.bucket, id)
+		if err != nil {
+			return err
+		}
+		return writeConsoleJSON(req, map[string]string{"key": info.Key, "etag": info.ETag})
+	case "purge":
+		if err := h.store.PurgeTrash(req.bucket, id); err != nil {
+			return err
+		}
+		req.w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+	return s3err.InvalidArgument("action must be restore or purge.")
 }

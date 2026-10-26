@@ -43,9 +43,9 @@ func (s *Store) applyLimits(ctx context.Context, log *slog.Logger) {
 	}
 }
 
-// Sweep removes stale staging files, multipart uploads older than uploadExpiry, and
-// metadata whose object or bucket is gone. It returns how many entries it removed and
-// stops early when ctx is cancelled.
+// Sweep removes stale staging files, multipart uploads older than uploadExpiry, expired
+// trash, and metadata whose object or bucket is gone. It returns how many entries it
+// removed and stops early when ctx is cancelled.
 func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
 	return s.sweep(ctx, uploadExpiry, func(_, path string) bool { return os.RemoveAll(path) == nil })
 }
@@ -56,6 +56,7 @@ const (
 	LeftoverUpload   = "expired multipart upload"
 	LeftoverMetadata = "orphaned metadata"
 	LeftoverRecord   = "record of a deleted bucket"
+	LeftoverTrash    = "expired trash"
 )
 
 // sweep finds leftovers and passes each to act, which removes it or only reports it and
@@ -114,6 +115,32 @@ func (s *Store) sweep(ctx context.Context, uploadExpiry time.Duration, act func(
 				continue
 			}
 			removed += s.sweepSidecars(ctx, e.Name(), act)
+		}
+	}
+
+	buckets, _ := os.ReadDir(s.sys("trash"))
+	for _, b := range buckets {
+		ents, _ := os.ReadDir(s.sys("trash", b.Name()))
+		for _, e := range ents {
+			if ctx.Err() != nil {
+				return removed
+			}
+			dir := s.sys("trash", b.Name(), e.Name())
+			man, err := readTrash(dir)
+			switch {
+			case err == nil && !now.Before(man.ExpiresAt):
+				// Read again under the lock: a restore or purge may have taken it meanwhile.
+				s.trashMu.Lock()
+				if man, err := readTrash(dir); err == nil && !now.Before(man.ExpiresAt) {
+					rm(LeftoverTrash, dir)
+				}
+				s.trashMu.Unlock()
+			case err != nil:
+				// No readable manifest: a delete was interrupted before its manifest was written.
+				if fi, err := e.Info(); err == nil && now.Sub(fi.ModTime()) > staleTmpAge {
+					rm(LeftoverTrash, dir)
+				}
+			}
 		}
 	}
 

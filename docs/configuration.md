@@ -105,6 +105,8 @@ buckets:
     expire-after: 336h      # remove objects unused for two weeks
     max-size: 85899345920   # bytes
     evict: true             # over max-size, remove the least recently used
+  docs:
+    trash-after: 168h       # deleted objects stay restorable for a week
 ```
 
 These settings are the only way to change bucket behavior: the bucket policy, ACL, website and CORS APIs are not implemented.
@@ -135,6 +137,13 @@ An object's last use is the later of its last write and its last `GET` or `HEAD`
 - `max-size` caps the bucket's bytes. By default a write that would pass it is refused with `403 QuotaExceeded`. With `evict: true` the write is accepted and the least recently used objects are removed until the bucket fits again; only an object larger than the whole limit is refused.
 
 The background job applies both hourly, and at once when a write takes an evicting bucket over its limit, so expiry is as precise as an hour. The server measures the buckets before it starts serving, then tracks usage as objects are written and deleted and re-measures hourly to include files changed outside the server; a file changed outside the server counts only from the next measurement. An object rewritten or read between the scan and its removal is kept. Incomplete multipart uploads do not count until they are completed, and files whose names cannot be keys are not counted against a limit.
+
+
+### Trash
+
+`trash-after` keeps the objects deleted from the bucket (`DeleteObject`, `DeleteObjects`, and the web console's delete, rename and move) restorable for that long. A deleted object leaves the bucket at once, so listings, reads and the bucket's usage and limits no longer see it, but its file and metadata move to the system directory instead of being removed. The web console lists a bucket's trash and restores or removes each entry; a restore never replaces an object that has since been written at the same key. Once the period ends the hourly background job removes the entry for good, as does `plainbucket fsck --repair`.
+
+Only deletes are kept: an overwrite replaces the object, and expiry and eviction under the bucket's limits remove objects for good. Trashed objects still take disk space until they are removed. Turning `trash-after` off keeps the entries already trashed until their own period ends.
 
 <br/>
 
@@ -176,7 +185,7 @@ A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, a
 
 ## Web Console
 
-With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse buckets and folders with each bucket's settings and usage, filter and sort a folder, search a bucket by name, preview images, video, audio and the start of text files, upload files and folders (large files as multipart uploads, with retry), download, share an object through a presigned URL that lasts up to seven days or as a `curl` command, rename or move objects and folders, edit an object's metadata, delete objects, folders and empty buckets, and abort multipart uploads left behind. A read-only key sees no write actions.
+With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse buckets and folders with each bucket's settings and usage, filter and sort a folder, search a bucket by name, preview images, video, audio and the start of text files, upload files and folders (large files as multipart uploads, with retry), download, share an object through a presigned URL that lasts up to seven days or as a `curl` command, rename or move objects and folders, edit an object's metadata, delete objects, folders and empty buckets, and abort multipart uploads left behind, and restore objects from a bucket's [trash](#trash). A read-only key sees no write actions.
 
 - Sign in with an access key and its secret key. The page signs every request itself and sends it to the S3 API, so the key's bucket scope and read-only flag apply as they do to any client. The secret key never leaves the page; it is kept in memory only, so reloading the page signs out.
 - The pages follow the system's light or dark theme; the Theme button forces either one and is remembered in the browser's local storage. Nothing else, and never the key, is stored there.
@@ -184,7 +193,7 @@ With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse bucke
 - After 30 minutes without input the page signs out and forgets the key, unless an upload is still running.
 - Renaming or moving copies each object with `If-None-Match: *`, so nothing at the new name is overwritten, and deletes the originals only after every copy succeeded. It is not atomic: another client can see both names while a folder moves. Editing metadata copies the object onto itself, refused if it changed since the dialog opened.
 - The console works over plain HTTP too: it does not rely on the browser's Web Crypto API, which only secure contexts offer. Over plain HTTP, though, anyone on the network path can read the secret key as it is typed or replace the page's script, so serve the console over TLS anywhere but a trusted network.
-- The pages are served without authentication; they hold no data. Usage comes from `GET /_console/api/usage`, which needs a signed request and lists only the buckets the key may access, with the total across buckets and the disk's free space only for a key without a bucket scope. Writes and deletes through the server update it at once; files changed outside the server count from the next hourly measurement.
+- The pages are served without authentication; they hold no data. Two APIs of the console's own need a signed request. `GET /_console/api/usage` lists only the buckets the key may access, with the total across buckets and the disk's free space only for a key without a bucket scope; writes and deletes through the server update it at once, and files changed outside the server count from the next hourly measurement. `/_console/api/trash` lists, restores and removes a bucket's [trash](#trash) within the key's bucket scope and read-only flag.
 - The console answers only on path-style hosts. On a virtual host, `/_console/` is an object key of that bucket.
 - Every object the console's host serves (public and website buckets, presigned and shared links, signed reads) would otherwise share the console's origin, so a stored page could script a console window in the same browser. With the console on, those responses carry `Content-Security-Policy: sandbox allow-scripts allow-popups allow-forms`: the page still renders and runs its scripts, but in an opaque origin, so it cannot reach the console, its own server through `fetch`, cookies or local storage. Serve a website bucket that needs any of those through [virtual-hosted addressing](#virtual-hosted-addressing), which gives it its own origin and no sandbox.
 

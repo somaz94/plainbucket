@@ -12,7 +12,8 @@ command -v node >/dev/null 2>&1 || { echo "node not found" >&2; exit 1; }
 cat >"${WORK}/creds.yaml" <<'EOF_CREDS'
 - {access-key: console-scoped, secret-key: console-scoped-secret, buckets: [other]}
 EOF_CREDS
-PLAINBUCKET_CONSOLE=true PLAINBUCKET_CREDENTIALS_FILE="${WORK}/creds.yaml" start_server
+printf 'buckets:\n  console-trash: {trash-after: 1h}\n' >"${WORK}/config.yaml"
+PLAINBUCKET_CONSOLE=true PLAINBUCKET_CREDENTIALS_FILE="${WORK}/creds.yaml" start_server -c "${WORK}/config.yaml"
 
 headers="$(curl -fsS -D - -o "${WORK}/index.html" "${ENDPOINT}/_console/")" || fail "console page fetch"
 grep -qF 'app.js' "${WORK}/index.html" || fail "console index"

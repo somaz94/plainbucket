@@ -348,6 +348,7 @@ var storageErrors = map[error]func() *s3err.Error{
 	storage.ErrShortBody:          s3err.IncompleteBody,
 	storage.ErrPreconditionFailed: s3err.PreconditionFailed,
 	storage.ErrNoSuchUpload:       s3err.NoSuchUpload,
+	storage.ErrNoSuchTrash:        s3err.NoSuchKey,
 	storage.ErrInvalidPart:        s3err.InvalidPart,
 	storage.ErrInvalidChecksum: func() *s3err.Error {
 		return s3err.InvalidRequest("The checksum does not match the algorithm or type of the upload.")

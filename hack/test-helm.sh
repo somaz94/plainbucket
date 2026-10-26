@@ -157,6 +157,8 @@ lacks "args:" "no config file without bucket settings"
 render -f "${CHART}/examples/runner-cache.yaml" --show-only templates/configmap.yaml
 has "max-size: 85899345920" "byte size kept as an integer"
 has "expire-after: 336h" "expiry in the config file"
+render "${KEY[@]}" --set config.buckets.docs.trash-after=168h --show-only templates/configmap.yaml
+has "trash-after: 168h" "trash in the config file"
 ok "bucket settings"
 
 render "${KEY[@]}" --show-only templates/tests/test-connection.yaml
@@ -209,6 +211,7 @@ expect_fail "allowed-origins" "${KEY[@]}" --set "config.buckets.www.cors.allowed
 printf 'config:\n  buckets:\n    a..b: {public: true}\n' >"${TMP_VALUES}"
 expect_fail "a..b" "${KEY[@]}" -f "${TMP_VALUES}"
 expect_fail "expire-after" "${KEY[@]}" --set config.buckets.cache.expire-after=14d
+expect_fail "trash-after" "${KEY[@]}" --set config.buckets.docs.trash-after=7d
 expect_fail "allowed-methods" "${KEY[@]}" --set "config.buckets.www.cors.allowed-origins={*}" --set "config.buckets.www.cors.allowed-methods={PATCH}"
 ok "schema rejects invalid values"
 

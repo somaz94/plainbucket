@@ -193,8 +193,12 @@ func TestBucketPolicies(t *testing.T) {
 		"plain": {},
 	}
 	cfg.Buckets["cache"] = config.Bucket{ExpireAfter: time.Hour, MaxSize: 10, Evict: true}
+	cfg.Buckets["docs"] = config.Bucket{TrashAfter: 48 * time.Hour}
 	if l := bucketLimits(cfg); len(l) != 1 || l["cache"].MaxSize != 10 || !l["cache"].Evict {
 		t.Errorf("limits = %+v", l)
+	}
+	if tr := bucketTrash(cfg); len(tr) != 1 || tr["docs"] != 48*time.Hour {
+		t.Errorf("trash = %+v", tr)
 	}
 	got := bucketPolicies(cfg)
 	www := got["www"]

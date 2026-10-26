@@ -158,4 +158,24 @@ const del = "<Delete><Object><Key>big.bin</Key></Object><Object><Key>" + key + "
 await expectStatus("delete objects", await s3(admin, "POST", "console-e2e", "", { params: [["delete", ""]], body: del }), 200);
 await expectStatus("delete bucket", await s3(admin, "DELETE", "console-e2e"), 204);
 
+// The trash API, signed with the query the console sends.
+const trashPath = "/_console/api/trash";
+async function trash(cred, method, params) {
+  const query = sigv4.queryString(params);
+  return fetch(`${endpoint.origin}${trashPath}?${query}`, { method, headers: sigv4.signHeaders(cred, { method, host, path: trashPath, query }) });
+}
+await expectStatus("create trash bucket", await s3(admin, "PUT", "console-trash"), 200);
+await expectStatus("put to trash bucket", await s3(admin, "PUT", "console-trash", key, { body: "keep me" }), 200);
+await expectStatus("delete into the trash", await s3(admin, "DELETE", "console-trash", key), 204);
+const trashed = await (await expectStatus("list trash", await trash(admin, "GET", [["bucket", "console-trash"]]), 200)).json();
+if (trashed.trash_after !== "1h0m0s" || trashed.entries.length !== 1 || trashed.entries[0].key !== key) fail("list trash", JSON.stringify(trashed));
+await expectStatus("scoped key denied the trash", await trash(scoped, "GET", [["bucket", "console-trash"]]), 403);
+await expectStatus("restore", await trash(admin, "POST", [["bucket", "console-trash"], ["id", trashed.entries[0].id], ["action", "restore"]]), 200);
+const back = await (await expectStatus("restored object", await s3(admin, "GET", "console-trash", key), 200)).text();
+if (back !== "keep me") fail("restored object", back);
+await expectStatus("delete again", await s3(admin, "DELETE", "console-trash", key), 204);
+const again = await (await trash(admin, "GET", [["bucket", "console-trash"]])).json();
+await expectStatus("purge", await trash(admin, "POST", [["bucket", "console-trash"], ["id", again.entries[0].id], ["action", "purge"]]), 204);
+await expectStatus("delete trash bucket", await s3(admin, "DELETE", "console-trash"), 204);
+
 console.log(`all ${passed} checks passed`);

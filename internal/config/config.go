@@ -74,6 +74,8 @@ type Bucket struct {
 	// least recently used objects are removed.
 	MaxSize int64 `yaml:"max-size"`
 	Evict   bool  `yaml:"evict"`
+	// TrashAfter keeps deleted objects restorable from the console for this long.
+	TrashAfter time.Duration `yaml:"trash-after"`
 }
 
 // Website serves a public bucket as a static site to unsigned requests.
@@ -361,6 +363,8 @@ func (c *Config) validateBuckets() error {
 		switch {
 		case b.ExpireAfter < 0:
 			return fmt.Errorf("%s.expire-after must not be negative", where)
+		case b.TrashAfter < 0:
+			return fmt.Errorf("%s.trash-after must not be negative", where)
 		case b.MaxSize < 0:
 			return fmt.Errorf("%s.max-size must not be negative", where)
 		case b.Evict && b.MaxSize == 0:

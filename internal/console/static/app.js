@@ -204,12 +204,19 @@ function presignedURL(bucket, key, expires, params = []) {
   return location.origin + path + "?" + presign(cred, { method: "GET", host, path, params, expires });
 }
 
-async function consoleUsage() {
-  const path = "/_console/api/usage";
-  const res = await fetch(path, { headers: signHeaders(cred, { method: "GET", host, path }) });
+// consoleAPI sends a signed request to one of the console's own API paths.
+async function consoleAPI(method, path, params = []) {
+  const query = queryString(params);
+  const res = await fetch(path + (query ? "?" + query : ""), { method, headers: signHeaders(cred, { method, host, path, query }) });
   if (!res.ok) throw await s3Error(res.status, await res.text());
-  return res.json();
+  return res;
 }
+
+async function consoleUsage() {
+  return (await consoleAPI("GET", "/_console/api/usage")).json();
+}
+
+const trashPath = "/_console/api/trash";
 
 // deleteKeys deletes encoded keys, in batches of DeleteObjects, and one by one those
 // that XML cannot carry.
@@ -969,6 +976,7 @@ function bucketInfo(bucket) {
       b.cors ? badge("CORS") : null,
       b.max_size ? badge(`limit ${formatBytes(b.max_size)}` + (b.evict ? ", evicts least recently used" : "")) : null,
       b.expire_after ? badge(`expires after ${formatGoDuration(b.expire_after)}`) : null,
+      b.trash_after ? el("a", { href: trashHash(bucket), class: "badge" }, `trash, kept ${formatGoDuration(b.trash_after)}`) : null,
       el("span", { class: "muted" }, `${plural(b.objects, "object")} · ${formatBytes(b.bytes)}`));
   }, () => {});
   return info;
@@ -1250,6 +1258,66 @@ function loginView() {
   return form;
 }
 
+function trashHash(bucket) {
+  return "#/t/" + encodeURIComponent(bucket);
+}
+
+async function trashView(bucket) {
+  const report = reporter();
+  const writable = !keyInfo.readOnly;
+  const body = el("tbody");
+  const note = el("p", { class: "muted" });
+  const params = (id, act) => [["bucket", bucket], ["id", id], ["action", act]];
+  const load = async () => {
+    const t = await (await consoleAPI("GET", trashPath, [["bucket", bucket]])).json();
+    note.textContent = (t.trash_after
+      ? `Deleted objects stay here for ${formatGoDuration(t.trash_after)}, then they are removed for good.`
+      : "This bucket no longer keeps deleted objects; these are removed when their time is up.") +
+      (t.entries.length ? ` ${plural(t.entries.length, "object")}, ${formatBytes(t.bytes)} of disk space.` : " The trash is empty.");
+    body.replaceChildren(...t.entries.map((e) => {
+      // The API returns keys as text; the console's key identity is the encoded form.
+      const name = displayKey(encodeKey(e.key));
+      return el("tr", {},
+        el("td", {}, name),
+        el("td", { class: "num" }, formatBytes(e.size)),
+        el("td", {}, formatDate(e.deleted_at)),
+        el("td", { class: "muted" }, formatDate(e.expires_at)),
+        el("td", {}, writable ? [
+          action("Restore", async () => {
+            try {
+              await consoleAPI("POST", trashPath, params(e.id, "restore"));
+              notify(`Restored ${name}.`, "status");
+              await load();
+            } catch (err) {
+              if (err.code === "PreconditionFailed") notify(`${name} exists again; delete or rename it before restoring this one.`);
+              else report(err);
+            }
+          }),
+          action("Delete for good", async () => {
+            if (!confirm(`Delete ${name} for good? It cannot be restored afterwards.`)) return;
+            try {
+              await consoleAPI("POST", trashPath, params(e.id, "purge"));
+              await load();
+            } catch (err) {
+              report(err);
+            }
+          }, "danger"),
+        ] : null));
+    }));
+  };
+  const view = el("section", {},
+    el("h1", { class: "crumbs" }, el("a", { href: "#/" }, "Buckets"), " / ", el("a", { href: bucketHash(bucket, "") }, bucket), " / Trash"),
+    el("div", { class: "row" }, button("Refresh", () => load().catch(report))),
+    note,
+    el("table", {}, el("thead", {}, el("tr", {}, ["Key", "Size", "Deleted", "Removed for good", ""].map((h, i) => el("th", { class: i === 1 ? "num" : "" }, h)))), body));
+  try {
+    await load();
+  } catch (err) {
+    report(err);
+  }
+  return view;
+}
+
 // parseBucketHash reads "#/b/<bucket>/<encoded prefix>"; it throws on a malformed one.
 function parseBucketHash(hash) {
   const rest = hash.slice(4);
@@ -1270,6 +1338,14 @@ async function render() {
   let view;
   if (hash === "#/usage") {
     view = await usageView();
+  } else if (hash.startsWith("#/t/")) {
+    let bucket = "";
+    try {
+      bucket = decodeURIComponent(hash.slice(4));
+    } catch {
+      hash = "#/";
+    }
+    view = await (bucket ? trashView(bucket) : bucketsView());
   } else if (hash.startsWith("#/b/")) {
     let where = null;
     try {
@@ -1283,7 +1359,7 @@ async function render() {
   }
   if (mine !== generation) return;
   const keep = banner;
-  app.replaceChildren(header(hash.startsWith("#/b/") ? "#/" : hash), view);
+  app.replaceChildren(header(hash.startsWith("#/b/") || hash.startsWith("#/t/") ? "#/" : hash), view);
   if (keep) app.prepend(keep);
 }
 

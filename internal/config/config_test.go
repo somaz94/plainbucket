@@ -205,6 +205,8 @@ func TestBuckets(t *testing.T) {
     expire-after: 336h
     max-size: 1073741824
     evict: true
+  docs:
+    trash-after: 168h
 `), 0o600)
 	t.Setenv("PLAINBUCKET_PUBLIC_BUCKETS", "assets")
 	cfg, err := Load(path)
@@ -218,6 +220,9 @@ func TestBuckets(t *testing.T) {
 	}
 	if rc := cfg.Buckets["runner-cache"]; rc.ExpireAfter != 336*time.Hour || rc.MaxSize != 1<<30 || !rc.Evict {
 		t.Errorf("runner-cache = %+v", rc)
+	}
+	if cfg.Buckets["docs"].TrashAfter != 168*time.Hour {
+		t.Errorf("docs = %+v", cfg.Buckets["docs"])
 	}
 	if !cfg.Buckets["assets"].Public {
 		t.Error("PLAINBUCKET_PUBLIC_BUCKETS not merged")
@@ -234,6 +239,7 @@ func TestBuckets(t *testing.T) {
 		"negative age":    "buckets: {www: {cors: {allowed-origins: [\"*\"], max-age: -1s}}}\n",
 		"unknown key":     "buckets: {www: {publik: true}}\n",
 		"negative expiry": "buckets: {c: {expire-after: -1h}}\n",
+		"negative trash":  "buckets: {c: {trash-after: -1h}}\n",
 		"negative size":   "buckets: {cache: {max-size: -1}}\n",
 		"evict no size":   "buckets: {cache: {evict: true}}\n",
 	} {
