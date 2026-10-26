@@ -148,6 +148,17 @@
             "pattern": "^(0+(\\.0+)?(ns|us|µs|ms|s|m|h))+$"
           }
         },
+        "scrubInterval": {
+          "type": "string",
+          "pattern": "^$|^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "not": {
+            "pattern": "^(0+(\\.0+)?(ns|us|µs|ms|s|m|h))+$"
+          }
+        },
+        "scrubRate": {
+          "type": "string",
+          "pattern": "^[0-9]{0,18}$"
+        },
         "bodyTimeout": {
           "type": "string",
           "pattern": "^$|^0$|^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
@@ -754,6 +765,23 @@
               }
             },
             "notificationsFailing": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^([0-9]+(ms|s|m|h|d|w|y))+$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "corruptObjects": {
               "type": "object",
               "additionalProperties": false,
               "properties": {

@@ -32,7 +32,16 @@ tests:
         values: '0x15 1 1 1 1 1'
       - series: 'plainbucket_notifications_total{job="t-plainbucket",namespace="ns",result="sent"}'
         values: '0+3x20'
+      - series: 'plainbucket_scrub_corrupt_objects{job="t-plainbucket",namespace="ns"}'
+        values: '2x20'
     alert_rule_test:
+      - eval_time: 20m
+        alertname: PlainbucketCorruptObjects
+        exp_alerts:
+          - exp_labels: {severity: critical, job: t-plainbucket, namespace: ns}
+            exp_annotations:
+              summary: plainbucket found objects whose data is damaged.
+              description: The last scrub found 2 objects whose data no longer matches the ETag or checksums recorded when they were written. The server log names them; restore them from a backup.
       - eval_time: 20m
         alertname: PlainbucketNotificationsFailing
         exp_alerts:
@@ -99,6 +108,8 @@ tests:
         values: '2x20'
       - series: 'plainbucket_notifications_total{job="t-plainbucket",namespace="ns",result="sent"}'
         values: '0+3x20'
+      - series: 'plainbucket_scrub_corrupt_objects{job="t-plainbucket",namespace="ns"}'
+        values: '0x20'
     alert_rule_test:
       - {eval_time: 20m, alertname: PlainbucketDown, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketHighErrorRate, exp_alerts: []}
@@ -106,6 +117,7 @@ tests:
       - {eval_time: 20m, alertname: PlainbucketDiskLow, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketBucketNearLimit, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketNotificationsFailing, exp_alerts: []}
+      - {eval_time: 20m, alertname: PlainbucketCorruptObjects, exp_alerts: []}
 
   # A target that vanished keeps its job and namespace on the alert.
   - interval: 1m

@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/config"
+	"github.com/somaz94/plainbucket/internal/storage"
 )
 
 func testConfig(t *testing.T) *config.Config {
@@ -228,5 +230,59 @@ func TestSecondServerOnTheSameRootFails(t *testing.T) {
 	err = serve(context.Background(), cfg, NewLogger(io.Discard, cfg), ln, reloadSource{})
 	if err == nil || !strings.Contains(err.Error(), "in use") {
 		t.Errorf("second server: %v", err)
+	}
+}
+
+func TestRunScrub(t *testing.T) {
+	root := t.TempDir()
+	store, err := storage.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.CreateBucket("bkt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutObject("bkt", "k", strings.NewReader("data"), 4, storage.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// Damage that keeps size and mtime, which only reading the data shows.
+	p := filepath.Join(root, "bkt", "k")
+	fi, _ := os.Stat(p)
+	_ = os.WriteFile(p, []byte("dat#"), 0o644)
+	_ = os.Chtimes(p, fi.ModTime(), fi.ModTime())
+
+	logs := &syncBuffer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		runScrub(ctx, store, 10*time.Millisecond, 0, slog.New(slog.NewTextHandler(logs, nil)))
+		close(done)
+	}()
+	eventually(t, "a scrub", func() bool { return strings.Contains(logs.String(), "scrub finished") })
+	cancel()
+	<-done
+	if !strings.Contains(logs.String(), `msg="object data is damaged" bucket=bkt key=k digest=etag`) ||
+		!strings.Contains(logs.String(), "corrupt=1") {
+		t.Errorf("logs:\n%s", logs.String())
+	}
+}
+
+func TestRunScrubWaitsFromTheLastRun(t *testing.T) {
+	store, err := storage.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	if _, err := store.Scrub(context.Background(), 0, func(storage.Corruption) {}); err != nil {
+		t.Fatal(err)
+	}
+	// A run that just finished, as a restarted server finds it, puts the next one an interval away.
+	logs := &syncBuffer{}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	runScrub(ctx, store, time.Hour, 0, slog.New(slog.NewTextHandler(logs, nil)))
+	if strings.Contains(logs.String(), "scrub finished") {
+		t.Errorf("scrubbed again right away:\n%s", logs.String())
 	}
 }

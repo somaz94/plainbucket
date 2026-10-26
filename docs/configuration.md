@@ -21,6 +21,8 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_MAX_OBJECT_SIZE` | `max-object-size` | `0` | Largest object or part in bytes; `0` means no limit |
 | `PLAINBUCKET_MIN_FREE_SPACE` | `min-free-space` | `0` | Free bytes every write must leave on the root's filesystem; `0` turns the check off. See [Free Space](#free-space) |
 | `PLAINBUCKET_UPLOAD_EXPIRY` | `upload-expiry` | `168h` | Age after which an unfinished multipart upload is removed |
+| `PLAINBUCKET_SCRUB_INTERVAL` | `scrub-interval` | `0` | How often every object is read again to find damaged data; `0` turns it off. See [Integrity Checks](#integrity-checks) |
+| `PLAINBUCKET_SCRUB_RATE` | `scrub-rate` | `33554432` | Bytes per second the integrity check may read; `0` for no limit |
 | `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut an upload that delivers less than 32 KiB in this long; `0` disables it |
 | `PLAINBUCKET_METRICS` | `metrics` | `false` | Serve Prometheus metrics at `GET /metrics` |
 | `PLAINBUCKET_CONSOLE` | `console` | `false` | Serve the web console at `/_console/`; see [Web Console](#web-console) |
@@ -224,6 +226,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - `plainbucket_requests_total{operation,method,status}` and the `plainbucket_request_duration_seconds{operation}` histogram. `operation` is the S3 operation name (`PutObject`, `UploadPart`, `ListObjectsV2`, ...), decided from the request alone, so refused requests count under the operation they asked for; `Console` covers the web console, `Preflight` CORS preflights, `NotImplemented` unsupported operations and `Unknown` anything else.
 - `plainbucket_received_bytes_total` (stored by successful uploads) and `plainbucket_sent_bytes_total`.
 - `plainbucket_objects`, `plainbucket_stored_bytes` and `plainbucket_usage_scan_timestamp_seconds`, measured at startup and then hourly by walking the buckets, so they lag recent uploads.
+- After an [integrity check](#integrity-checks), including one from before a restart: `plainbucket_scrub_objects`, `plainbucket_scrub_bytes`, `plainbucket_scrub_skipped_objects`, `plainbucket_scrub_unchecked_objects`, `plainbucket_scrub_corrupt_objects` and `plainbucket_scrub_timestamp_seconds`, for the last completed run.
 - `plainbucket_read_only`, `1` while the [read-only mode](#read-only-mode) is on, and `plainbucket_writes_in_flight`, the requests other than `GET` and `HEAD` being served.
 - `plainbucket_filesystem_free_bytes` and `plainbucket_filesystem_size_bytes` for the filesystem holding the root, read at each scrape, and `plainbucket_min_free_bytes`, the configured minimum.
 - `plainbucket_notifications_total{result}` for [event notifications](#event-notifications), `sent`, `failed` (given up after retries, or refused) and `dropped` (a full queue, or still queued at shutdown), and `plainbucket_notification_queue`, the events waiting.
@@ -257,6 +260,17 @@ Once an hour the server removes staging files left by interrupted uploads, multi
 
 <br/>
 
+## Integrity Checks
+
+The metadata of an object is trusted while the file keeps the size and modification time recorded with it, which catches edits made outside the server but not a disk that changes bytes in place. The integrity check reads each object again and compares its data with what was recorded when it was written: the ETag, recomputed part by part for a multipart upload, and the full-object checksums. An object it cannot read to the end, such as one on a bad sector, counts as damaged too. Composite checksums are not re-read, so an object with nothing else recorded, or a multipart upload completed by v0.1.x, which kept no part sizes, counts as unchecked. Objects without trusted metadata, or that change while they are read, are skipped; `fsck` reports the former.
+
+- `plainbucket fsck --verify` runs it once while the server is stopped, reading as fast as the disk allows, and lists each damaged object.
+- `scrub-interval` makes the server run it in the background, reading at most `scrub-rate` bytes per second so requests keep the disk. A run starts once that long has passed since the last one finished, which is remembered across restarts in the system directory; on the first start it waits one interval. Each damaged object is logged as an error with the digest that differs, and the result of the last completed run is in the [metrics](#metrics); the [Helm chart](../helm/plainbucket/README.md) alerts on it.
+
+Damaged objects are only reported. Nothing on the server can rebuild them, so restore them from a backup; a write of the same key replaces the object and its metadata.
+
+<br/>
+
 ## Access Log
 
 With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in the format `PLAINBUCKET_LOG_FORMAT` selects, with `operation` (as in the metrics), `method`, `host`, `path`, `query`, `bucket`, `key`, `status`, `bytes` (sent), `duration_ms`, `remote`, `access_key` (empty for unsigned requests), `user_agent` and `request_id`, which is also the `x-amz-request-id` response header. The signature of a presigned URL is logged as `REDACTED`, so the log cannot be used to replay requests. `/healthz` and `/metrics` are not logged.
@@ -267,5 +281,5 @@ With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in
 
 - `plainbucket` (no command) serves.
 - `plainbucket healthcheck` exits 0 when the server on this host answers `/healthz`. It reads the same settings to find the address and whether TLS is on, but needs no access key, so the container image uses it as its `HEALTHCHECK`. A server started with `-c` needs the same `-c` here.
-- `plainbucket fsck [--repair]` checks the root while no server runs: objects whose metadata is missing or outdated, file names that cannot be keys, and the leftovers the background cleanup removes. It exits 1 when problems remain. `--repair` rebuilds the metadata (the object then counts as just used) and removes the leftovers; invalid names are only reported. The server holds a lock on the root, so fsck refuses to run beside it, and a second server on the same root refuses to start.
+- `plainbucket fsck [--repair] [--verify]` checks the root while no server runs: objects whose metadata is missing or outdated, file names that cannot be keys, and the leftovers the background cleanup removes. It exits 1 when problems remain. `--repair` rebuilds the metadata (the object then counts as just used) and removes the leftovers; invalid names are only reported. `--verify` also reads every object to find [damaged data](#integrity-checks). The server holds a lock on the root, so fsck refuses to run beside it, and a second server on the same root refuses to start.
 - `plainbucket version` prints the version.

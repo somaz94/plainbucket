@@ -22,7 +22,7 @@ func TestDefaultsAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Root != "/data" || cfg.Address != ":9000" || cfg.Region != "us-east-1" || cfg.UploadExpiry != 7*24*time.Hour ||
-		cfg.BodyTimeout != time.Minute || cfg.Metrics || cfg.Console || cfg.HasTLS() {
+		cfg.BodyTimeout != time.Minute || cfg.Metrics || cfg.Console || cfg.HasTLS() || cfg.ScrubInterval != 0 || cfg.ScrubRate != 32<<20 {
 		t.Errorf("defaults = %+v", cfg)
 	}
 
@@ -36,6 +36,8 @@ func TestDefaultsAndEnv(t *testing.T) {
 	t.Setenv("PLAINBUCKET_METRICS", "true")
 	t.Setenv("PLAINBUCKET_CONSOLE", "1")
 	t.Setenv("PLAINBUCKET_READ_ONLY", "yes")
+	t.Setenv("PLAINBUCKET_SCRUB_INTERVAL", "720h")
+	t.Setenv("PLAINBUCKET_SCRUB_RATE", "1048576")
 	t.Setenv("PLAINBUCKET_LOG_FORMAT", "JSON")
 	t.Setenv("PLAINBUCKET_DEBUG", "yes")
 	t.Setenv("PLAINBUCKET_TLS_CERT", "c.pem")
@@ -46,7 +48,7 @@ func TestDefaultsAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Root != "/srv" || cfg.Address != "127.0.0.1:9100" || cfg.Region != "eu-west-1" || cfg.MaxObjectSize != 1024 || cfg.MinFreeSpace != 4096 ||
-		cfg.UploadExpiry != 2*time.Hour || cfg.BodyTimeout != 0 || !cfg.Metrics || !cfg.Console || !cfg.ReadOnly || cfg.LogFormat != "json" || !cfg.Debug || !cfg.HasTLS() || cfg.TLSMinVersion() != tls.VersionTLS13 {
+		cfg.UploadExpiry != 2*time.Hour || cfg.BodyTimeout != 0 || !cfg.Metrics || !cfg.Console || !cfg.ReadOnly || cfg.ScrubInterval != 720*time.Hour || cfg.ScrubRate != 1<<20 || cfg.LogFormat != "json" || !cfg.Debug || !cfg.HasTLS() || cfg.TLSMinVersion() != tls.VersionTLS13 {
 		t.Errorf("env = %+v", cfg)
 	}
 }
@@ -80,25 +82,27 @@ func TestYAMLThenEnv(t *testing.T) {
 
 func TestInvalid(t *testing.T) {
 	cases := map[string]map[string]string{
-		"no keys":       {"PLAINBUCKET_ACCESS_KEY": ""},
-		"no root":       {"PLAINBUCKET_ROOT": ""},
-		"no address":    {"PLAINBUCKET_ADDRESS": ""},
-		"no region":     {"PLAINBUCKET_REGION": ""},
-		"negative size": {"PLAINBUCKET_MAX_OBJECT_SIZE": "-1"},
-		"negative free": {"PLAINBUCKET_MIN_FREE_SPACE": "-1"},
-		"zero expiry":   {"PLAINBUCKET_UPLOAD_EXPIRY": "0s"},
-		"negative body": {"PLAINBUCKET_BODY_TIMEOUT": "-1s"},
-		"half tls":      {"PLAINBUCKET_TLS_CERT": "c.pem"},
-		"tls version":   {"PLAINBUCKET_TLS_MIN_VERS": "TLS10"},
-		"log format":    {"PLAINBUCKET_LOG_FORMAT": "xml"},
-		"bad bool":      {"PLAINBUCKET_DEBUG": "maybe"},
-		"bad duration":  {"PLAINBUCKET_UPLOAD_EXPIRY": "7d"},
-		"bad size":      {"PLAINBUCKET_MAX_OBJECT_SIZE": "10Gi"},
-		"half key":      {"PLAINBUCKET_SECRET_KEY": ""},
-		"public bucket": {"PLAINBUCKET_PUBLIC_BUCKETS": "ok-bucket,Bad_Name"},
-		"creds missing": {"PLAINBUCKET_CREDENTIALS_FILE": "/nonexistent/creds.yaml"},
-		"domain port":   {"PLAINBUCKET_DOMAINS": "s3.example.com:9000"},
-		"domain scheme": {"PLAINBUCKET_DOMAINS": "https://s3.example.com"},
+		"no keys":        {"PLAINBUCKET_ACCESS_KEY": ""},
+		"no root":        {"PLAINBUCKET_ROOT": ""},
+		"no address":     {"PLAINBUCKET_ADDRESS": ""},
+		"no region":      {"PLAINBUCKET_REGION": ""},
+		"negative size":  {"PLAINBUCKET_MAX_OBJECT_SIZE": "-1"},
+		"negative free":  {"PLAINBUCKET_MIN_FREE_SPACE": "-1"},
+		"zero expiry":    {"PLAINBUCKET_UPLOAD_EXPIRY": "0s"},
+		"negative body":  {"PLAINBUCKET_BODY_TIMEOUT": "-1s"},
+		"negative scrub": {"PLAINBUCKET_SCRUB_INTERVAL": "-1h"},
+		"negative rate":  {"PLAINBUCKET_SCRUB_RATE": "-1"},
+		"half tls":       {"PLAINBUCKET_TLS_CERT": "c.pem"},
+		"tls version":    {"PLAINBUCKET_TLS_MIN_VERS": "TLS10"},
+		"log format":     {"PLAINBUCKET_LOG_FORMAT": "xml"},
+		"bad bool":       {"PLAINBUCKET_DEBUG": "maybe"},
+		"bad duration":   {"PLAINBUCKET_UPLOAD_EXPIRY": "7d"},
+		"bad size":       {"PLAINBUCKET_MAX_OBJECT_SIZE": "10Gi"},
+		"half key":       {"PLAINBUCKET_SECRET_KEY": ""},
+		"public bucket":  {"PLAINBUCKET_PUBLIC_BUCKETS": "ok-bucket,Bad_Name"},
+		"creds missing":  {"PLAINBUCKET_CREDENTIALS_FILE": "/nonexistent/creds.yaml"},
+		"domain port":    {"PLAINBUCKET_DOMAINS": "s3.example.com:9000"},
+		"domain scheme":  {"PLAINBUCKET_DOMAINS": "https://s3.example.com"},
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {

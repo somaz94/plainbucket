@@ -110,6 +110,14 @@ spec:
             - name: PLAINBUCKET_UPLOAD_EXPIRY
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.config.scrubInterval }}
+            - name: PLAINBUCKET_SCRUB_INTERVAL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.scrubRate }}
+            - name: PLAINBUCKET_SCRUB_RATE
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.config.bodyTimeout }}
             - name: PLAINBUCKET_BODY_TIMEOUT
               value: {{ . | quote }}

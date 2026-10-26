@@ -176,3 +176,26 @@ func TestMinFreeSpace(t *testing.T) {
 		}
 	}
 }
+
+func TestScrubMetrics(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.Metrics = true })
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/k", []byte("data"), nil, http.StatusOK)
+	scrape := func() string {
+		rec := httptest.NewRecorder()
+		x.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		return rec.Body.String()
+	}
+	if strings.Contains(scrape(), "plainbucket_scrub_") {
+		t.Error("scrub metrics before any scrub")
+	}
+	if _, err := x.h.store.Scrub(context.Background(), 0, func(storage.Corruption) {}); err != nil {
+		t.Fatal(err)
+	}
+	body := scrape()
+	for _, line := range []string{"plainbucket_scrub_objects 1", "plainbucket_scrub_bytes 4", "plainbucket_scrub_corrupt_objects 0", "plainbucket_scrub_timestamp_seconds "} {
+		if !strings.Contains(body, line) {
+			t.Errorf("metrics lack %q", line)
+		}
+	}
+}

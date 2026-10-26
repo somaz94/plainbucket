@@ -71,6 +71,7 @@ type storeStats interface {
 	BucketLimit(bucket string) storage.Limit
 	Removed() (expired, evicted int64)
 	DiskSpace() (free, size int64, err error)
+	LastScrub() (storage.ScrubResult, bool)
 	MinFree() int64
 }
 
@@ -162,6 +163,15 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifie
 				fmt.Fprintf(w, "plainbucket_bucket_max_size_bytes{bucket=%q,evict=\"%t\"} %d\n", n, l.Evict, l.MaxSize)
 			}
 		}
+	}
+
+	if sc, ok := st.LastScrub(); ok {
+		metric("gauge", "plainbucket_scrub_objects", "Objects the last completed scrub verified.", sc.Objects)
+		metric("gauge", "plainbucket_scrub_bytes", "Bytes the last completed scrub read.", sc.Bytes)
+		metric("gauge", "plainbucket_scrub_skipped_objects", "Objects the last scrub skipped: no trusted metadata, or changed while read.", sc.Skipped)
+		metric("gauge", "plainbucket_scrub_unchecked_objects", "Objects the last scrub could not check: nothing recorded to compare their data with.", sc.Unchecked)
+		metric("gauge", "plainbucket_scrub_corrupt_objects", "Objects whose data did not match their recorded digests, or could not be read, in the last scrub.", sc.Corrupt)
+		metric("gauge", "plainbucket_scrub_timestamp_seconds", "Unix time the last scrub finished.", sc.Finished.Unix())
 	}
 
 	u := st.Usage()

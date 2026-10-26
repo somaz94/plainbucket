@@ -102,6 +102,9 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 	janitorCtx, stopJanitor := context.WithCancel(context.Background())
 	var janitor sync.WaitGroup
 	janitor.Go(func() { store.RunJanitor(janitorCtx, janitorInterval, cfg.UploadExpiry, logger) })
+	if cfg.ScrubInterval > 0 {
+		janitor.Go(func() { runScrub(janitorCtx, store, cfg.ScrubInterval, cfg.ScrubRate, logger) })
+	}
 	defer func() {
 		stopJanitor()
 		janitor.Wait()
@@ -175,6 +178,39 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		}
 		logger.Info("server stopped")
 		return nil
+	}
+}
+
+// runScrub verifies every object once an interval has passed since the last completed
+// run, which the store keeps across restarts, so restarts neither skip nor repeat it.
+func runScrub(ctx context.Context, store *storage.Store, interval time.Duration, rate int64, logger *slog.Logger) {
+	wait := interval
+	if last, ok := store.LastScrub(); ok {
+		wait = max(0, interval-time.Since(last.Finished))
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			start := time.Now()
+			res, err := store.Scrub(ctx, rate, func(c storage.Corruption) {
+				logger.Error("object data is damaged", "bucket", c.Bucket, "key", c.Key,
+					"digest", c.What, "recorded", c.Want, "read", c.Got)
+			})
+			// The next run waits a whole interval after this one ends, however long it took.
+			t.Reset(interval)
+			if err != nil {
+				if ctx.Err() == nil {
+					logger.Error("scrub failed", "err", err)
+				}
+				continue
+			}
+			logger.Info("scrub finished", "objects", res.Objects, "bytes", res.Bytes, "skipped", res.Skipped,
+				"unchecked", res.Unchecked, "corrupt", res.Corrupt, "duration", time.Since(start).Round(time.Second))
+		}
 	}
 }
 

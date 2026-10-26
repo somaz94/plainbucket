@@ -73,6 +73,8 @@ config:
   maxObjectSize: ""  # bytes as a string; empty means unlimited
   minFreeSpace: ""   # bytes as a string that writes must leave free on the volume; empty means no check
   uploadExpiry: ""   # Go duration; empty keeps the server default
+  scrubInterval: ""  # Go duration such as 720h; re-reads every object against its ETag and checksums; empty means never
+  scrubRate: ""      # bytes per second as a string; empty keeps the server default
   bodyTimeout: ""    # Go duration; empty keeps the server default
   metrics: false
   # Web console at /_console/ (signs requests in the browser; see docs/configuration.md).
@@ -169,6 +171,8 @@ prometheusRule:
     bucketNearLimit: {enabled: true, for: 15m, severity: warning, ratio: 0.9}
     # A bucket event notification failed after its retries, was refused, or was dropped.
     notificationsFailing: {enabled: true, for: 0m, severity: warning}
+    # The last scrub (config.scrubInterval) found objects with damaged data.
+    corruptObjects: {enabled: true, for: 0m, severity: critical}
   # Further rules appended to the group as they are.
   additionalRules: []
 

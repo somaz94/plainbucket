@@ -70,8 +70,10 @@ ok "credentials secret only"
 
 render "${KEY[@]}" --set "config.publicBuckets={www,assets}" --set "config.domains={s3.example.com}" \
     --set-string config.maxObjectSize=10737418240 --set config.uploadExpiry=24h \
-    --set-string config.minFreeSpace=1073741824
+    --set-string config.minFreeSpace=1073741824 --set config.scrubInterval=720h --set-string config.scrubRate=1048576
 has 'value: "www,assets"' "public buckets"
+has 'value: "720h"' "scrub interval"
+has 'value: "1048576"' "scrub rate"
 has 'value: "s3.example.com"' "domains"
 has 'value: "10737418240"' "max object size kept as digits"
 has 'value: "24h"' "upload expiry"
@@ -193,7 +195,8 @@ expect_fail "requires config.metrics=true" "${KEY[@]}" --set grafanaDashboard.en
 expect_fail "empty group" "${KEY[@]}" --set config.metrics=true --set prometheusRule.enabled=true \
     --set prometheusRule.rules.down.enabled=false --set prometheusRule.rules.errors.enabled=false \
     --set prometheusRule.rules.writesRefused.enabled=false --set prometheusRule.rules.diskLow.enabled=false \
-    --set prometheusRule.rules.bucketNearLimit.enabled=false --set prometheusRule.rules.notificationsFailing.enabled=false
+    --set prometheusRule.rules.bucketNearLimit.enabled=false --set prometheusRule.rules.notificationsFailing.enabled=false \
+    --set prometheusRule.rules.corruptObjects.enabled=false
 ok "fail guards"
 
 expect_fail "bogus" "${KEY[@]}" --set bogus=1
@@ -207,6 +210,8 @@ expect_fail "maxObjectSize" "${KEY[@]}" --set config.maxObjectSize=10Gi
 expect_fail "minFreeSpace" "${KEY[@]}" --set-string config.minFreeSpace=1Gi
 expect_fail "uploadExpiry" "${KEY[@]}" --set config.uploadExpiry=7d
 expect_fail "uploadExpiry" "${KEY[@]}" --set config.uploadExpiry=0s
+expect_fail "scrubInterval" "${KEY[@]}" --set config.scrubInterval=30d
+expect_fail "scrubRate" "${KEY[@]}" --set-string config.scrubRate=32Mi
 expect_fail "maxObjectSize" "${KEY[@]}" --set-string config.maxObjectSize=99999999999999999999
 expect_fail "pathType" "${KEY[@]}" --set ingress.enabled=true --set "ingress.hosts[0].host=x" --set "ingress.hosts[0].paths[0].path=/"
 expect_fail "terminationGracePeriodSeconds" "${KEY[@]}" --set terminationGracePeriodSeconds=-5

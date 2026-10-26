@@ -151,6 +151,24 @@ func TestFsckCommand(t *testing.T) {
 		t.Errorf("after repair: %v\n%s", err, out.String())
 	}
 
+	// --verify reads the data; damage that keeps size and mtime is still found.
+	out.Reset()
+	t.Cleanup(func() { fsckVerify = false })
+	reset(t, "fsck", "--verify")
+	if err := Execute(); err != nil || !strings.Contains(out.String(), "verified 1 object(s), 1 bytes") {
+		t.Errorf("verify: %v\n%s", err, out.String())
+	}
+	data := filepath.Join(root, "bkt", "dropped-in")
+	fi, _ := os.Stat(data)
+	_ = os.WriteFile(data, []byte("y"), 0o644)
+	_ = os.Chtimes(data, fi.ModTime(), fi.ModTime())
+	out.Reset()
+	reset(t, "fsck", "--verify")
+	if err := Execute(); err == nil || !strings.Contains(out.String(), "corrupt object: bkt/dropped-in (etag recorded") {
+		t.Errorf("verify damaged: %v\n%s", err, out.String())
+	}
+	fsckVerify = false
+
 	store, err := storage.New(root)
 	if err != nil {
 		t.Fatal(err)

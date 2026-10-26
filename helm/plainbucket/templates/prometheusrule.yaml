@@ -90,6 +90,17 @@ spec:
             summary: plainbucket is losing bucket event notifications.
             description: Webhook deliveries failed after their retries, were refused, or were dropped on a full queue; those events are not sent again. The server log names the webhook and the error.
         {{- end }}{{ end }}
+        {{- with $r.corruptObjects }}{{ if .enabled }}
+        - alert: PlainbucketCorruptObjects
+          expr: |-
+            max by (namespace, job) (plainbucket_scrub_corrupt_objects{ {{- $sel -}} }) > 0
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: plainbucket found objects whose data is damaged.
+            description: {{ printf "The last scrub found %s objects whose data no longer matches the ETag or checksums recorded when they were written. The server log names them; restore them from a backup." "{{ $value }}" | quote }}
+        {{- end }}{{ end }}
         {{- with .Values.prometheusRule.additionalRules }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

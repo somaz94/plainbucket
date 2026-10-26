@@ -48,6 +48,9 @@ type Config struct {
 	MaxObjectSize int64         `yaml:"max-object-size"`
 	MinFreeSpace  int64         `yaml:"min-free-space"`
 	UploadExpiry  time.Duration `yaml:"upload-expiry"`
+	// ScrubInterval re-reads every object this often to find damaged data; 0 turns it off.
+	ScrubInterval time.Duration `yaml:"scrub-interval"`
+	ScrubRate     int64         `yaml:"scrub-rate"` // bytes per second the scrub may read; 0 for no cap
 	BodyTimeout   time.Duration `yaml:"body-timeout"`
 	Metrics       bool          `yaml:"metrics"`
 	Console       bool          `yaml:"console"`
@@ -128,6 +131,7 @@ func Default() *Config {
 		Address:      ":9000",
 		Region:       "us-east-1",
 		UploadExpiry: 7 * 24 * time.Hour,
+		ScrubRate:    32 << 20,
 		BodyTimeout:  time.Minute,
 		LogFormat:    "text",
 	}
@@ -198,6 +202,8 @@ func (c *Config) loadEnv() error {
 	e.int64("MAX_OBJECT_SIZE", &c.MaxObjectSize)
 	e.int64("MIN_FREE_SPACE", &c.MinFreeSpace)
 	e.duration("UPLOAD_EXPIRY", &c.UploadExpiry)
+	e.duration("SCRUB_INTERVAL", &c.ScrubInterval)
+	e.int64("SCRUB_RATE", &c.ScrubRate)
 	e.duration("BODY_TIMEOUT", &c.BodyTimeout)
 	e.bool("METRICS", &c.Metrics)
 	e.bool("CONSOLE", &c.Console)
@@ -307,6 +313,10 @@ func (c *Config) validate() error {
 		return errors.New("PLAINBUCKET_MIN_FREE_SPACE must not be negative")
 	case c.UploadExpiry <= 0:
 		return errors.New("PLAINBUCKET_UPLOAD_EXPIRY must be positive")
+	case c.ScrubInterval < 0:
+		return errors.New("PLAINBUCKET_SCRUB_INTERVAL must not be negative")
+	case c.ScrubRate < 0:
+		return errors.New("PLAINBUCKET_SCRUB_RATE must not be negative")
 	case c.BodyTimeout < 0:
 		return errors.New("PLAINBUCKET_BODY_TIMEOUT must not be negative")
 	case (c.TLSCert == "") != (c.TLSKey == ""):
@@ -544,6 +554,8 @@ func (c *Config) LogValue() slog.Value {
 		slog.Int64("max_object_size", c.MaxObjectSize),
 		slog.Int64("min_free_space", c.MinFreeSpace),
 		slog.Duration("upload_expiry", c.UploadExpiry),
+		slog.Duration("scrub_interval", c.ScrubInterval),
+		slog.Int64("scrub_rate", c.ScrubRate),
 		slog.Duration("body_timeout", c.BodyTimeout),
 		slog.Bool("metrics", c.Metrics),
 		slog.Bool("console", c.Console),

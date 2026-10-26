@@ -145,6 +145,7 @@ type Store struct {
 	evicted     atomic.Int64
 	onLimit     atomic.Pointer[func(bucket, key string)] // see OnLimitRemove
 	paused      atomic.Bool                              // see SetPaused
+	lastScrub   atomic.Pointer[ScrubResult]
 
 	trashAfter atomic.Pointer[map[string]time.Duration] // swapped whole by SetTrash
 	trashMu    sync.Mutex                               // serializes restores, purges and the sweep's expiry
@@ -174,6 +175,7 @@ func New(root string) (*Store, error) {
 	if s.r, err = os.OpenRoot(abs); err != nil {
 		return nil, err
 	}
+	s.loadScrub()
 	return s, nil
 }
 

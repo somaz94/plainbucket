@@ -10,14 +10,16 @@ import (
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-var fsckRepair bool
+var fsckRepair, fsckVerify bool
 
 var fsckCmd = &cobra.Command{
 	Use:   "fsck",
 	Short: "Check the root for stale metadata and leftovers while the server is stopped",
 	Long: "fsck reports objects whose metadata is missing or outdated, files whose names cannot be " +
 		"keys, and leftovers such as staging files and expired multipart uploads. With --repair it " +
-		"rebuilds the metadata and removes the leftovers. It refuses to run while a server uses the root.",
+		"rebuilds the metadata and removes the leftovers. With --verify it also reads every object and " +
+		"compares its data with the ETag and checksums recorded when it was written, which finds damage " +
+		"that keeps a file's size and modification time. It refuses to run while a server uses the root.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, err := config.LoadUnvalidated(cfgFile)
@@ -56,6 +58,22 @@ var fsckCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if fsckVerify {
+			res, err := store.Scrub(cmd.Context(), 0, func(c storage.Corruption) {
+				found++
+				unfixed++ // nothing to rebuild it from
+				if c.What == "read" {
+					_, _ = fmt.Fprintf(out, "corrupt object: %s/%s (unreadable: %s)\n", c.Bucket, c.Key, c.Got)
+				} else {
+					_, _ = fmt.Fprintf(out, "corrupt object: %s/%s (%s recorded %s, data gives %s)\n", c.Bucket, c.Key, c.What, c.Want, c.Got)
+				}
+			})
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(out, "verified %d object(s), %d bytes; %d skipped (no trusted metadata, or changing), %d with nothing recorded to check\n",
+				res.Objects, res.Bytes, res.Skipped, res.Unchecked)
+		}
 		_, _ = fmt.Fprintf(out, "%d problem(s) found, %d left\n", found, unfixed)
 		if unfixed > 0 {
 			return errors.New("fsck found problems")
@@ -66,5 +84,6 @@ var fsckCmd = &cobra.Command{
 
 func init() {
 	fsckCmd.Flags().BoolVar(&fsckRepair, "repair", false, "rebuild metadata and remove leftovers")
+	fsckCmd.Flags().BoolVar(&fsckVerify, "verify", false, "read every object and check its data against its recorded digests")
 	rootCmd.AddCommand(fsckCmd)
 }
