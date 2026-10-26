@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.6.1](https://github.com/somaz94/plainbucket/compare/v0.6.0...v0.6.1) (2026-10-26)
+
+### Features
+
+- chart alert and dashboard panels for failing event notifications ([079f366](https://github.com/somaz94/plainbucket/commit/079f366cdccace1681747eb3e56e229b011c51cc))
+
+### Chores
+
+- bump version to v0.6.1 ([9045c20](https://github.com/somaz94/plainbucket/commit/9045c2040d547a2f517cee6ed8711c85ba3140e1))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.6.0](https://github.com/somaz94/plainbucket/compare/v0.5.0...v0.6.0) (2026-10-26)
 
 ### Features
