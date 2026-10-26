@@ -708,6 +708,23 @@
                   "maximum": 1
                 }
               }
+            },
+            "notificationsFailing": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "for": {
+                  "type": "string",
+                  "pattern": "^([0-9]+(ms|s|m|h|d|w|y))+$"
+                },
+                "severity": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
           }
         },

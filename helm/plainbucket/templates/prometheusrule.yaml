@@ -79,6 +79,17 @@ spec:
             summary: A plainbucket bucket is close to its max-size.
             description: {{ printf "Bucket %s is %s full; past max-size its writes are refused with 403 QuotaExceeded." "{{ $labels.bucket }}" "{{ $value | humanizePercentage }}" | quote }}
         {{- end }}{{ end }}
+        {{- with $r.notificationsFailing }}{{ if .enabled }}
+        - alert: PlainbucketNotificationsFailing
+          expr: |-
+            sum by (namespace, job) (increase(plainbucket_notifications_total{ {{- $sel }}, result=~"failed|dropped"}[10m])) > 0
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: plainbucket is losing bucket event notifications.
+            description: Webhook deliveries failed after their retries, were refused, or were dropped on a full queue; those events are not sent again. The server log names the webhook and the error.
+        {{- end }}{{ end }}
         {{- with .Values.prometheusRule.additionalRules }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

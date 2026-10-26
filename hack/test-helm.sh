@@ -188,7 +188,7 @@ expect_fail "requires config.metrics=true" "${KEY[@]}" --set grafanaDashboard.en
 expect_fail "empty group" "${KEY[@]}" --set config.metrics=true --set prometheusRule.enabled=true \
     --set prometheusRule.rules.down.enabled=false --set prometheusRule.rules.errors.enabled=false \
     --set prometheusRule.rules.writesRefused.enabled=false --set prometheusRule.rules.diskLow.enabled=false \
-    --set prometheusRule.rules.bucketNearLimit.enabled=false
+    --set prometheusRule.rules.bucketNearLimit.enabled=false --set prometheusRule.rules.notificationsFailing.enabled=false
 ok "fail guards"
 
 expect_fail "bogus" "${KEY[@]}" --set bogus=1

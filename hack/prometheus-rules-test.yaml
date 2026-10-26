@@ -28,7 +28,18 @@ tests:
         values: '0+1x20'
       - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="GetObject",method="GET",status="200"}'
         values: '0+1x20'
+      - series: 'plainbucket_notifications_total{job="t-plainbucket",namespace="ns",result="failed"}'
+        values: '0x15 1 1 1 1 1'
+      - series: 'plainbucket_notifications_total{job="t-plainbucket",namespace="ns",result="sent"}'
+        values: '0+3x20'
     alert_rule_test:
+      - eval_time: 20m
+        alertname: PlainbucketNotificationsFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: t-plainbucket, namespace: ns}
+            exp_annotations:
+              summary: plainbucket is losing bucket event notifications.
+              description: Webhook deliveries failed after their retries, were refused, or were dropped on a full queue; those events are not sent again. The server log names the webhook and the error.
       - eval_time: 20m
         alertname: PlainbucketBucketNearLimit
         exp_alerts:
@@ -80,12 +91,18 @@ tests:
         values: '0+5x20'
       - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="GetObject",method="GET",status="200"}'
         values: '0+1x20'
+      # Failures long past and webhooks delivering now.
+      - series: 'plainbucket_notifications_total{job="t-plainbucket",namespace="ns",result="failed"}'
+        values: '2x20'
+      - series: 'plainbucket_notifications_total{job="t-plainbucket",namespace="ns",result="sent"}'
+        values: '0+3x20'
     alert_rule_test:
       - {eval_time: 20m, alertname: PlainbucketDown, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketHighErrorRate, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketWritesRefused, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketDiskLow, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketBucketNearLimit, exp_alerts: []}
+      - {eval_time: 20m, alertname: PlainbucketNotificationsFailing, exp_alerts: []}
 
   # A target that vanished keeps its job and namespace on the alert.
   - interval: 1m
