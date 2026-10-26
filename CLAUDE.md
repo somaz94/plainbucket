@@ -18,7 +18,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - `internal/s3api/` - HTTP router and handlers, access keys with bucket scopes and read-only, public-bucket anonymous reads, virtual-hosted routing, XML documents, payload verification and upload progress deadline, storage error to S3 error mapping, Prometheus metrics.
 - `internal/s3err/` - S3 error type and XML rendering.
 - `internal/notify/` - bucket event webhooks: S3 event JSON, HMAC signature, a bounded queue and retries per target, swapped whole by `SetTargets` on reload.
-- `internal/console/` - the embedded web console (`static/`: vanilla JS, its own SigV4 signer in `sigv4.js`); `s3api` routes `/_console/` to it and serves the signed usage and trash APIs.
+- `internal/console/` - the embedded web console (`static/`: vanilla JS, its own SigV4 signer in `sigv4.js` and stored-ZIP writer in `zip.js`); `s3api` routes `/_console/` to it and serves the signed usage and trash APIs.
 - `internal/server/` - listener lifecycle, the hourly janitor, and configuration reloads on `SIGHUP` or a changed config, credentials, certificate or webhook secret file.
 - `compat/` - separate Go module running the AWS SDK for Go v2 against the handler.
 - `helm/plainbucket/` - Helm chart; `hack/test-helm.sh` lints it, renders it and checks the fail guards and schema. Published by `.github/workflows/helm-release.yml` on tags.

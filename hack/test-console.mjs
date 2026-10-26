@@ -1,10 +1,16 @@
-// Drives the console's signer and key handling (internal/console/static/{sigv4,keys}.js)
-// against a running server: header-signed and presigned requests, multipart, keys XML
-// cannot carry, the usage API and key scopes.
+// Drives the console's signer, key handling and ZIP writer
+// (internal/console/static/{sigv4,keys,zip}.js) against a running server: header-signed and
+// presigned requests, multipart, keys XML cannot carry, folder archives, the usage API and
+// key scopes.
 // Run by hack/test-console.sh, which starts the server and sets the environment.
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as keys from "../internal/console/static/keys.js";
 import * as sigv4 from "../internal/console/static/sigv4.js";
+import { ZipBuilder, crc32, entryName } from "../internal/console/static/zip.js";
 
 const endpoint = new URL(process.env.ENDPOINT);
 const host = endpoint.host;
@@ -157,6 +163,50 @@ await expectStatus("scoped key denied", await s3(scoped, "GET", "console-e2e", "
 const del = "<Delete><Object><Key>big.bin</Key></Object><Object><Key>" + key + "</Key></Object></Delete>";
 await expectStatus("delete objects", await s3(admin, "POST", "console-e2e", "", { params: [["delete", ""]], body: del }), 200);
 await expectStatus("delete bucket", await s3(admin, "DELETE", "console-e2e"), 204);
+
+// A folder zipped the way the console does it, read back by Python's zipfile as an
+// independent reader, once plain and once with forced ZIP64 records.
+await expectStatus("create zip bucket", await s3(admin, "PUT", "console-zip"), 200);
+const zipped = { "photos/a.txt": "hello", "photos/ünï code.txt": "x".repeat(70000), "photos/sub/": "" };
+for (const [k, v] of Object.entries(zipped)) {
+  await expectStatus("put " + k, await s3(admin, "PUT", "console-zip", k, { body: v }), 200);
+}
+const zipList = await (await s3(admin, "GET", "console-zip", "", {
+  params: [["list-type", "2"], ["prefix", "photos/"], ["encoding-type", "url"]],
+})).text();
+const listedKeys = [...zipList.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
+const zipDir = mkdtempSync(join(tmpdir(), "pb-zip-"));
+try {
+  for (const force of [false, true]) {
+    const zip = new ZipBuilder({ forceZip64: force });
+    const out = [];
+    for (const k of listedKeys) {
+      const name = entryName(keys.keyBytes(k));
+      if (k.endsWith("/")) {
+        out.push(zip.header({ name, modified: new Date() }));
+        continue;
+      }
+      const data = new Uint8Array(await (await s3(admin, "GET", "console-zip", keys.keyBytes(k))).arrayBuffer());
+      out.push(zip.header({ name, modified: new Date(), size: data.length, crc: crc32(data) }), data);
+    }
+    out.push(...zip.end());
+    const file = join(zipDir, force ? "zip64.zip" : "plain.zip");
+    writeFileSync(file, Buffer.concat(out));
+    const check = "import json,sys,zipfile\nz=zipfile.ZipFile(sys.argv[1])\nassert z.testzip() is None\n" +
+      "print(json.dumps({i.filename: z.read(i).decode() for i in z.infolist()}))";
+    const got = JSON.parse(execFileSync("python3", ["-I", "-c", check, file], { encoding: "utf8" }));
+    const sorted = (o) => JSON.stringify(Object.entries(o).sort());
+    if (sorted(got) !== sorted(zipped)) fail("zip " + file, JSON.stringify(got));
+    ok(force ? "folder as a ZIP64 archive" : "folder as a ZIP archive");
+  }
+} finally {
+  rmSync(zipDir, { recursive: true, force: true });
+}
+if (new TextDecoder().decode(entryName(new TextEncoder().encode("a\\..\\b:c/d"))) !== "a_.._b_c/d") fail("zip entry name", "backslash or colon kept");
+ok("backslashes and colons leave ZIP entry names");
+const zipDel = "<Delete>" + Object.keys(zipped).map((k) => `<Object><Key>${k}</Key></Object>`).join("") + "</Delete>";
+await expectStatus("delete zipped objects", await s3(admin, "POST", "console-zip", "", { params: [["delete", ""]], body: zipDel }), 200);
+await expectStatus("delete zip bucket", await s3(admin, "DELETE", "console-zip"), 204);
 
 // The trash API, signed with the query the console sends.
 const trashPath = "/_console/api/trash";

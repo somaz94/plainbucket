@@ -2,6 +2,7 @@
 // typed at login; the key stays in memory only, so a reload signs out.
 import { canonicalKey, displayKey, encodeKey, escapeXML, keyBytes, keyText, xmlKey } from "./keys.js";
 import { encodePath, presign, queryString, signHeaders } from "./sigv4.js";
+import { ZipBuilder, crc32, entryName } from "./zip.js";
 
 const host = location.host;
 const region = "us-east-1";
@@ -186,10 +187,10 @@ function target(bucket, key, params) {
 }
 
 // s3 sends a signed request and returns the response, throwing S3Error unless it is 2xx.
-async function s3(method, bucket, key = "", { params = [], headers = {}, body, as = cred } = {}) {
+async function s3(method, bucket, key = "", { params = [], headers = {}, body, as = cred, signal } = {}) {
   const { path, query } = target(bucket, key, params);
   const res = await fetch(path + (query ? "?" + query : ""), {
-    method, body, headers: signHeaders(as, { method, host, path, query, headers }),
+    method, body, signal, headers: signHeaders(as, { method, host, path, query, headers }),
   });
   if (!res.ok) throw await s3Error(res.status, await res.text());
   return res;
@@ -236,18 +237,24 @@ async function deleteKeys(bucket, keys) {
   }
 }
 
-// listAll returns every encoded key under prefix, for deleting a folder.
-async function listAll(bucket, prefix) {
-  const keys = [];
+// listObjects returns every object under prefix: its encoded key, size and modification time.
+async function listObjects(bucket, prefix) {
+  const out = [];
   let token = "";
   for (;;) {
     const params = [["list-type", "2"], ["prefix", keyBytes(prefix)], ["encoding-type", "url"]];
     if (token) params.push(["continuation-token", token]);
     const res = await s3xml("GET", bucket, "", { params });
-    for (const c of children(res, "Contents")) keys.push(child(c, "Key"));
-    if (child(res, "IsTruncated") !== "true") return keys;
+    for (const c of children(res, "Contents")) {
+      out.push({ key: child(c, "Key"), size: Number(child(c, "Size")), modified: child(c, "LastModified") });
+    }
+    if (child(res, "IsTruncated") !== "true") return out;
     token = child(res, "NextContinuationToken");
   }
+}
+
+async function listAll(bucket, prefix) {
+  return (await listObjects(bucket, prefix)).map((o) => o.key);
 }
 
 // ---- Uploads
@@ -875,7 +882,8 @@ function header(active) {
     keyInfo.readOnly ? el("span", { class: "badge" }, "read-only") : null,
     themeButton(),
     button("Sign out", () => {
-      if (uploads.size && !confirm(`Cancel ${plural(uploads.size, "upload")} in progress and sign out?`)) return;
+      const running = [uploads.size ? plural(uploads.size, "upload") : "", downloads.size ? plural(downloads.size, "ZIP download") : ""].filter(Boolean);
+      if (running.length && !confirm(`Cancel ${running.join(" and ")} in progress and sign out?`)) return;
       signOut();
     }, "link"));
 }
@@ -898,7 +906,7 @@ for (const type of ["pointerdown", "keydown", "wheel"]) {
 }
 // The secret key should not outlive the person at the keyboard; a running upload defers it.
 setInterval(() => {
-  if (!cred || uploads.size || Date.now() - lastActive < idleLimit) return;
+  if (!cred || uploads.size || downloads.size || Date.now() - lastActive < idleLimit) return;
   signOut();
   notify("Signed out after 30 minutes without activity.", "status");
 }, 30 * 1000);
@@ -961,6 +969,115 @@ function download(bucket, key) {
   document.body.append(a);
   a.click();
   a.remove();
+}
+
+// zipName names the archive of a folder (encoded, ending in "/") or of a bucket's root.
+function zipName(bucket, folder) {
+  const name = folder ? displayKey(folder.slice(folder.slice(0, -1).lastIndexOf("/") + 1, -1)) : bucket;
+  return (name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_") || "download") + ".zip";
+}
+
+async function blobCRC(blob, signal) {
+  const reader = blob.stream().getReader();
+  let crc = 0;
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) return crc;
+      crc = crc32(value, crc);
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
+const zipMemoryWarning = 2 * 1024 * 1024 * 1024;
+// The abort functions of the ZIP downloads running; like uploads they defer the idle sign-out.
+const downloads = new Set();
+
+// zipDownload saves the objects load returns (as listObjects does) as one stored ZIP, entries
+// named by key minus base. Where showSaveFilePicker exists (Chromium, secure origin) each object
+// goes to the picked file once fetched; elsewhere the archive is built as a Blob, which browsers
+// spill to disk once large, then downloaded. The picker opens before load runs, while the click
+// that asked for it still counts as a user gesture.
+async function zipDownload(bucket, base, load, name) {
+  let file = null;
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }] });
+      file = await handle.createWritable();
+    } catch (err) {
+      if (err.name === "AbortError") return;
+    }
+  }
+  const abort = new AbortController();
+  const status = el("p", { class: "muted" }, "Listing the objects…");
+  const bar = el("progress", { value: 0 });
+  let finished = false;
+  const stop = () => abort.abort();
+  downloads.add(stop);
+  const d = dialog(`Download ${name}`, status, bar);
+  d.addEventListener("close", () => { if (!finished) stop(); });
+  const parts = [];
+  const write = (chunk) => (file ? file.write(chunk) : parts.push(chunk));
+  try {
+    const objects = await load();
+    abort.signal.throwIfAborted();
+    if (!objects.length) {
+      if (file) await file.abort();
+      finished = true;
+      d.close();
+      notify("There is nothing to download.", "status");
+      return;
+    }
+    const total = objects.reduce((n, o) => n + o.size, 0);
+    if (!file && total > zipMemoryWarning &&
+        !confirm(`This browser builds the ${formatBytes(total)} archive before saving it, which needs that much free disk space or memory. Continue?`)) {
+      finished = true;
+      d.close();
+      return;
+    }
+    bar.max = total || 1;
+    const zip = new ZipBuilder();
+    const baseLength = keyBytes(base).length;
+    let done = 0;
+    for (const [i, o] of objects.entries()) {
+      status.textContent = `Object ${i + 1} of ${objects.length} · ${formatBytes(done)} of ${formatBytes(total)}`;
+      const entry = { name: entryName(keyBytes(o.key).subarray(baseLength)), utf8: keyText(o.key) !== null, modified: new Date(o.modified) };
+      if (o.key.endsWith("/")) {
+        await write(zip.header(entry));
+        continue;
+      }
+      const blob = await (await s3("GET", bucket, o.key, { signal: abort.signal })).blob();
+      await write(zip.header({ ...entry, size: blob.size, crc: await blobCRC(blob, abort.signal) }));
+      await write(blob);
+      done += o.size;
+      bar.value = done;
+    }
+    for (const p of zip.end()) await write(p);
+    if (file) {
+      await file.close();
+    } else {
+      const url = URL.createObjectURL(new Blob(parts, { type: "application/zip" }));
+      const a = el("a", { href: url, download: name });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+    }
+    finished = true;
+    d.close();
+  } catch (err) {
+    finished = true;
+    if (file) await file.abort().catch(() => {});
+    if (!abort.signal.aborted) {
+      status.textContent = describe(err);
+      bar.remove();
+    }
+  } finally {
+    downloads.delete(stop);
+  }
 }
 
 // bucketInfo summarizes a bucket's settings and usage from the usage API, once it answers.
@@ -1075,6 +1192,22 @@ async function browserView(bucket, prefix) {
     crumbs.push(" / ", el("a", { href: bucketHash(bucket, acc) }, displayKey(part)));
   }
 
+  const zipShown = async () => {
+    try {
+      if (selected.size) {
+        const chosen = entries.filter((e) => !e.folder && selected.has(e.key));
+        await zipDownload(bucket, prefix, async () => chosen, zipName(bucket, prefix));
+      } else {
+        const parent = prefix.slice(0, prefix.slice(0, -1).lastIndexOf("/") + 1);
+        await zipDownload(bucket, parent, () => listObjects(bucket, prefix), zipName(bucket, prefix));
+      }
+    } catch (err) {
+      report(err);
+    }
+  };
+  const zipButton = action("Download ZIP", zipShown);
+  zipButton.title = "The selected objects, or with none selected the whole folder, as one ZIP file";
+
   const startUploads = (list) => {
     for (const [path, f] of list) upload(bucket, prefix + encodeKey(path), f, render);
   };
@@ -1096,6 +1229,7 @@ async function browserView(bucket, prefix) {
     button("Refresh", () => render()),
     button("Search", () => searchDialog(bucket, prefix, report)),
     button("Incomplete uploads", () => uploadsDialog(bucket, prefix)),
+    zipButton,
     el("span", { class: "spacer" }), writable ? deleteSelected : null);
 
   const table = el("table", {},
@@ -1103,7 +1237,7 @@ async function browserView(bucket, prefix) {
     body);
   const view = el("section", { class: "drop" },
     el("h1", { class: "crumbs" }, crumbs), bucketInfo(bucket), toolbar, el("div", { class: "row" }, filter, count), uploadList, table, more,
-    writable ? el("p", { class: "muted" }, "Drop files or folders here to upload them to this folder.") : null);
+    el("p", { class: "muted" }, writable ? "Drop files or folders here to upload them to this folder. " : "", "Press ? for keyboard shortcuts."));
   if (writable) {
     view.addEventListener("dragover", (e) => {
       e.preventDefault();
@@ -1119,13 +1253,31 @@ async function browserView(bucket, prefix) {
 
   const folderEntry = (full) => {
     const name = displayKey(full.slice(prefix.length));
-    return {
-      folder: true, key: full, name, size: 0, modified: "",
-      row: el("tr", { class: "folder" },
+    const e = { folder: true, key: full, name, size: 0, modified: "" };
+    const sizeCell = el("td", { class: "num" });
+    // Sizing a folder lists everything under it, so it waits to be asked for.
+    sizeCell.append(action("Calculate", async () => {
+      try {
+        const objects = await listObjects(bucket, full);
+        e.size = objects.reduce((n, o) => n + o.size, 0);
+        sizeCell.replaceChildren(formatBytes(e.size), el("span", { class: "muted" }, ` · ${plural(objects.length, "object")}`));
+      } catch (err) {
+        report(err);
+      }
+    }, "link"));
+    e.row = el("tr", { class: "folder" },
         el("td"),
         el("td", {}, el("a", { href: bucketHash(bucket, full) }, name)),
-        el("td"), el("td"),
-        el("td", { class: "actions" }, writable ? button("Rename", () => moveDialog(bucket, full, render), "link") : null, writable ? action("Delete folder", async () => {
+        sizeCell, el("td"),
+        el("td", { class: "actions" },
+          action("Download ZIP", async () => {
+            try {
+              await zipDownload(bucket, prefix, () => listObjects(bucket, full), zipName(bucket, full));
+            } catch (err) {
+              report(err);
+            }
+          }, "link"),
+          writable ? button("Rename", () => moveDialog(bucket, full, render), "link") : null, writable ? action("Delete folder", async () => {
           try {
             const keys = await listAll(bucket, full);
             if (!confirm(`Delete the folder ${name} and the ${plural(keys.length, "object")} in it?`)) return;
@@ -1134,8 +1286,8 @@ async function browserView(bucket, prefix) {
           } catch (err) {
             report(err);
           }
-        }, "link danger") : null)),
-    };
+        }, "link danger") : null));
+    return e;
   };
   const objectEntry = (c) => {
     const key = child(c, "Key");
@@ -1195,6 +1347,28 @@ async function browserView(bucket, prefix) {
     await loadPage("");
   } catch (err) {
     report(err);
+  }
+  const up = prefix ? bucketHash(bucket, prefix.slice(0, prefix.slice(0, -1).lastIndexOf("/") + 1)) : "#/";
+  view.shortcuts = {
+    "/": () => filter.focus(),
+    r: () => render(),
+    s: () => searchDialog(bucket, prefix, report),
+    z: () => zipButton.click(),
+    // On a Mac the delete key is Backspace; going up would drop a selection meant for Delete.
+    Backspace: () => { if (!selected.size) location.hash = up; },
+    Escape: () => {
+      for (const e of entries) select(e, false);
+      filter.value = "";
+      draw();
+    },
+  };
+  if (writable) {
+    Object.assign(view.shortcuts, {
+      u: () => files.click(),
+      n: () => folder.focus(),
+      a: () => all.disabled || all.click(),
+      Delete: () => deleteSelected.click(),
+    });
   }
   return view;
 }
@@ -1328,10 +1502,43 @@ function parseBucketHash(hash) {
   return [bucket, i < 0 ? "" : canonicalKey(rest.slice(i + 1))];
 }
 
+const shortcutHelp = [
+  ["/", "Filter this folder"], ["u", "Upload files"], ["n", "Type a new folder's name"], ["r", "Refresh"],
+  ["s", "Search the bucket"], ["a", "Select or clear every object shown"],
+  ["z", "Download the selected objects, or the folder, as a ZIP file"], ["Delete", "Delete the selected objects (fn+delete on a Mac)"],
+  ["Backspace", "Go up one folder, when nothing is selected"], ["Escape", "Clear the filter and the selection; in a field, leave it"],
+  ["?", "Show these shortcuts"],
+];
+
+function shortcutsDialog() {
+  dialog("Keyboard shortcuts", el("table", {}, el("tbody", {},
+    shortcutHelp.map(([k, what]) => el("tr", {}, el("td", {}, el("kbd", {}, k)), el("td", {}, what))))),
+  el("p", { class: "muted" }, "They work in a folder, outside text fields; a read-only key has no upload, folder or delete shortcuts."));
+}
+
+// The shortcuts of the view on screen, by KeyboardEvent.key.
+let shortcuts = {};
+document.addEventListener("keydown", (e) => {
+  if (!cred || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || document.querySelector("dialog[open]")) return;
+  const t = e.target;
+  // A focused checkbox or button is no text field: select a row, then press z or Delete.
+  const typing = t instanceof HTMLElement && (t.isContentEditable ||
+    t.matches("textarea, select, input:not([type=checkbox], [type=radio], [type=button], [type=submit], [type=reset], [type=file], [type=range], [type=color])"));
+  if (typing) {
+    if (e.key === "Escape") t.blur();
+    return;
+  }
+  const run = e.key === "?" ? shortcutsDialog : shortcuts[e.key];
+  if (!run) return;
+  e.preventDefault();
+  run();
+});
+
 async function render() {
   const mine = ++generation;
   banner = null;
   if (!cred) {
+    shortcuts = {};
     app.replaceChildren(el("div", { class: "topbar" }, themeButton()), loginView());
     return;
   }
@@ -1359,6 +1566,7 @@ async function render() {
     view = await bucketsView();
   }
   if (mine !== generation) return;
+  shortcuts = view.shortcuts ?? {};
   const keep = banner;
   app.replaceChildren(header(hash.startsWith("#/b/") || hash.startsWith("#/t/") ? "#/" : hash), view);
   if (keep) app.prepend(keep);

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# End-to-end check of the web console: its files and headers, and its SigV4 signer
-# (driven from node) against the server's verifier.
+# End-to-end check of the web console: its files and headers, its SigV4 signer and its
+# ZIP writer (driven from node, archives read back by python3) against the server.
 #
-# Usage: hack/test-console.sh   (after `make build`; needs node >= 18)
+# Usage: hack/test-console.sh   (after `make build`; needs node >= 18 and python3)
 set -euo pipefail
 
 command -v node >/dev/null 2>&1 || { echo "node not found" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "python3 not found (checks the ZIP archives)" >&2; exit 1; }
 # shellcheck source=hack/e2e-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/e2e-lib.sh"
 

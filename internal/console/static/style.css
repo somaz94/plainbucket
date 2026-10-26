@@ -279,6 +279,16 @@ input.filter {
   font-size: 0.8rem;
 }
 
+kbd {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--panel);
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
 .preview {
   display: block;
   max-width: 100%;
