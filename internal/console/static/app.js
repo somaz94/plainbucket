@@ -970,14 +970,15 @@ function bucketInfo(bucket) {
     const b = u.buckets.find((x) => x.name === bucket);
     if (!b) return;
     const badge = (text) => el("span", { class: "badge" }, text);
-    info.replaceChildren(
+    // Unlike el, replaceChildren would show a null as the text "null".
+    info.replaceChildren(...[
       b.public ? badge("public") : null,
       b.website ? badge("website") : null,
       b.cors ? badge("CORS") : null,
       b.max_size ? badge(`limit ${formatBytes(b.max_size)}` + (b.evict ? ", evicts least recently used" : "")) : null,
       b.expire_after ? badge(`expires after ${formatGoDuration(b.expire_after)}`) : null,
       b.trash_after ? el("a", { href: trashHash(bucket), class: "badge" }, `trash, kept ${formatGoDuration(b.trash_after)}`) : null,
-      el("span", { class: "muted" }, `${plural(b.objects, "object")} · ${formatBytes(b.bytes)}`));
+      el("span", { class: "muted" }, `${plural(b.objects, "object")} · ${formatBytes(b.bytes)}`)].filter(Boolean));
   }, () => {});
   return info;
 }
