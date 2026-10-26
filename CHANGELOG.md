@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.6.0](https://github.com/somaz94/plainbucket/compare/v0.5.0...v0.6.0) (2026-10-26)
+
+### Features
+
+- download folders as ZIP files, size folders and add keyboard shortcuts to the console ([5134434](https://github.com/somaz94/plainbucket/commit/513443482f65da9720d60a97279ca69f330c9598))
+- post bucket events to signed webhooks ([53d7f50](https://github.com/somaz94/plainbucket/commit/53d7f502a092c030ad20d41dd094ef4f8993c4ae))
+- keep deleted objects in a per-bucket trash restorable from the console ([216b12c](https://github.com/somaz94/plainbucket/commit/216b12ca40984d668c61d39f573774ac00dbe514))
+- chart PrometheusRule alerts and a Grafana dashboard ([029eded](https://github.com/somaz94/plainbucket/commit/029ededb9f678a86d1c871319b7dfa1046b5f568))
+- store object tags with put, get and delete tagging ([ce6ea5e](https://github.com/somaz94/plainbucket/commit/ce6ea5ee208fc0922f2060822e749a1c67c05c40))
+- conditional deletes and delimiters in ListMultipartUploads ([cd0edda](https://github.com/somaz94/plainbucket/commit/cd0eddabad54877c24f001ccba102b7c5c0f9d2f))
+- refuse writes that would pass a free disk space floor ([a49cbaf](https://github.com/somaz94/plainbucket/commit/a49cbaf6cf90e93e5e7265c826139a7c1b42a7a0))
+
+### Bug Fixes
+
+- stop the console's bucket summary from showing null ([4ce14a1](https://github.com/somaz94/plainbucket/commit/4ce14a10dfc817c64bc9c6841364d1db2dc587d6))
+- keep the object d when deleting the folder marker d/ ([42354e1](https://github.com/somaz94/plainbucket/commit/42354e1b1cbfa2ac0c1ce2024bf4ef058b52ff95))
+
+### Tests
+
+- match chart schema errors by key name across Helm versions ([37ead67](https://github.com/somaz94/plainbucket/commit/37ead67606730a342a02be69d0ce4dafc53f4962))
+
+### Chores
+
+- bump version to v0.6.0 ([df24181](https://github.com/somaz94/plainbucket/commit/df2418155a1c18826f7c59de1fe5d8b967c4d03d))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.5.0](https://github.com/somaz94/plainbucket/compare/v0.4.0...v0.5.0) (2026-10-23)
 
 ### Features
