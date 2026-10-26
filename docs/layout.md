@@ -48,6 +48,7 @@ S3 keys are arbitrary strings; file paths are not. The following differ from S3:
 - **Case-insensitive filesystems fold keys.** On such a filesystem, macOS's default included, `Photo.jpg` and `photo.jpg` are one file. The server logs a warning at startup when it detects this.
 - **Unicode normalization follows the filesystem.** Keys are stored byte for byte. On a normalization-insensitive filesystem (APFS), the NFC and NFD spellings of `café` name one file; on ext4 and XFS they are two objects. A listing returns the name as stored on disk, which on HFS+ is the NFD form even for a key written in NFC.
 - **Empty prefixes disappear.** Deleting the last object under `a/b/` removes the empty directories `a/b` and `a`, stopping at a directory created as an explicit marker.
+- **A listing reads each directory it passes whole.** Every page of a listing reads all the names in the directories it walks, though it stats only the entries it reaches, about as many as it returns. A folder holding hundreds of thousands of objects therefore costs more per page than the same objects spread over subfolders.
 
 <br/>
 

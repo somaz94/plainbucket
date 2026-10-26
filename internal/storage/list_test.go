@@ -71,6 +71,8 @@ func TestListOrderAgainstReference(t *testing.T) {
 	keys := []string{
 		"a", "a-c", "a.b", "a0", "b/x", "b-y", "b/y/z", "b/y-z", "b/y.z", "c/d/e/f",
 		"c/d-e", "c/d/e-f", "c/d0", "dir/", "dir2/sub/", "z", "ü/é", "space key", "b/y/zz",
+		// Files beside directory "b" whose names sort between "b" and "b/".
+		"b!", "b.", "c!", "c/d!e", "c/d/e!",
 	}
 	for _, k := range keys {
 		put(t, s, k, "")
@@ -169,6 +171,7 @@ func TestListDetails(t *testing.T) {
 func TestListSymlinks(t *testing.T) {
 	s := newStore(t)
 	put(t, s, "real/f", "x")
+	put(t, s, "top", "t")
 	outside := t.TempDir()
 	_ = os.WriteFile(filepath.Join(outside, "secret"), []byte("s"), 0o644)
 	b := filepath.Join(s.Root(), "bkt")
@@ -179,6 +182,8 @@ func TestListSymlinks(t *testing.T) {
 		"escape":   filepath.Join(outside, "secret"),     // outside the root
 		"dotdot":   filepath.Join("..", "..", "..", "x"), // climbs out of the root
 		"dangling": "gone",
+		// Below, a link up to a file still inside the root.
+		filepath.Join("real", "up"): filepath.Join("..", "top"),
 	}
 	for name, target := range links {
 		if err := os.Symlink(target, filepath.Join(b, name)); err != nil {
@@ -186,11 +191,16 @@ func TestListSymlinks(t *testing.T) {
 		}
 	}
 	got := listAll(t, s, ListParams{}, 100)
-	if want := []string{"link", "real/f"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"link", "real/f", "real/up", "top"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 	if _, _, err := s.GetObject("bkt", "escape"); err != ErrNoSuchKey {
 		t.Errorf("GET through an escaping link: %v", err)
+	}
+	if f, _, err := s.GetObject("bkt", "real/up"); err != nil {
+		t.Errorf("GET of a listed upward link: %v", err)
+	} else {
+		_ = f.Close()
 	}
 	if _, _, err := s.GetObject("bkt", "loop/f"); err != nil {
 		t.Errorf("GET through a directory link inside the root: %v", err)
@@ -233,5 +243,36 @@ func BenchmarkList(b *testing.B) {
 	}
 	for b.Loop() {
 		_, _ = s.List("bkt", ListParams{MaxKeys: 1000})
+	}
+}
+
+func TestListDeepKeys(t *testing.T) {
+	s := newStore(t)
+	// Past heldRoots the walk goes through the store's root instead of a Root per level.
+	deep := strings.Repeat("d/", heldRoots+8)
+	keys := []string{deep + "x", deep + "y", deep[:len(deep)-2] + "-z", "a"}
+	for _, k := range keys {
+		put(t, s, k, "")
+	}
+	for _, p := range []ListParams{{}, {Prefix: deep}, {After: deep + "x"}, {Prefix: deep[:10], Delimiter: "/"}} {
+		want, _ := reference(keys, p)
+		for _, page := range []int{1, 1000} {
+			if got := listAll(t, s, p, page); !reflect.DeepEqual(got, want) && !(len(got) == 0 && len(want) == 0) {
+				t.Errorf("%+v page %d:\n got %q\nwant %q", p, page, got, want)
+			}
+		}
+	}
+}
+
+func TestWalkerOpenFile(t *testing.T) {
+	s := newStore(t)
+	put(t, s, "f", "x")
+	w := walker{s: s}
+	// OpenRoot on a file fails with an error of its own; it means nothing to list.
+	if _, err := w.open(dirRef{path: s.rel(s.bucketPath("bkt"))}, "f", 0); !gone(err) {
+		t.Errorf("open of a file: %v", err)
+	}
+	if _, err := w.open(dirRef{path: s.rel(s.bucketPath("bkt"))}, "missing", 0); !gone(err) {
+		t.Errorf("open of nothing: %v", err)
 	}
 }
