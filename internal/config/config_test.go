@@ -247,6 +247,19 @@ func TestBuckets(t *testing.T) {
 		n[0].Prefix != "in/" || len(n[0].Events) != 2 || n[1].ID != "audit" || n[1].Secret != nil {
 		t.Errorf("notify = %+v", n)
 	}
+	_ = os.WriteFile(path, []byte(`buckets:
+  www:
+    headers:
+      - set: {cache-control: "max-age=60", x-frame-options: DENY}
+      - {suffix: .html, set: {Cache-Control: no-cache}}
+`), 0o600)
+	if cfg, err = Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if h := cfg.Buckets["www"].Headers; len(h) != 2 || h[0].Set["Cache-Control"] != "max-age=60" || h[0].Set["X-Frame-Options"] != "DENY" ||
+		h[1].Suffix != ".html" || h[1].Set["Cache-Control"] != "no-cache" {
+		t.Errorf("headers = %+v", h)
+	}
 	empty := filepath.Join(dir, "empty-secret")
 	_ = os.WriteFile(empty, []byte("\n"), 0o600)
 
@@ -259,6 +272,15 @@ func TestBuckets(t *testing.T) {
 		"notify no secret":     "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + filepath.Join(dir, "missing") + "}]}}\n",
 		"notify empty secret":  "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + empty + "}]}}\n",
 		"notify inline secret": "buckets: {u: {notify: [{url: \"http://h\", secret: x}]}}\n",
+		"headers empty set":    "buckets: {www: {headers: [{prefix: a/}]}}\n",
+		"headers content type": "buckets: {www: {headers: [{set: {Content-Type: text/html}}]}}\n",
+		"headers csp":          "buckets: {www: {headers: [{set: {Content-Security-Policy: none}}]}}\n",
+		"headers twice":        "buckets: {www: {headers: [{set: {cache-control: a, Cache-Control: b}}]}}\n",
+		"headers empty value":  "buckets: {www: {headers: [{set: {Cache-Control: \"\"}}]}}\n",
+		"headers newline":      "buckets: {www: {headers: [{set: {Cache-Control: \"a\\nb\"}}]}}\n",
+		"headers blank":        "buckets: {www: {headers: [{set: {Cache-Control: \" \"}}]}}\n",
+		"headers non-ascii":    "buckets: {www: {headers: [{set: {Content-Disposition: \"é\"}}]}}\n",
+		"headers too long":     "buckets: {www: {headers: [{set: {Cache-Control: " + strings.Repeat("a", 4097) + "}}]}}\n",
 	} {
 		_ = os.WriteFile(path, []byte(body), 0o600)
 		if _, err := Load(path); err == nil {

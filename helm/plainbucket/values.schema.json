@@ -316,6 +316,47 @@
                     }
                   }
                 }
+              },
+              "headers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "set"
+                  ],
+                  "properties": {
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "suffix": {
+                      "type": "string"
+                    },
+                    "set": {
+                      "type": "object",
+                      "minProperties": 1,
+                      "propertyNames": {
+                        "enum": [
+                          "Cache-Control",
+                          "Content-Disposition",
+                          "Content-Encoding",
+                          "Content-Language",
+                          "Expires",
+                          "Permissions-Policy",
+                          "Referrer-Policy",
+                          "Strict-Transport-Security",
+                          "X-Content-Type-Options",
+                          "X-Frame-Options"
+                        ]
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^[\\t\\x20-\\x7e]*[\\x21-\\x7e][\\t\\x20-\\x7e]*$"
+                      }
+                    }
+                  }
+                }
               }
             },
             "allOf": [

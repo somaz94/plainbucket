@@ -200,6 +200,10 @@ func TestBucketPolicies(t *testing.T) {
 	if tr := bucketTrash(cfg); len(tr) != 1 || tr["docs"] != 48*time.Hour {
 		t.Errorf("trash = %+v", tr)
 	}
+	cfg.Buckets["site"] = config.Bucket{Public: true, Headers: []config.HeaderRule{{Suffix: ".html", Set: map[string]string{"Cache-Control": "no-cache"}}}}
+	if h := bucketPolicies(cfg)["site"].Headers; len(h) != 1 || h[0].Suffix != ".html" || h[0].Set["Cache-Control"] != "no-cache" {
+		t.Errorf("header rules = %+v", h)
+	}
 	cfg.Buckets["events"] = config.Bucket{Notify: []config.Notify{{ID: "a", URL: "http://h", Events: []string{"s3:ObjectCreated:*"}, Prefix: "p/", Suffix: ".x", Secret: []byte("k")}}}
 	if nt := notifyTargets(cfg); len(nt) != 1 || len(nt["events"]) != 1 || nt["events"][0].ID != "a" || nt["events"][0].Suffix != ".x" ||
 		string(nt["events"][0].Secret) != "k" || nt["events"][0].Events[0] != "s3:ObjectCreated:*" {

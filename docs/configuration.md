@@ -108,6 +108,12 @@ buckets:
     evict: true             # over max-size, remove the least recently used
   docs:
     trash-after: 168h       # deleted objects stay restorable for a week
+  site:
+    public: true
+    headers:                # default response headers; later rules win
+      - set: {Cache-Control: "max-age=300", X-Content-Type-Options: nosniff}
+      - {suffix: .html, set: {Cache-Control: no-cache}}
+      - {prefix: assets/, set: {Cache-Control: "public, max-age=31536000, immutable"}}
   uploads:
     notify:                 # POST the bucket's events to a webhook
       - url: https://hooks.example.com/plainbucket
@@ -151,6 +157,14 @@ The background job applies both hourly, and at once when a write takes an evicti
 `trash-after` keeps the objects deleted from the bucket (`DeleteObject`, `DeleteObjects`, and the web console's delete, rename and move) restorable for that long. A deleted object leaves the bucket at once, so listings, reads and the bucket's usage and limits no longer see it, but its file and metadata move to the system directory instead of being removed. The web console lists a bucket's trash and restores or removes each entry; a restore never replaces an object that has since been written at the same key. Once the period ends the hourly background job removes the entry for good, as does `plainbucket fsck --repair`.
 
 Only deletes are kept: an overwrite replaces the object, and expiry and eviction under the bucket's limits remove objects for good. Trashed objects still take disk space until they are removed. Turning `trash-after` off keeps the entries already trashed until their own period ends.
+
+### Response Headers
+
+`headers` gives the bucket's objects default headers on `GET` and `HEAD`, signed or not, website index documents included. Each rule names keys by `prefix` and `suffix` (both optional) and the headers to `set`; of the rules that match a key, a later one wins for the same header, so list the general rules first. A header stored with the object, given when it was uploaded, wins over the rules, and a presigned URL's `response-*` override wins over both. `Cache-Control` and `Expires` count as one: an object or a request that sets either keeps both of the rules' off. A website's error document gets the rules' headers for its own key except those two, so a `404` is not cached like a page.
+
+A rule may set the headers an object can store (`Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`) and the security headers `Permissions-Policy`, `Referrer-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options` and `X-Frame-Options`. `Content-Type`, `Content-Security-Policy`, the CORS headers and cookies stay the server's: they decide what a browser lets a stored page do, which the [web console](#web-console) relies on. Values are printable ASCII up to 4 KiB.
+
+Some of these act on more than the bucket. `Strict-Transport-Security` binds the whole host name, so one bucket's rule makes browsers use HTTPS for every bucket and the console on that host, and with `includeSubDomains` for every virtual-hosted bucket. A `Referrer-Policy` that sends full URLs to other sites (`unsafe-url`) leaks the signature of a page opened through a presigned link.
 
 ### Event Notifications
 

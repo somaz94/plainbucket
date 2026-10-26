@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -189,6 +190,9 @@ func bucketPolicies(cfg *config.Config) map[string]s3api.BucketPolicy {
 	out := map[string]s3api.BucketPolicy{}
 	for name, b := range cfg.Buckets {
 		p := s3api.BucketPolicy{Public: b.Public}
+		for _, r := range b.Headers {
+			p.Headers = append(p.Headers, s3api.HeaderRule{Prefix: r.Prefix, Suffix: r.Suffix, Set: maps.Clone(r.Set)})
+		}
 		if w := b.Website; w != nil {
 			p.Website = &s3api.Website{Index: w.Index, Error: w.Error}
 		}

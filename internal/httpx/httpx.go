@@ -1,10 +1,19 @@
-// Package httpx holds the response recorder and metric label helper of the S3 API.
+// Package httpx holds the response recorder, metric label helper and header lists of the
+// S3 API; it has no dependencies, so the configuration can share the lists.
 package httpx
 
 import (
 	"io"
 	"net/http"
 )
+
+// StoredHeaders are kept with an object and returned on GET and HEAD.
+var StoredHeaders = []string{"Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Expires"}
+
+// RuleHeaders are the headers a bucket's header rule may set: those an object can store,
+// and security headers. Content-Type, CSP and CORS stay the server's, which protect the console.
+var RuleHeaders = append(append([]string{}, StoredHeaders...),
+	"Permissions-Policy", "Referrer-Policy", "Strict-Transport-Security", "X-Content-Type-Options", "X-Frame-Options")
 
 // MetricMethod maps a request method to a bounded metric label. net/http accepts any
 // method token, so labelling by r.Method lets a client mint unlimited series.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/textproto"
 	"net/url"
 	"os"
 	"reflect"
@@ -20,6 +21,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/somaz94/plainbucket/internal/httpx"
 	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
@@ -82,6 +84,14 @@ type Bucket struct {
 	// TrashAfter keeps deleted objects restorable from the console for this long.
 	TrashAfter time.Duration `yaml:"trash-after"`
 	Notify     []Notify      `yaml:"notify"`
+	Headers    []HeaderRule  `yaml:"headers"`
+}
+
+// HeaderRule sets default response headers on the objects whose keys match; later rules win.
+type HeaderRule struct {
+	Prefix string            `yaml:"prefix"`
+	Suffix string            `yaml:"suffix"`
+	Set    map[string]string `yaml:"set"`
 }
 
 // Notify posts the bucket's events to a webhook.
@@ -392,6 +402,9 @@ func (c *Config) validateBuckets() error {
 		if err := validateNotify(where, b.Notify); err != nil {
 			return err
 		}
+		if err := validateHeaders(where, b.Headers); err != nil {
+			return err
+		}
 		if cr := b.CORS; cr != nil {
 			if len(cr.AllowedOrigins) == 0 {
 				return fmt.Errorf("%s.cors.allowed-origins must not be empty", where)
@@ -445,6 +458,36 @@ func validateNotify(where string, targets []Notify) error {
 				return fmt.Errorf("%s.secret-file: %s is empty", at, n.SecretFile)
 			}
 		}
+	}
+	return nil
+}
+
+const maxHeaderValue = 4096
+
+// validateHeaders checks each rule and rewrites its header names in canonical form.
+func validateHeaders(where string, rules []HeaderRule) error {
+	for i := range rules {
+		r := &rules[i]
+		at := fmt.Sprintf("%s.headers[%d]", where, i)
+		if len(r.Set) == 0 {
+			return fmt.Errorf("%s.set must name at least one header", at)
+		}
+		set := make(map[string]string, len(r.Set))
+		for name, v := range r.Set {
+			canon := textproto.CanonicalMIMEHeaderKey(name)
+			if !slices.Contains(httpx.RuleHeaders, canon) {
+				return fmt.Errorf("%s.set: %q may not be set; allowed: %s", at, name, strings.Join(httpx.RuleHeaders, ", "))
+			}
+			if _, dup := set[canon]; dup {
+				return fmt.Errorf("%s.set: %q is given twice", at, canon)
+			}
+			// Proxies such as ingress-nginx refuse response headers past a few KiB.
+			if strings.TrimSpace(v) == "" || len(v) > maxHeaderValue || strings.ContainsFunc(v, func(c rune) bool { return c != '\t' && (c < 0x20 || c > 0x7e) }) {
+				return fmt.Errorf("%s.set.%s must be printable ASCII, not blank, at most %d bytes", at, canon, maxHeaderValue)
+			}
+			set[canon] = v
+		}
+		r.Set = set
 	}
 	return nil
 }

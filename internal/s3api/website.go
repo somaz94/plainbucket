@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/somaz94/plainbucket/internal/httpx"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
@@ -20,6 +21,33 @@ type BucketPolicy struct {
 	// Website serves index and error documents to unsigned requests; needs Public.
 	Website *Website
 	CORS    *CORS
+	// Headers are default response headers for the objects whose keys match.
+	Headers []HeaderRule
+}
+
+// HeaderRule sets headers on GET and HEAD responses for keys with Prefix and Suffix.
+// Of several matching rules the later wins; a header stored with the object, or a
+// response-* override, wins over all of them.
+type HeaderRule struct {
+	Prefix, Suffix string
+	Set            map[string]string
+}
+
+// headersFor returns a fresh map of the rule headers for key. Names outside
+// httpx.RuleHeaders are dropped here too: this package keeps the console's CSP intact.
+func (p *BucketPolicy) headersFor(key string) map[string]string {
+	out := map[string]string{}
+	for _, r := range p.Headers {
+		if !strings.HasPrefix(key, r.Prefix) || !strings.HasSuffix(key, r.Suffix) {
+			continue
+		}
+		for k, v := range r.Set {
+			if k = http.CanonicalHeaderKey(k); slices.Contains(httpx.RuleHeaders, k) {
+				out[k] = v
+			}
+		}
+	}
+	return out
 }
 
 // Website names the documents of a bucket served as a static site.
@@ -160,6 +188,13 @@ func (h *Handler) websiteNotFound(req *request, err error) error {
 	ct := info.ContentType
 	if ct == "" {
 		ct = defaultContentType
+	}
+	// The error document's rules, but no freshness: a 404 must not be cached as a page.
+	rules := h.policy(req.bucket).headersFor(w.Error)
+	delete(rules, "Cache-Control")
+	delete(rules, "Expires")
+	for k, v := range rules {
+		hdr.Set(k, v)
 	}
 	hdr.Set("Content-Type", ct)
 	hdr.Set("Content-Length", strconv.FormatInt(info.Size, 10))

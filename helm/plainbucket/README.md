@@ -25,7 +25,7 @@ The chart is also published as an OCI artifact under `oci://ghcr.io/somaz94/char
 - **Keys come from Secrets.** `auth.existingSecret` holds the full-access key. `auth.credentialsSecret` holds a list of further keys, each optionally limited to some buckets or to reads, mounted as the server's credentials file. `auth.accessKey` / `auth.secretKey` make the chart create a Secret, which is convenient for trying it out but leaves the key in the release history.
 - **Hardened pod.** Non-root UID 65532, read-only root filesystem, all capabilities dropped, `RuntimeDefault` seccomp, and no service account token.
 
-`values.yaml` documents every setting and `values.schema.json` rejects unknown keys and malformed values. The server settings behind `config.*` are described in [docs/configuration.md](https://github.com/somaz94/plainbucket/blob/main/docs/configuration.md).
+`values.yaml` documents every setting and `values.schema.json` rejects unknown keys and malformed values. Header names in `config.buckets.<name>.headers` must be written in their usual case (`Cache-Control`), which the schema checks; the server itself would accept any. The server settings behind `config.*` are described in [docs/configuration.md](https://github.com/somaz94/plainbucket/blob/main/docs/configuration.md).
 
 <br/>
 
@@ -35,7 +35,7 @@ The chart is also published as an OCI artifact under `oci://ghcr.io/somaz94/char
 
 - `minimal.yaml`: one full-access key and a larger volume.
 - `runner-cache.yaml`: a GitLab Runner cache with a key limited to its bucket (see [docs/gitlab-runner.md](https://github.com/somaz94/plainbucket/blob/main/docs/gitlab-runner.md)).
-- `static-site.yaml`: a website bucket with index and error documents and CORS, served through an Ingress with virtual-hosted-style hosts. Bucket settings under `config.buckets` are rendered into a ConfigMap passed with `-c`.
+- `static-site.yaml`: a website bucket with index and error documents, CORS and cache headers, served through an Ingress with virtual-hosted-style hosts. Bucket settings under `config.buckets` are rendered into a ConfigMap passed with `-c`.
 - `tls-metrics.yaml`: HTTPS in the pod, a Prometheus Operator `ServiceMonitor`, the alerts and the Grafana dashboard.
 
 <br/>

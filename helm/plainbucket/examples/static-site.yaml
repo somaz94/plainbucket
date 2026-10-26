@@ -1,5 +1,6 @@
 # Static hosting: "www" serves index.html and 404.html to anyone, as www.s3.example.com/
-# (wildcard DNS and certificate) or s3.example.com/www/, and lets one origin fetch it.
+# (wildcard DNS and certificate) or s3.example.com/www/, lets one origin fetch it, and
+# caches assets for a year while pages are revalidated.
 auth:
   existingSecret: plainbucket-auth
 config:
@@ -13,6 +14,10 @@ config:
       cors:
         allowed-origins: ["https://app.example.com"]
         max-age: 1h
+      headers:
+        - set: {Cache-Control: no-cache, X-Content-Type-Options: nosniff}
+        - prefix: assets/
+          set: {Cache-Control: "public, max-age=31536000, immutable"}
 ingress:
   enabled: true
   className: nginx

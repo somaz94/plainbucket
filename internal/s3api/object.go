@@ -11,15 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/somaz94/plainbucket/internal/httpx"
 	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
 const defaultContentType = "binary/octet-stream"
-
-// storedHeaders are kept with the object and returned on GET and HEAD.
-var storedHeaders = []string{"Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Expires"}
 
 // responseOverrides maps GET query parameters to the headers they replace.
 var responseOverrides = map[string]string{
@@ -42,7 +40,7 @@ func metadataFromHeaders(h http.Header) storage.Metadata {
 			md.UserMeta[name] = h.Get(k)
 		}
 	}
-	for _, name := range storedHeaders {
+	for _, name := range httpx.StoredHeaders {
 		v := h.Get(name)
 		if name == "Content-Encoding" {
 			v = stripAWSChunked(v)
@@ -166,6 +164,16 @@ func (h *Handler) getObject(req *request) error {
 	if req.auth != nil {
 		// Tags need a key, as GetObjectTagging does; S3 shows the count only to those who may read them.
 		setTagCount(hdr, info.Tags)
+	}
+	rules := h.policy(req.bucket).headersFor(req.key)
+	// Cache-Control and Expires state one freshness; whoever sets either decides it.
+	if info.Headers["Cache-Control"] != "" || info.Headers["Expires"] != "" ||
+		req.r.Method == http.MethodGet && (req.q.Get("response-cache-control") != "" || req.q.Get("response-expires") != "") {
+		delete(rules, "Cache-Control")
+		delete(rules, "Expires")
+	}
+	for k, v := range rules {
+		hdr.Set(k, v)
 	}
 	for k, v := range info.UserMeta {
 		// Lowercase as S3 sends them: clients take the metadata key from the header name.
