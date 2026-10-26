@@ -88,6 +88,16 @@ type Bucket struct {
 	TrashAfter time.Duration `yaml:"trash-after"`
 	Notify     []Notify      `yaml:"notify"`
 	Headers    []HeaderRule  `yaml:"headers"`
+	Lifecycle  []Lifecycle   `yaml:"lifecycle"`
+}
+
+// Lifecycle overrides the bucket's ExpireAfter for the objects under Prefix; the longest
+// matching prefix wins. ExpireAfter counts from the last use, DeleteAfter from the last
+// write, and a rule with neither exempts its prefix from expiry.
+type Lifecycle struct {
+	Prefix      string        `yaml:"prefix"`
+	ExpireAfter time.Duration `yaml:"expire-after"`
+	DeleteAfter time.Duration `yaml:"delete-after"`
 }
 
 // HeaderRule sets default response headers on the objects whose keys match; later rules win.
@@ -414,6 +424,17 @@ func (c *Config) validateBuckets() error {
 		}
 		if err := validateHeaders(where, b.Headers); err != nil {
 			return err
+		}
+		prefixes := map[string]bool{}
+		for i, r := range b.Lifecycle {
+			at := fmt.Sprintf("%s.lifecycle[%d]", where, i)
+			switch {
+			case prefixes[r.Prefix]:
+				return fmt.Errorf("%s: prefix %q has a rule already", at, r.Prefix)
+			case r.ExpireAfter < 0 || r.DeleteAfter < 0:
+				return fmt.Errorf("%s: expire-after and delete-after must not be negative", at)
+			}
+			prefixes[r.Prefix] = true
 		}
 		if cr := b.CORS; cr != nil {
 			if len(cr.AllowedOrigins) == 0 {

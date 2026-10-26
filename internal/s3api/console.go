@@ -54,6 +54,7 @@ type consoleBucket struct {
 	MeasuredAt  time.Time `json:"measured_at,omitzero"`
 	MaxSize     int64     `json:"max_size,omitempty"`
 	ExpireAfter string    `json:"expire_after,omitempty"`
+	Lifecycle   int       `json:"lifecycle_rules,omitempty"`
 	Evict       bool      `json:"evict,omitempty"`
 	Public      bool      `json:"public,omitempty"`
 	Website     bool      `json:"website,omitempty"`
@@ -103,7 +104,7 @@ func (h *Handler) consoleUsage(req *request) error {
 		}
 		u, l, p := usage[b.Name], h.store.BucketLimit(b.Name), h.policy(b.Name)
 		item := consoleBucket{Name: b.Name, Objects: u.Objects, Bytes: u.Bytes, MeasuredAt: u.At,
-			MaxSize: l.MaxSize, Evict: l.Evict, Public: p.Public, Website: p.Website != nil, CORS: p.CORS != nil}
+			MaxSize: l.MaxSize, Evict: l.Evict, Lifecycle: len(l.Rules), Public: p.Public, Website: p.Website != nil, CORS: p.CORS != nil}
 		if l.ExpireAfter > 0 {
 			item.ExpireAfter = l.ExpireAfter.String()
 		}

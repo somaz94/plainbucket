@@ -264,6 +264,20 @@ func TestBuckets(t *testing.T) {
 		h[1].Suffix != ".html" || h[1].Set["Cache-Control"] != "no-cache" {
 		t.Errorf("headers = %+v", h)
 	}
+	_ = os.WriteFile(path, []byte(`buckets:
+  ci-cache:
+    expire-after: 336h
+    lifecycle:
+      - {prefix: logs/, delete-after: 168h}
+      - {prefix: tmp/, expire-after: 24h}
+      - {prefix: keep/}
+`), 0o600)
+	if cfg, err = Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if lc := cfg.Buckets["ci-cache"].Lifecycle; len(lc) != 3 || lc[0].DeleteAfter != 168*time.Hour || lc[1].ExpireAfter != 24*time.Hour || lc[2].Prefix != "keep/" {
+		t.Errorf("lifecycle = %+v", lc)
+	}
 	empty := filepath.Join(dir, "empty-secret")
 	_ = os.WriteFile(empty, []byte("\n"), 0o600)
 
@@ -277,6 +291,9 @@ func TestBuckets(t *testing.T) {
 		"notify empty secret":  "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + empty + "}]}}\n",
 		"notify inline secret": "buckets: {u: {notify: [{url: \"http://h\", secret: x}]}}\n",
 		"headers empty set":    "buckets: {www: {headers: [{prefix: a/}]}}\n",
+		"lifecycle twice":      "buckets: {ci-cache: {lifecycle: [{prefix: a/, expire-after: 1h}, {prefix: a/, delete-after: 1h}]}}\n",
+		"lifecycle negative":   "buckets: {ci-cache: {lifecycle: [{prefix: a/, delete-after: -1h}]}}\n",
+		"lifecycle bad key":    "buckets: {ci-cache: {lifecycle: [{prefix: a/, expire: 1h}]}}\n",
 		"headers content type": "buckets: {www: {headers: [{set: {Content-Type: text/html}}]}}\n",
 		"headers csp":          "buckets: {www: {headers: [{set: {Content-Security-Policy: none}}]}}\n",
 		"headers twice":        "buckets: {www: {headers: [{set: {cache-control: a, Cache-Control: b}}]}}\n",

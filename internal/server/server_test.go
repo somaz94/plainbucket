@@ -199,6 +199,11 @@ func TestBucketPolicies(t *testing.T) {
 	if l := bucketLimits(cfg); len(l) != 1 || l["cache"].MaxSize != 10 || !l["cache"].Evict {
 		t.Errorf("limits = %+v", l)
 	}
+	cfg.Buckets["logs"] = config.Bucket{Lifecycle: []config.Lifecycle{{Prefix: "a/", DeleteAfter: time.Hour}}}
+	if l := bucketLimits(cfg)["logs"]; len(l.Rules) != 1 || l.Rules[0].Prefix != "a/" || l.Rules[0].DeleteAfter != time.Hour {
+		t.Errorf("lifecycle limit = %+v", l)
+	}
+	delete(cfg.Buckets, "logs")
 	if tr := bucketTrash(cfg); len(tr) != 1 || tr["docs"] != 48*time.Hour {
 		t.Errorf("trash = %+v", tr)
 	}

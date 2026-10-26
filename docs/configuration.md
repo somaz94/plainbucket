@@ -108,6 +108,12 @@ buckets:
     expire-after: 336h      # remove objects unused for two weeks
     max-size: 85899345920   # bytes
     evict: true             # over max-size, remove the least recently used
+  build-output:
+    expire-after: 720h
+    lifecycle:              # per prefix; the longest matching prefix wins
+      - {prefix: logs/, delete-after: 168h}   # a week after the upload, read or not
+      - {prefix: tmp/, expire-after: 24h}
+      - {prefix: releases/}                   # never expires
   docs:
     trash-after: 168h       # deleted objects stay restorable for a week
   site:
@@ -146,12 +152,13 @@ Signed requests keep S3 semantics, so clients and the aws cli still list the buc
 
 ### Expiry and Size Limits
 
-An object's last use is the later of its last write and its last `GET` or `HEAD`. A read records itself by moving the modification time of the object's metadata file, at most once an hour, or once a quarter of `expire-after` when that is shorter; the data file is never touched.
+An object's last use is the later of its last write and its last `GET` or `HEAD`. A read records itself by moving the modification time of the object's metadata file, at most once an hour, or once a quarter of the `expire-after` that applies to the object when that is shorter; the data file is never touched.
 
 - `expire-after` removes objects not used for that long. It suits caches: the GitLab Runner does not re-upload an unchanged cache, so expiring by upload time would remove caches in daily use.
+- `lifecycle` sets the expiry per key prefix. Of the rules whose `prefix` starts a key, the longest decides, and keys no rule matches fall back to the bucket's `expire-after`. A rule's `expire-after` counts from the last use, like the bucket's; its `delete-after` counts from the last write, so an object read every day still goes, as with an S3 lifecycle expiration. With both, whichever comes first removes it; with neither, the prefix never expires, though `evict: true` still removes its objects when the bucket is over `max-size`. An object restored from the trash, or a file copied in with its modification time preserved, keeps its original write time, so under a `delete-after` whose period has passed the next pass removes it.
 - `max-size` caps the bucket's bytes. By default a write that would pass it is refused with `403 QuotaExceeded`. With `evict: true` the write is accepted and the least recently used objects are removed until the bucket fits again; only an object larger than the whole limit is refused.
 
-The background job applies both hourly, and at once when a write takes an evicting bucket over its limit, so expiry is as precise as an hour. The server measures the buckets before it starts serving, then tracks usage as objects are written and deleted and re-measures hourly to include files changed outside the server; a file changed outside the server counts only from the next measurement. An object rewritten or read between the scan and its removal is kept. Incomplete multipart uploads do not count until they are completed, and files whose names cannot be keys are not counted against a limit.
+The background job applies both hourly, and at once when a write takes an evicting bucket over its limit, so expiry is as precise as an hour. The server measures the buckets before it starts serving, then tracks usage as objects are written and deleted and re-measures hourly to include files changed outside the server; a file changed outside the server counts only from the next measurement. An object rewritten between the scan and its removal is kept, and so is one read in that time, unless a `delete-after` rule removes it. Incomplete multipart uploads do not count until they are completed, and files whose names cannot be keys are not counted against a limit.
 
 
 ### Trash

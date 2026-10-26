@@ -89,7 +89,8 @@ func TestConsoleUsage(t *testing.T) {
 		o.Credentials = append(o.Credentials, Credential{AccessKey: "scoped", SecretKey: "scoped-secret", Buckets: []string{"aaa"}},
 			Credential{AccessKey: "reader", SecretKey: "reader-secret", ReadOnly: true})
 	})
-	x.h.store.SetLimits(map[string]storage.Limit{"aaa": {MaxSize: 100, Evict: true, ExpireAfter: 336 * time.Hour}})
+	x.h.store.SetLimits(map[string]storage.Limit{"aaa": {MaxSize: 100, Evict: true, ExpireAfter: 336 * time.Hour,
+		Rules: []storage.LifecycleRule{{Prefix: "tmp/", ExpireAfter: time.Hour}}}})
 	for _, b := range []string{"aaa", "bbb"} {
 		x.mustDo(http.MethodPut, "/"+b, nil, nil, http.StatusOK)
 	}
@@ -121,7 +122,7 @@ func TestConsoleUsage(t *testing.T) {
 		t.Errorf("disk: %+v", d)
 	}
 	a, b := res.Buckets[0], res.Buckets[1]
-	if a.Name != "aaa" || a.Bytes != 3 || a.Objects != 1 || a.MaxSize != 100 || !a.Evict || a.ExpireAfter != "336h0m0s" || a.MeasuredAt.IsZero() {
+	if a.Name != "aaa" || a.Bytes != 3 || a.Objects != 1 || a.MaxSize != 100 || !a.Evict || a.ExpireAfter != "336h0m0s" || a.Lifecycle != 1 || a.MeasuredAt.IsZero() {
 		t.Errorf("bucket a: %+v", a)
 	}
 	if !b.Public || !b.Website || !b.CORS || a.Website || a.CORS || b.MaxSize != 0 {

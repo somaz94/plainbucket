@@ -271,8 +271,12 @@ func notifyTargets(cfg *config.Config) map[string][]notify.Target {
 func bucketLimits(cfg *config.Config) map[string]storage.Limit {
 	out := map[string]storage.Limit{}
 	for name, b := range cfg.Buckets {
-		if b.ExpireAfter > 0 || b.MaxSize > 0 {
-			out[name] = storage.Limit{ExpireAfter: b.ExpireAfter, MaxSize: b.MaxSize, Evict: b.Evict}
+		if b.ExpireAfter > 0 || b.MaxSize > 0 || len(b.Lifecycle) > 0 {
+			l := storage.Limit{ExpireAfter: b.ExpireAfter, MaxSize: b.MaxSize, Evict: b.Evict}
+			for _, r := range b.Lifecycle {
+				l.Rules = append(l.Rules, storage.LifecycleRule{Prefix: r.Prefix, ExpireAfter: r.ExpireAfter, DeleteAfter: r.DeleteAfter})
+			}
+			out[name] = l
 		}
 	}
 	return out

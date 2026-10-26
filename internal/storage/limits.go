@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -24,9 +25,38 @@ type Limit struct {
 	MaxSize int64
 	// Evict makes MaxSize evict the least recently used objects instead of refusing writes.
 	Evict bool
+	// Rules override ExpireAfter for the keys under their prefix; the longest prefix wins.
+	Rules []LifecycleRule
+}
+
+// LifecycleRule expires the objects under Prefix: ExpireAfter counts from the last use,
+// DeleteAfter from the last write. A rule with neither exempts its prefix from expiry,
+// though not from eviction: a bucket over an evicting MaxSize must shrink regardless.
+type LifecycleRule struct {
+	Prefix      string
+	ExpireAfter time.Duration
+	DeleteAfter time.Duration
 }
 
 func (l Limit) evicts() bool { return l.Evict && l.MaxSize > 0 }
+
+func (l Limit) expires() bool {
+	return l.ExpireAfter > 0 || slices.ContainsFunc(l.Rules, func(r LifecycleRule) bool { return r.ExpireAfter > 0 || r.DeleteAfter > 0 })
+}
+
+// ruleFor returns the expiry of the longest rule prefix matching key, else the bucket's.
+func (l Limit) ruleFor(key string) (expireAfter, deleteAfter time.Duration) {
+	best := -1
+	for i, r := range l.Rules {
+		if strings.HasPrefix(key, r.Prefix) && (best < 0 || len(r.Prefix) > len(l.Rules[best].Prefix)) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return l.ExpireAfter, 0
+	}
+	return l.Rules[best].ExpireAfter, l.Rules[best].DeleteAfter
+}
 
 // SetLimits sets the per-bucket limits. Call it before serving.
 func (s *Store) SetLimits(limits map[string]Limit) { s.limits.Store(&limits) }
@@ -140,7 +170,7 @@ func (s *Store) Removed() (expired, evicted int64) { return s.expired.Load(), s.
 func (s *Store) touch(bucket, key string) {
 	every := touchInterval
 	// A short expiry needs finer records, or an object read all along would expire.
-	if e := s.limitsNow()[bucket].ExpireAfter; e > 0 && e/4 < every {
+	if e, _ := s.limitsNow()[bucket].ruleFor(key); e > 0 && e/4 < every {
 		every = e / 4
 	}
 	p := s.metaPath(bucket, key)
@@ -165,7 +195,8 @@ func (s *Store) lastUse(bucket, key string, data os.FileInfo) time.Time {
 type candidate struct {
 	key     string
 	size    int64
-	mtimeNs int64
+	mtimeNs int64     // identity, compared exactly
+	written time.Time // for delete-after; UnixNano wraps outside 1678 to 2262
 	used    time.Time
 }
 
@@ -185,14 +216,22 @@ func (s *Store) enforceLimits(ctx context.Context) (expired, evicted int) {
 		if ctx.Err() != nil {
 			return
 		}
-		if (l.ExpireAfter == 0 && !l.evicts()) || s.requireBucket(bucket) != nil {
+		if (!l.expires() && !l.evicts()) || s.requireBucket(bucket) != nil {
 			continue
 		}
 		objs := s.scanBucket(ctx, bucket)
-		if l.ExpireAfter > 0 {
-			cutoff := s.now().Add(-l.ExpireAfter)
+		if l.expires() {
+			now := s.now()
 			objs = slices.DeleteFunc(objs, func(c candidate) bool {
-				if c.used.Before(cutoff) && s.removeIfUnused(bucket, c, cutoff) {
+				expireAfter, deleteAfter := l.ruleFor(c.key)
+				var removed bool
+				switch {
+				case deleteAfter > 0 && c.written.Before(now.Add(-deleteAfter)):
+					removed = s.removeUnchanged(bucket, c, nil) // however recently read
+				case expireAfter > 0 && c.used.Before(now.Add(-expireAfter)):
+					removed = s.removeIfUnused(bucket, c, now.Add(-expireAfter))
+				}
+				if removed {
 					expired++
 					s.limitRemoved(bucket, c.key)
 					return true
@@ -241,7 +280,7 @@ func (s *Store) scanBucket(ctx context.Context, bucket string) []candidate {
 		if err != nil || ierr != nil || checkKey(key) != nil {
 			return nil
 		}
-		out = append(out, candidate{key: key, size: fi.Size(), mtimeNs: fi.ModTime().UnixNano(), used: s.lastUse(bucket, key, fi)})
+		out = append(out, candidate{key: key, size: fi.Size(), mtimeNs: fi.ModTime().UnixNano(), written: fi.ModTime(), used: s.lastUse(bucket, key, fi)})
 		return nil
 	})
 	return out
@@ -250,6 +289,12 @@ func (s *Store) scanBucket(ctx context.Context, bucket string) []candidate {
 // removeIfUnused deletes c unless it changed since the scan or was used at or after
 // usedBefore.
 func (s *Store) removeIfUnused(bucket string, c candidate, usedBefore time.Time) bool {
+	return s.removeUnchanged(bucket, c, func(fi os.FileInfo) bool { return s.lastUse(bucket, c.key, fi).Before(usedBefore) })
+}
+
+// removeUnchanged deletes c unless it changed since the scan or ok, given the file found
+// under the key lock, refuses; a nil ok checks nothing more.
+func (s *Store) removeUnchanged(bucket string, c candidate, ok func(os.FileInfo) bool) bool {
 	bl := s.bucketLock(bucket)
 	bl.RLock()
 	defer bl.RUnlock()
@@ -263,7 +308,7 @@ func (s *Store) removeIfUnused(bucket string, c candidate, usedBefore time.Time)
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() != c.size || fi.ModTime().UnixNano() != c.mtimeNs {
 		return false
 	}
-	if !s.lastUse(bucket, c.key, fi).Before(usedBefore) {
+	if ok != nil && !ok(fi) {
 		return false
 	}
 	removed, err := s.removeFile(bucket, c.key, p, fi)

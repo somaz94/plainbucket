@@ -1095,6 +1095,7 @@ function bucketInfo(bucket) {
       b.cors ? badge("CORS") : null,
       b.max_size ? badge(`limit ${formatBytes(b.max_size)}` + (b.evict ? ", evicts least recently used" : "")) : null,
       b.expire_after ? badge(`expires after ${formatGoDuration(b.expire_after)}`) : null,
+      b.lifecycle_rules ? badge(plural(b.lifecycle_rules, "lifecycle rule")) : null,
       b.trash_after ? el("a", { href: trashHash(bucket), class: "badge" }, `trash, kept ${formatGoDuration(b.trash_after)}`) : null,
       el("span", { class: "muted" }, `${plural(b.objects, "object")} · ${formatBytes(b.bytes)}`)].filter(Boolean));
   }, () => {});

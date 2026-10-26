@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -205,7 +207,7 @@ func TestMeasureUsagePerBucket(t *testing.T) {
 	if _, ok := s.BucketUsage()["free"]; ok {
 		t.Error("BucketUsage lists a bucket without limits")
 	}
-	if l := s.BucketLimit("bkt"); l.MaxSize != 100 || s.BucketLimit("free") != (Limit{}) {
+	if l := s.BucketLimit("bkt"); l.MaxSize != 100 || !reflect.DeepEqual(s.BucketLimit("free"), Limit{}) {
 		t.Errorf("limits = %+v", l)
 	}
 	if err := s.CreateBucket("gone"); err != nil {
@@ -382,5 +384,128 @@ func TestPausedJanitorRemovesNothing(t *testing.T) {
 	s.applyLimits(ctx, log)
 	if n := s.sweepUnlessPaused(ctx, time.Hour); n == 0 || onDisk() {
 		t.Errorf("resumed janitor removed %d, old kept %v", n, onDisk())
+	}
+}
+
+func TestLifecycleRules(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	l := Limit{ExpireAfter: 48 * time.Hour, Rules: []LifecycleRule{
+		{Prefix: "logs/", DeleteAfter: 24 * time.Hour},
+		{Prefix: "logs/keep/"},
+		{Prefix: "tmp/", ExpireAfter: time.Hour},
+	}}
+	s.SetLimits(map[string]Limit{"bkt": l})
+	keys := map[string]time.Duration{ // how long ago each was written and last read
+		"logs/old": 48 * time.Hour, "logs/new": time.Hour, "logs/keep/x": 240 * time.Hour,
+		"tmp/stale": 2 * time.Hour, "tmp/warm": 30 * time.Minute, "other": 72 * time.Hour, "fresh": 0,
+	}
+	for k, ago := range keys {
+		put(t, s, k, "data")
+		age(t, s, k, c.t.Add(-ago))
+	}
+	// Read just now: delete-after still counts from the write.
+	_ = os.Chtimes(s.metaPath("bkt", "logs/old"), c.t, c.t)
+	onDisk := func(k string) bool { _, err := os.Stat(filepath.Join(s.root, "bkt", k)); return err == nil }
+
+	removed := limitRemovals(s)
+	expired, _ := s.enforceLimits(context.Background())
+	gone := strings.Join(slices.Sorted(slices.Values(*removed)), ",")
+	if expired != 3 || gone != "bkt/logs/old,bkt/other,bkt/tmp/stale" {
+		t.Errorf("expired %d: %s", expired, gone)
+	}
+	for _, k := range []string{"logs/new", "logs/keep/x", "tmp/warm", "fresh"} {
+		if !onDisk(k) {
+			t.Errorf("%s removed", k)
+		}
+	}
+
+	if e, d := l.ruleFor("logs/keep/deep/y"); e != 0 || d != 0 {
+		t.Errorf("exempt prefix: %v %v", e, d)
+	}
+	if e, d := l.ruleFor("elsewhere"); e != 48*time.Hour || d != 0 {
+		t.Errorf("bucket default: %v %v", e, d)
+	}
+	if (Limit{Rules: []LifecycleRule{{Prefix: "keep/"}}}).expires() {
+		t.Error("a rule that keeps everything expires")
+	}
+}
+
+func TestLifecycleBothAndRewrite(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetTrash(map[string]time.Duration{"bkt": time.Hour})
+	s.SetLimits(map[string]Limit{"bkt": {Rules: []LifecycleRule{{Prefix: "b/", ExpireAfter: time.Hour, DeleteAfter: 24 * time.Hour}}}})
+	put(t, s, "b/old-read", "data")
+	age(t, s, "b/old-read", c.t.Add(-25*time.Hour))
+	_ = os.Chtimes(s.metaPath("bkt", "b/old-read"), c.t.Add(-time.Minute), c.t.Add(-time.Minute))
+	put(t, s, "b/unread", "data")
+	age(t, s, "b/unread", c.t.Add(-2*time.Hour))
+	put(t, s, "b/read", "data")
+	age(t, s, "b/read", c.t.Add(-2*time.Hour))
+	_ = os.Chtimes(s.metaPath("bkt", "b/read"), c.t.Add(-10*time.Minute), c.t.Add(-10*time.Minute))
+	onDisk := func(k string) bool { _, err := os.Stat(filepath.Join(s.root, "bkt", k)); return err == nil }
+
+	// Whichever of the two comes first removes it, and expiry never goes to the trash.
+	if expired, _ := s.enforceLimits(context.Background()); expired != 2 || onDisk("b/old-read") || onDisk("b/unread") || !onDisk("b/read") {
+		t.Errorf("expired %d; old-read %v unread %v read %v", expired, onDisk("b/old-read"), onDisk("b/unread"), onDisk("b/read"))
+	}
+	if list, _ := s.ListTrash("bkt"); len(list) != 0 {
+		t.Errorf("expired objects in the trash: %+v", list)
+	}
+
+	// A same-size rewrite after the scan has a new mtime, so delete-after keeps it.
+	put(t, s, "b/k", "old1")
+	age(t, s, "b/k", c.t.Add(-48*time.Hour))
+	var cand candidate
+	for _, x := range s.scanBucket(context.Background(), "bkt") {
+		if x.key == "b/k" {
+			cand = x
+		}
+	}
+	put(t, s, "b/k", "new1")
+	if s.removeUnchanged("bkt", cand, nil) || !onDisk("b/k") {
+		t.Error("removed an object rewritten after the scan")
+	}
+}
+
+func TestLifecycleExemptStillEvicts(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 6, Evict: true, Rules: []LifecycleRule{{Prefix: "keep/"}}}})
+	put(t, s, "keep/a", "aaaa")
+	age(t, s, "keep/a", c.t.Add(-time.Hour))
+	put(t, s, "b", "bbbb")
+	if _, evicted := s.enforceLimits(context.Background()); evicted != 1 || exists(s, "keep/a") {
+		t.Errorf("evicted %d; keep/a kept %v", evicted, exists(s, "keep/a"))
+	}
+}
+
+func TestLifecycleRuleTouchesMoreOften(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetLimits(map[string]Limit{"bkt": {Rules: []LifecycleRule{{Prefix: "t/", ExpireAfter: 20 * time.Minute}}}})
+	for _, k := range []string{"t/k", "other"} {
+		put(t, s, k, "data")
+		age(t, s, k, c.t)
+	}
+	c.t = c.t.Add(6 * time.Minute)
+	for _, k := range []string{"t/k", "other"} {
+		f, _, err := s.GetObject("bkt", k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = f.Close()
+	}
+	// A quarter of the rule's 20m for its prefix; the hourly default elsewhere.
+	if fi, _ := os.Stat(s.metaPath("bkt", "t/k")); !fi.ModTime().Equal(c.t) {
+		t.Error("read under a short rule not recorded")
+	}
+	if fi, _ := os.Stat(s.metaPath("bkt", "other")); fi.ModTime().Equal(c.t) {
+		t.Error("read outside the rule recorded early")
 	}
 }

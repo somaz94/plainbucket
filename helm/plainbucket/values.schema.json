@@ -368,6 +368,26 @@
                     }
                   }
                 }
+              },
+              "lifecycle": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "expire-after": {
+                      "type": "string",
+                      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+                    },
+                    "delete-after": {
+                      "type": "string",
+                      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+                    }
+                  }
+                }
               }
             },
             "allOf": [
