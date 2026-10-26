@@ -1,5 +1,5 @@
 # The tag is the version: ldflags, image build args and hack/bump-version.sh read it here.
-IMG ?= somaz940/plainbucket:v0.5.0
+IMG ?= somaz940/plainbucket:v0.6.0
 APP_NAME := plainbucket
 MODULE := github.com/somaz94/plainbucket
 
