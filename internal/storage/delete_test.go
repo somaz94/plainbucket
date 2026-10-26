@@ -42,6 +42,17 @@ func TestDeleteObjectIf(t *testing.T) {
 	if removed, err := s.DeleteObjectIf("bkt", "d/", DeleteConditions{}); err != nil || removed {
 		t.Errorf("missing marker: %v %v", removed, err)
 	}
+	// A file named like the marker without its slash is another object.
+	put(t, s, "f", "file")
+	if removed, err := s.DeleteObjectIf("bkt", "f/", DeleteConditions{}); err != nil || removed || !exists(s, "f") {
+		t.Errorf("marker delete over a file: %v %v, file kept %v", removed, err, exists(s, "f"))
+	}
+	// A folder with objects in it loses its marker and keeps the objects.
+	put(t, s, "e/", "")
+	put(t, s, "e/x", "x")
+	if removed, err := s.DeleteObjectIf("bkt", "e/", DeleteConditions{}); err != nil || !removed || s.hasMarker("bkt", "e/") || !exists(s, "e/x") {
+		t.Errorf("marker of a non-empty folder: %v %v", removed, err)
+	}
 	if removed, err := s.DeleteObjectIf("bkt", "bad//key", DeleteConditions{}); err != nil || removed {
 		t.Errorf("invalid key: %v %v", removed, err)
 	}

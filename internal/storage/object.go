@@ -311,9 +311,13 @@ func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) (remov
 
 	p := s.dataPath(bucket, key)
 	if isDirKey(key) {
-		_ = os.Remove(s.metaPath(bucket, key))
-		if s.r.Remove(s.rel(p)) != nil {
+		hadMarker := os.Remove(s.metaPath(bucket, key)) == nil
+		// The path without the slash may be a file: the object key, not this one.
+		if fi, err := s.r.Lstat(s.rel(p)); err != nil || !fi.IsDir() {
 			return false, nil
+		}
+		if s.r.Remove(s.rel(p)) != nil {
+			return hadMarker, nil // a folder with objects in it loses only its marker
 		}
 		s.pruneEmptyParents(bucket, filepath.Dir(p))
 		return true, nil
