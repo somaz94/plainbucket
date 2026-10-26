@@ -17,8 +17,9 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - `internal/storage/` - the filesystem store: key mapping, sidecar metadata, atomic commit, S3-order listing walker, multipart, janitor. Knows nothing about HTTP.
 - `internal/s3api/` - HTTP router and handlers, access keys with bucket scopes and read-only, public-bucket anonymous reads, virtual-hosted routing, XML documents, payload verification and upload progress deadline, storage error to S3 error mapping, Prometheus metrics.
 - `internal/s3err/` - S3 error type and XML rendering.
+- `internal/notify/` - bucket event webhooks: S3 event JSON, HMAC signature, a bounded queue and retries per target, swapped whole by `SetTargets` on reload.
 - `internal/console/` - the embedded web console (`static/`: vanilla JS, its own SigV4 signer in `sigv4.js`); `s3api` routes `/_console/` to it and serves the signed usage and trash APIs.
-- `internal/server/` - listener lifecycle, the hourly janitor, and configuration reloads on `SIGHUP` or a changed config, credentials or certificate file.
+- `internal/server/` - listener lifecycle, the hourly janitor, and configuration reloads on `SIGHUP` or a changed config, credentials, certificate or webhook secret file.
 - `compat/` - separate Go module running the AWS SDK for Go v2 against the handler.
 - `helm/plainbucket/` - Helm chart; `hack/test-helm.sh` lints it, renders it and checks the fail guards and schema. Published by `.github/workflows/helm-release.yml` on tags.
 - `hack/test-awscli.sh`, `hack/test-rclone.sh`, `hack/test-gitlab-runner.sh`, `hack/test-console.sh` (with `hack/test-console.mjs`) - client end-to-end scripts against `bin/plainbucket`; `hack/e2e-lib.sh` starts the server for them. The runner script downloads the official binary at the version and SHA-256 pinned in it and caches it in `bin/`; `compat/cmd/presign` makes its presigned URLs.
@@ -43,6 +44,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - One process per root: the server and fsck take `storage.Lock` (flock on `.plainbucket/lock`), because object locks live in the process.
 - Expiry and eviction go through `removeIfUnused`, which re-checks size, mtime and last use under the key lock, so a scan never deletes an object rewritten or read after it. Last use is the later of the data file's mtime (write) and the sidecar's (read); reads move only the sidecar's, never the data file's.
 - A delete in a bucket with `trash-after` moves the file into `.plainbucket/trash` (`trashFile`); expiry and eviction never do. A restore goes through `account` and never replaces an object.
+- Event notifications never block or fail a request: `Notifier.Publish` drops on a full queue, and handlers publish only after the store committed the change. Deletes are published only when `DeleteObjectIf` reports an object removed; expiry and eviction reach the notifier through `Store.OnLimitRemove`.
 - Bucket usage changes go through `account` (writes, may refuse) or `adjust` (deletes and rollbacks, never refuse); both record into `measuring` while `MeasureUsage` walks, so its swap does not drop them.
 - `hack/bump-version.sh` moves the Makefile image tag, Chart `version` / `appVersion` and `values.yaml` `image.tag` together.
 

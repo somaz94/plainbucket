@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -10,11 +12,12 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/config"
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3api"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-// reloadPoll is how often the configuration, credentials and certificate files are
+// reloadPoll is how often the configuration, credentials, certificate and webhook secret files are
 // checked for changes. A Kubernetes Secret update reaches a mounted file within about a
 // minute, so polling faster gains little.
 const reloadPoll = 30 * time.Second
@@ -42,17 +45,19 @@ func (c *certificate) load(certFile, keyFile string) error {
 
 func (c *certificate) get(*tls.ClientHelloInfo) (*tls.Certificate, error) { return c.pair.Load(), nil }
 
-// reloader takes a changed configuration over: access keys, bucket policies and limits,
-// min-free-space and the certificate. Other settings are reported as needing a restart.
+// reloader takes a changed configuration over: access keys, bucket policies, limits, trash and
+// webhooks, min-free-space and the certificate. Other settings are reported as needing a restart.
 type reloader struct {
-	src     reloadSource
-	boot    *config.Config // what the server started with
-	cfg     *config.Config // in force
-	handler *s3api.Handler
-	store   *storage.Store
-	cert    *certificate // nil without TLS
-	logger  *slog.Logger
-	stamps  map[string]fileStamp
+	src      reloadSource
+	boot     *config.Config // what the server started with
+	cfg      *config.Config // in force
+	handler  *s3api.Handler
+	store    *storage.Store
+	notifier *notify.Notifier
+	cert     *certificate // nil without TLS
+	logger   *slog.Logger
+	stamps   map[string]fileStamp
+	missing  string // a file the last failed reload could not read; its appearance retries
 }
 
 type fileStamp struct {
@@ -86,7 +91,13 @@ func (r *reloader) run(ctx context.Context) {
 // Kubernetes swaps when it updates a mounted Secret.
 func (r *reloader) snapshot() map[string]fileStamp {
 	out := map[string]fileStamp{}
-	for _, f := range []string{r.src.configFile, r.cfg.CredentialsFile, r.cfg.TLSCert, r.cfg.TLSKey} {
+	files := []string{r.src.configFile, r.cfg.CredentialsFile, r.cfg.TLSCert, r.cfg.TLSKey, r.missing}
+	for _, b := range r.cfg.Buckets {
+		for _, n := range b.Notify {
+			files = append(files, n.SecretFile)
+		}
+	}
+	for _, f := range files {
 		if f == "" {
 			continue
 		}
@@ -101,8 +112,13 @@ func (r *reloader) snapshot() map[string]fileStamp {
 
 func (r *reloader) reload(ctx context.Context, cause string) {
 	// Taken first, so a file that fails to load is not retried on every tick.
+	r.missing = ""
 	r.stamps = r.snapshot()
 	next, err := config.Load(r.src.configFile)
+	if pe, ok := errors.AsType[*fs.PathError](err); ok && errors.Is(pe, fs.ErrNotExist) {
+		r.missing = pe.Path // such as a secret-file whose Secret is not mounted yet
+		r.stamps[pe.Path] = fileStamp{}
+	}
 	if err != nil {
 		r.logger.Error("reload failed; keeping the running configuration", "cause", cause, "err", err)
 		return
@@ -128,6 +144,9 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 		r.logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
 	}
 	r.handler.SetAccess(credentials(next), bucketPolicies(next), nil)
+	if r.notifier != nil {
+		r.notifier.SetTargets(notifyTargets(next))
+	}
 	r.cfg = next
 	r.stamps = r.snapshot()
 	r.logger.Info("configuration reloaded", "cause", cause, "keys", len(next.AllCredentials()), "buckets", len(next.Buckets))

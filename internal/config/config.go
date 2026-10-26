@@ -3,11 +3,13 @@
 package config
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -18,6 +20,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
@@ -76,6 +79,19 @@ type Bucket struct {
 	Evict   bool  `yaml:"evict"`
 	// TrashAfter keeps deleted objects restorable from the console for this long.
 	TrashAfter time.Duration `yaml:"trash-after"`
+	Notify     []Notify      `yaml:"notify"`
+}
+
+// Notify posts the bucket's events to a webhook.
+type Notify struct {
+	ID     string   `yaml:"id"` // default notify-<n>
+	URL    string   `yaml:"url"`
+	Events []string `yaml:"events"` // such as s3:ObjectCreated:*; empty = all
+	Prefix string   `yaml:"prefix"`
+	Suffix string   `yaml:"suffix"`
+	// SecretFile holds the HMAC key (e.g. a mounted Secret); validation reads it into Secret.
+	SecretFile string `yaml:"secret-file"`
+	Secret     []byte `yaml:"-"`
 }
 
 // Website serves a public bucket as a static site to unsigned requests.
@@ -370,6 +386,9 @@ func (c *Config) validateBuckets() error {
 		case b.Evict && b.MaxSize == 0:
 			return fmt.Errorf("%s.evict needs max-size", where)
 		}
+		if err := validateNotify(where, b.Notify); err != nil {
+			return err
+		}
 		if cr := b.CORS; cr != nil {
 			if len(cr.AllowedOrigins) == 0 {
 				return fmt.Errorf("%s.cors.allowed-origins must not be empty", where)
@@ -387,6 +406,40 @@ func (c *Config) validateBuckets() error {
 			}
 			if cr.MaxAge < 0 {
 				return fmt.Errorf("%s.cors.max-age must not be negative", where)
+			}
+		}
+	}
+	return nil
+}
+
+func validateNotify(where string, targets []Notify) error {
+	ids := map[string]bool{}
+	for i := range targets {
+		n := &targets[i]
+		at := fmt.Sprintf("%s.notify[%d]", where, i)
+		if n.ID == "" {
+			n.ID = fmt.Sprintf("notify-%d", i+1)
+		}
+		if ids[n.ID] {
+			return fmt.Errorf("%s: id %q is used twice", at, n.ID)
+		}
+		ids[n.ID] = true
+		if u, err := url.Parse(n.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%s.url: %q must be an http or https URL", at, n.URL)
+		}
+		for _, e := range n.Events {
+			if !notify.ValidEvent(e) {
+				return fmt.Errorf("%s.events: %q is not a supported event, such as s3:ObjectCreated:* or s3:ObjectRemoved:Delete", at, e)
+			}
+		}
+		if n.SecretFile != "" {
+			raw, err := os.ReadFile(n.SecretFile)
+			if err != nil {
+				return fmt.Errorf("%s.secret-file: %w", at, err)
+			}
+			// Secrets written with echo end in a newline nobody means as part of the key.
+			if n.Secret = bytes.TrimRight(raw, "\r\n"); len(n.Secret) == 0 {
+				return fmt.Errorf("%s.secret-file: %s is empty", at, n.SecretFile)
 			}
 		}
 	}

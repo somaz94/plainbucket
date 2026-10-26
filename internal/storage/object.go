@@ -249,11 +249,12 @@ func (s *Store) refresh(bucket, key string, f *os.File, fi os.FileInfo, old side
 // left empty are removed up to the bucket or the nearest explicit directory marker, so
 // an implicit prefix disappears with its last object.
 func (s *Store) DeleteObject(bucket, key string) error {
-	return s.DeleteObjectIf(bucket, key, DeleteConditions{})
+	_, err := s.DeleteObjectIf(bucket, key, DeleteConditions{})
+	return err
 }
 
-// DeleteConditions make a delete conditional. A missing object counts as deleted
-// whatever they say, as on S3.
+// DeleteConditions make a delete conditional. A missing object is not an error, whatever
+// they say, as on S3.
 type DeleteConditions struct {
 	// IfMatch is the ETag the object must have, or "*".
 	IfMatch string
@@ -277,16 +278,17 @@ func (c DeleteConditions) check(info ObjectInfo) error {
 	return nil
 }
 
-// DeleteObjectIf deletes bucket/key when it meets cond.
-func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) error {
+// DeleteObjectIf deletes bucket/key when it meets cond; removed reports whether there
+// was an object to delete.
+func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) (removed bool, err error) {
 	bl := s.bucketLock(bucket)
 	bl.RLock()
 	defer bl.RUnlock()
 	if err := s.requireBucket(bucket); err != nil {
-		return err
+		return false, err
 	}
 	if checkKey(key) != nil {
-		return nil
+		return false, nil
 	}
 	unlock := s.lock(bucket, key)
 	defer unlock()
@@ -297,28 +299,29 @@ func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) error 
 			_ = f.Close()
 		}
 		if errors.Is(err, ErrNoSuchKey) {
-			return nil
+			return false, nil
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := cond.check(info); err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	p := s.dataPath(bucket, key)
 	if isDirKey(key) {
 		_ = os.Remove(s.metaPath(bucket, key))
-		if s.r.Remove(s.rel(p)) == nil {
-			s.pruneEmptyParents(bucket, filepath.Dir(p))
+		if s.r.Remove(s.rel(p)) != nil {
+			return false, nil
 		}
-		return nil
+		s.pruneEmptyParents(bucket, filepath.Dir(p))
+		return true, nil
 	}
 	fi, err := s.r.Lstat(s.rel(p))
 	if err != nil || fi.IsDir() {
 		_ = os.Remove(s.metaPath(bucket, key))
-		return nil
+		return false, nil
 	}
 	if after := s.TrashAfter(bucket); after > 0 && fi.Mode().IsRegular() {
 		return s.trashFile(bucket, key, p, fi, after)
@@ -327,20 +330,21 @@ func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) error 
 }
 
 // removeFile deletes the object file p, described by fi, with its sidecar and the
-// directories it leaves empty. The caller holds the key lock.
-func (s *Store) removeFile(bucket, key, p string, fi os.FileInfo) error {
+// directories it leaves empty; removed is false when the file was already gone. The
+// caller holds the key lock.
+func (s *Store) removeFile(bucket, key, p string, fi os.FileInfo) (removed bool, err error) {
 	if err := s.r.Remove(s.rel(p)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	if fi.Mode().IsRegular() {
 		s.adjust(bucket, -1, -fi.Size())
 	}
 	_ = os.Remove(s.metaPath(bucket, key))
 	s.pruneEmptyParents(bucket, filepath.Dir(p))
-	return nil
+	return true, nil
 }
 
 // CopyOptions configure CopyObject.

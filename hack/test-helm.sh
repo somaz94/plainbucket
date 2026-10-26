@@ -159,6 +159,15 @@ has "max-size: 85899345920" "byte size kept as an integer"
 has "expire-after: 336h" "expiry in the config file"
 render "${KEY[@]}" --set config.buckets.docs.trash-after=168h --show-only templates/configmap.yaml
 has "trash-after: 168h" "trash in the config file"
+printf 'config:\n  notifySecret: pb-hooks\n  buckets:\n    uploads:\n      notify:\n        - {url: "https://hooks.example.com/in", events: ["s3:ObjectCreated:*"], secret-file: /etc/plainbucket/notify/key}\n' >"${TMP_VALUES}"
+render "${KEY[@]}" -f "${TMP_VALUES}"
+has "secret-file: /etc/plainbucket/notify/key" "webhook in the config file"
+has "secretName: pb-hooks" "webhook secret volume"
+has "mountPath: /etc/plainbucket/notify" "webhook secret mounted as a directory"
+lacks "subPath: key" "webhook secret not mounted by subPath"
+has "checksum/config:" "webhook changes restart the pod"
+render "${KEY[@]}" --show-only templates/deployment.yaml
+lacks "/etc/plainbucket/notify" "no webhook secret by default"
 ok "bucket settings"
 
 render "${KEY[@]}" --show-only templates/tests/test-connection.yaml
@@ -172,6 +181,8 @@ ok "helm test pod"
 expect_fail "no access key"
 expect_fail "must be set together" --set auth.accessKey=admin
 expect_fail "requires config.metrics=true" "${KEY[@]}" --set serviceMonitor.enabled=true
+expect_fail "needs config.notifySecret" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=https://hooks.example.com" \
+    --set "config.buckets.uploads.notify[0].secret-file=/etc/plainbucket/notify/key"
 expect_fail "requires config.metrics=true" "${KEY[@]}" --set prometheusRule.enabled=true
 expect_fail "requires config.metrics=true" "${KEY[@]}" --set grafanaDashboard.enabled=true
 expect_fail "empty group" "${KEY[@]}" --set config.metrics=true --set prometheusRule.enabled=true \
@@ -212,6 +223,12 @@ printf 'config:\n  buckets:\n    a..b: {public: true}\n' >"${TMP_VALUES}"
 expect_fail "a..b" "${KEY[@]}" -f "${TMP_VALUES}"
 expect_fail "expire-after" "${KEY[@]}" --set config.buckets.cache.expire-after=14d
 expect_fail "trash-after" "${KEY[@]}" --set config.buckets.docs.trash-after=7d
+expect_fail "notify.0: url is required" "${KEY[@]}" --set "config.buckets.uploads.notify[0].events={s3:ObjectCreated:*}"
+expect_fail "notify.0.url" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=ftp://h"
+expect_fail "notify.0.url" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=http://user@"
+expect_fail "notify.0.events.0" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=http://h" --set "config.buckets.uploads.notify[0].events={s3:ObjectTagging:*}"
+expect_fail "notify.0.secret-file" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=http://h" --set "config.buckets.uploads.notify[0].secret-file=key"
+expect_fail "Additional property secret is not allowed" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=http://h" --set "config.buckets.uploads.notify[0].secret=x"
 expect_fail "allowed-methods" "${KEY[@]}" --set "config.buckets.www.cors.allowed-origins={*}" --set "config.buckets.www.cors.allowed-methods={PATCH}"
 ok "schema rejects invalid values"
 

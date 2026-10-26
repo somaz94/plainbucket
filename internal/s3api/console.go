@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/console"
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/sigv4"
 	"github.com/somaz94/plainbucket/internal/storage"
@@ -192,6 +193,7 @@ func (h *Handler) consoleTrash(req *request) error {
 		if err != nil {
 			return err
 		}
+		h.publish(req, notify.ObjectCreatedPut, info.Key, info)
 		return writeConsoleJSON(req, map[string]string{"key": info.Key, "etag": info.ETag})
 	case "purge":
 		if err := h.store.PurgeTrash(req.bucket, id); err != nil {

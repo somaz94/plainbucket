@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/config"
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3api"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
@@ -26,6 +27,7 @@ const (
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 120 * time.Second
 	shutdownWait      = 10 * time.Second
+	notifyDrainWait   = 5 * time.Second
 	janitorInterval   = time.Hour
 )
 
@@ -83,6 +85,15 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		logger.Warn("the root filesystem is case-insensitive: keys differing only in case refer to the same file", "root", store.Root())
 	}
 
+	notifier := notify.New(cfg.Region, logger)
+	notifier.SetTargets(notifyTargets(cfg))
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), notifyDrainWait)
+		defer cancel()
+		notifier.Close(ctx)
+	}()
+	store.OnLimitRemove(lifecycleEvents(notifier))
+
 	janitorCtx, stopJanitor := context.WithCancel(context.Background())
 	var janitor sync.WaitGroup
 	janitor.Go(func() { store.RunJanitor(janitorCtx, janitorInterval, cfg.UploadExpiry, logger) })
@@ -103,6 +114,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		Console:       cfg.Console,
 		AccessLog:     cfg.AccessLog || cfg.Debug,
 		BodyTimeout:   cfg.BodyTimeout,
+		Notifier:      notifier,
 	})
 	srv := &http.Server{
 		Handler:           handler,
@@ -122,7 +134,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		srv.TLSConfig = &tls.Config{MinVersion: cfg.TLSMinVersion(), GetCertificate: cert.get}
 	}
 
-	rl := &reloader{src: src, boot: cfg, cfg: cfg, handler: handler, store: store, cert: cert, logger: logger}
+	rl := &reloader{src: src, boot: cfg, cfg: cfg, handler: handler, store: store, notifier: notifier, cert: cert, logger: logger}
 	reloadCtx, stopReload := context.WithCancel(context.Background())
 	var reloads sync.WaitGroup
 	reloads.Go(func() { rl.run(reloadCtx) })
@@ -189,6 +201,23 @@ func bucketTrash(cfg *config.Config) map[string]time.Duration {
 	for name, b := range cfg.Buckets {
 		if b.TrashAfter > 0 {
 			out[name] = b.TrashAfter
+		}
+	}
+	return out
+}
+
+// lifecycleEvents reports objects removed by expiry or eviction to n.
+func lifecycleEvents(n *notify.Notifier) func(bucket, key string) {
+	return func(bucket, key string) {
+		n.Publish(notify.Event{Name: notify.LifecycleExpiration, Bucket: bucket, Key: key, Time: time.Now()})
+	}
+}
+
+func notifyTargets(cfg *config.Config) map[string][]notify.Target {
+	out := map[string][]notify.Target{}
+	for name, b := range cfg.Buckets {
+		for _, n := range b.Notify {
+			out[name] = append(out[name], notify.Target{ID: n.ID, URL: n.URL, Events: n.Events, Prefix: n.Prefix, Suffix: n.Suffix, Secret: n.Secret})
 		}
 	}
 	return out

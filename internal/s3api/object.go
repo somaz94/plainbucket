@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
@@ -117,6 +118,7 @@ func (h *Handler) putObject(req *request) error {
 		return err
 	}
 	h.metrics.receivedBytes.Add(info.Size)
+	h.publish(req, notify.ObjectCreatedPut, req.key, info)
 	req.w.Header().Set("ETag", info.ETag)
 	setChecksumHeaders(req.w.Header(), info.Checksums)
 	req.w.WriteHeader(http.StatusOK)
@@ -229,8 +231,12 @@ func (h *Handler) deleteObject(req *request) error {
 	if err != nil {
 		return err
 	}
-	if err := h.store.DeleteObjectIf(req.bucket, req.key, cond); err != nil {
+	removed, err := h.store.DeleteObjectIf(req.bucket, req.key, cond)
+	if err != nil {
 		return err
+	}
+	if removed {
+		h.publish(req, notify.ObjectRemovedDelete, req.key, storage.ObjectInfo{})
 	}
 	req.w.WriteHeader(http.StatusNoContent)
 	return nil
@@ -268,7 +274,10 @@ func (h *Handler) deleteObjects(req *request) error {
 				}
 			}
 			if err == nil {
-				err = h.store.DeleteObjectIf(req.bucket, o.Key, cond)
+				var removed bool
+				if removed, err = h.store.DeleteObjectIf(req.bucket, o.Key, cond); removed {
+					h.publish(req, notify.ObjectRemovedDelete, o.Key, storage.ObjectInfo{})
+				}
 			}
 		}
 		if err != nil {
@@ -336,6 +345,7 @@ func (h *Handler) copyObject(req *request) error {
 	if err != nil {
 		return err
 	}
+	h.publish(req, notify.ObjectCreatedCopy, req.key, info)
 	writeXML(req.w, http.StatusOK, copyObjectResult{NS: s3NS, LastModified: isoTime(info.ModTime), ETag: info.ETag})
 	return nil
 }

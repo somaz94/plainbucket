@@ -1,4 +1,12 @@
 {{- if .Values.config.buckets }}
+{{- range $name, $b := .Values.config.buckets }}
+{{- range $i, $n := $b.notify }}
+{{- $f := toString (index $n "secret-file") }}
+{{- if and (hasPrefix "/etc/plainbucket/notify/" $f) (not $.Values.config.notifySecret) }}
+{{- fail (printf "config.buckets.%s.notify[%d].secret-file %s needs config.notifySecret: the server would not start without the file" $name $i $f) }}
+{{- end }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

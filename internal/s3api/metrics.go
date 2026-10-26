@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
@@ -73,7 +74,7 @@ type storeStats interface {
 	MinFree() int64
 }
 
-func (m *metrics) serve(w http.ResponseWriter, st storeStats) {
+func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifier) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
 	m.mu.Lock()
@@ -122,6 +123,16 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats) {
 	expired, evicted := st.Removed()
 	metric("counter", "plainbucket_expired_objects_total", "Objects removed by a bucket's expire-after.", expired)
 	metric("counter", "plainbucket_evicted_objects_total", "Objects evicted by a bucket's max-size.", evicted)
+
+	if nt != nil {
+		sent, failed, dropped, queued := nt.Stats()
+		fmt.Fprintln(w, "# HELP plainbucket_notifications_total Bucket event notifications by result: sent, failed after retries or refused, dropped on a full queue or at shutdown.")
+		fmt.Fprintln(w, "# TYPE plainbucket_notifications_total counter")
+		fmt.Fprintf(w, "plainbucket_notifications_total{result=\"sent\"} %d\n", sent)
+		fmt.Fprintf(w, "plainbucket_notifications_total{result=\"failed\"} %d\n", failed)
+		fmt.Fprintf(w, "plainbucket_notifications_total{result=\"dropped\"} %d\n", dropped)
+		metric("gauge", "plainbucket_notification_queue", "Bucket event notifications waiting to be sent.", int64(queued))
+	}
 
 	metric("gauge", "plainbucket_min_free_bytes", "Free bytes writes must leave (min-free-space); 0 when off.", st.MinFree())
 	if free, size, err := st.DiskSpace(); err == nil {

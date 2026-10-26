@@ -64,6 +64,10 @@ config:
   # examples/static-site.yaml and examples/runner-cache.yaml. An entry with no settings
   # needs {}: Helm drops a key whose value is empty.
   buckets: {}
+  # Secret mounted at /etc/plainbucket/notify for webhook keys: point
+  # buckets.<name>.notify[].secret-file at /etc/plainbucket/notify/<key>. A notify url
+  # lands in the ConfigMap, so use one that carries no token.
+  notifySecret: ""
   # Domains for virtual-hosted-style requests (<bucket>.<domain>); needs wildcard DNS.
   domains: []
   maxObjectSize: ""  # bytes as a string; empty means unlimited

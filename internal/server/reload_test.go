@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +19,7 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/config"
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/sigv4/sigv4test"
 )
 
@@ -144,6 +149,90 @@ func TestReloadOnFileChangeAndSignal(t *testing.T) {
 	eventually(t, "the restart warning", func() bool { return strings.Contains(logs.String(), "settings=[metrics]") })
 	hup <- syscall.SIGHUP
 	eventually(t, "the signal", func() bool { return strings.Contains(logs.String(), `cause=signal`) })
+}
+
+// hookSink is a webhook endpoint that records each request's event and whether its signature verified.
+type hookSink struct {
+	mu   sync.Mutex
+	sigs []string
+}
+
+func newHookSink(t *testing.T, secret func() []byte) (*hookSink, string) {
+	sink := &hookSink{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		ok := r.Header.Get(notify.HeaderSignature) == notify.Sign(secret(), r.Header.Get(notify.HeaderTimestamp), body)
+		sink.mu.Lock()
+		sink.sigs = append(sink.sigs, fmt.Sprintf("%s %v", r.Header.Get(notify.HeaderEvent), ok))
+		sink.mu.Unlock()
+	}))
+	t.Cleanup(srv.Close)
+	return sink, srv.URL
+}
+
+func (s *hookSink) got() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.sigs...)
+}
+
+func TestReloadSwapsWebhookSecret(t *testing.T) {
+	dir := t.TempDir()
+	secretFile, file := filepath.Join(dir, "hook"), filepath.Join(dir, "config.yaml")
+	writeFile(t, secretFile, "one\n")
+	var mu sync.Mutex
+	key := []byte("one")
+	sink, hook := newHookSink(t, func() []byte { mu.Lock(); defer mu.Unlock(); return key })
+	base := "root: " + filepath.Join(dir, "data") + "\naccess-key: ak\nsecret-key: sk\n"
+	target := func(secret string) string { return "{url: \"" + hook + "\", secret-file: " + secret + "}" }
+	writeFile(t, file, base+"buckets: {events: {notify: ["+target(secretFile)+"]}}\n")
+	logs := &syncBuffer{}
+	url, _ := startReloading(t, file, logs)
+	reloads := func() int { return strings.Count(logs.String(), "configuration reloaded") }
+
+	eventually(t, "the server", func() bool { return doAs(t, http.MethodPut, url+"/events", "ak", "sk", "") == http.StatusOK })
+	doAs(t, http.MethodPut, url+"/events/a", "ak", "sk", "x")
+	eventually(t, "the first event", func() bool { return len(sink.got()) == 1 })
+
+	// Rotating the secret file alone is a change the server reloads. A different length
+	// keeps the change visible where mtimes are coarse.
+	mu.Lock()
+	key = []byte("two-2")
+	mu.Unlock()
+	writeFile(t, secretFile, "two-2\n")
+	eventually(t, "the reload", func() bool { return reloads() == 1 })
+	doAs(t, http.MethodDelete, url+"/events/a", "ak", "sk", "")
+	eventually(t, "the second event", func() bool { return len(sink.got()) == 2 })
+	if got := strings.Join(sink.got(), ","); got != "ObjectCreated:Put true,ObjectRemoved:Delete true" {
+		t.Errorf("events %s", got)
+	}
+
+	// A secret-file that does not exist yet fails the reload, which is retried once it appears.
+	later := filepath.Join(dir, "later")
+	writeFile(t, file, base+"buckets: {events: {notify: ["+target(later)+"]}}\n")
+	eventually(t, "the failure", func() bool { return strings.Contains(logs.String(), "reload failed") })
+	mu.Lock()
+	key = []byte("three")
+	mu.Unlock()
+	writeFile(t, later, "three\n")
+	eventually(t, "the retried reload", func() bool { return reloads() == 2 })
+	doAs(t, http.MethodPut, url+"/events/b", "ak", "sk", "x")
+	eventually(t, "the third event", func() bool { return len(sink.got()) == 3 })
+	if got := sink.got()[2]; got != "ObjectCreated:Put true" {
+		t.Errorf("event after the retry %s", got)
+	}
+}
+
+func TestLifecycleEvents(t *testing.T) {
+	sink, hook := newHookSink(t, func() []byte { return nil })
+	n := notify.New("us-east-1", slog.New(slog.DiscardHandler))
+	defer n.Close(context.Background())
+	n.SetTargets(map[string][]notify.Target{"b": {{URL: hook}}})
+	lifecycleEvents(n)("b", "old")
+	eventually(t, "the event", func() bool { return len(sink.got()) == 1 })
+	if got := sink.got()[0]; got != "LifecycleExpiration:Delete false" {
+		t.Errorf("event %s", got)
+	}
 }
 
 func TestReloadSwapsTheCertificate(t *testing.T) {

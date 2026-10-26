@@ -58,18 +58,18 @@ func (s *Store) trashDir(bucket string, id ...string) string {
 	return s.sys(append([]string{"trash", bucket}, id...)...)
 }
 
-// trashFile moves the object file p of bucket/key, described by fi, into the trash
-// instead of deleting it. The caller holds the key lock.
-func (s *Store) trashFile(bucket, key, p string, fi os.FileInfo, after time.Duration) error {
+// trashFile moves the object file p of bucket/key, described by fi, into the trash instead of
+// deleting it; removed means what it does for removeFile. The caller holds the key lock.
+func (s *Store) trashFile(bucket, key, p string, fi os.FileInfo, after time.Duration) (removed bool, err error) {
 	var raw [16]byte
 	_, _ = rand.Read(raw[:])
 	id := hex.EncodeToString(raw[:])
 	dir := s.trashDir(bucket, id)
 	if err := os.MkdirAll(s.trashDir(bucket), sysDirPerm); err != nil {
-		return err
+		return false, err
 	}
 	if err := os.Mkdir(dir, sysDirPerm); err != nil {
-		return err
+		return false, err
 	}
 	now := s.now()
 	man := trashManifestFile{TrashEntry: TrashEntry{ID: id, Bucket: bucket, Key: key, Size: fi.Size(), DeletedAt: now, ExpiresAt: now.Add(after)}}
@@ -86,14 +86,14 @@ func (s *Store) trashFile(bucket, key, p string, fi os.FileInfo, after time.Dura
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	_ = os.Remove(s.metaPath(bucket, key))
 	s.adjust(bucket, -1, -fi.Size())
 	s.pruneEmptyParents(bucket, filepath.Dir(p))
-	return nil
+	return true, nil
 }
 
 func readTrash(dir string) (trashManifestFile, error) {

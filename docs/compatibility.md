@@ -57,7 +57,7 @@ Object details:
 
 ## Not Implemented
 
-These return `501 NotImplemented`: ACLs and policies (public reads are configured instead), versioning other than reading its status and listing the `null` versions, object lock and retention, bucket tags, lifecycle, replication, the CORS and website APIs (both are configured per bucket instead, see [Buckets](configuration.md#buckets)), encryption settings, and `SelectObjectContent`.
+These return `501 NotImplemented`: ACLs and policies (public reads are configured instead), versioning other than reading its status and listing the `null` versions, object lock and retention, bucket tags, lifecycle, replication, the CORS, website and notification APIs (all three are configured per bucket instead, see [Buckets](configuration.md#buckets); webhooks receive S3-format events, see [Event Notifications](configuration.md#event-notifications)), encryption settings, and `SelectObjectContent`.
 
 Storage classes are not modeled; every object reports `STANDARD`.
 

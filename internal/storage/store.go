@@ -143,6 +143,7 @@ type Store struct {
 	kick        chan struct{}    // wakes the janitor when an evicting bucket is over its limit
 	expired     atomic.Int64
 	evicted     atomic.Int64
+	onLimit     atomic.Pointer[func(bucket, key string)] // see OnLimitRemove
 
 	trashAfter atomic.Pointer[map[string]time.Duration] // swapped whole by SetTrash
 	trashMu    sync.Mutex                               // serializes restores, purges and the sweep's expiry

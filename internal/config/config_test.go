@@ -228,6 +228,43 @@ func TestBuckets(t *testing.T) {
 		t.Error("PLAINBUCKET_PUBLIC_BUCKETS not merged")
 	}
 
+	secret := filepath.Join(dir, "hook-secret")
+	_ = os.WriteFile(secret, []byte("k3y\n"), 0o600)
+	_ = os.WriteFile(path, []byte(`buckets:
+  uploads:
+    notify:
+      - url: https://hooks.example.com/in
+        events: ["s3:ObjectCreated:*", "s3:ObjectRemoved:Delete"]
+        prefix: in/
+        secret-file: `+secret+`
+      - {id: audit, url: "http://audit.example.com:8080/"}
+`), 0o600)
+	if cfg, err = Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if n := cfg.Buckets["uploads"].Notify; len(n) != 2 || n[0].ID != "notify-1" || string(n[0].Secret) != "k3y" ||
+		n[0].Prefix != "in/" || len(n[0].Events) != 2 || n[1].ID != "audit" || n[1].Secret != nil {
+		t.Errorf("notify = %+v", n)
+	}
+	empty := filepath.Join(dir, "empty-secret")
+	_ = os.WriteFile(empty, []byte("\n"), 0o600)
+
+	for name, body := range map[string]string{
+		"notify no url":        "buckets: {u: {notify: [{events: [\"s3:ObjectCreated:*\"]}]}}\n",
+		"notify bad scheme":    "buckets: {u: {notify: [{url: \"ftp://h/x\"}]}}\n",
+		"notify no host":       "buckets: {u: {notify: [{url: \"http:///x\"}]}}\n",
+		"notify bad event":     "buckets: {u: {notify: [{url: \"http://h\", events: [\"s3:ObjectTagging:*\"]}]}}\n",
+		"notify same id":       "buckets: {u: {notify: [{id: a, url: \"http://h\"}, {id: a, url: \"http://g\"}]}}\n",
+		"notify no secret":     "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + filepath.Join(dir, "missing") + "}]}}\n",
+		"notify empty secret":  "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + empty + "}]}}\n",
+		"notify inline secret": "buckets: {u: {notify: [{url: \"http://h\", secret: x}]}}\n",
+	} {
+		_ = os.WriteFile(path, []byte(body), 0o600)
+		if _, err := Load(path); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+
 	for name, body := range map[string]string{
 		"bad name":        "buckets: {Bad_Name: {public: true}}\n",
 		"private website": "buckets: {www: {website: {}}}\n",

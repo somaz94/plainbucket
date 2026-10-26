@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/sigv4"
 	"github.com/somaz94/plainbucket/internal/storage"
@@ -94,6 +95,7 @@ func (h *Handler) postObject(req *request) error {
 		return err
 	}
 	h.metrics.receivedBytes.Add(info.Size)
+	h.publish(req, notify.ObjectCreatedPost, req.key, info)
 	return h.postResponse(req, fields, info.ETag)
 }
 

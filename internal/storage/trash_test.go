@@ -26,8 +26,8 @@ func TestTrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, s, "dir/other", "x")
-	if err := s.DeleteObject("bkt", "dir/k"); err != nil {
-		t.Fatal(err)
+	if removed, err := s.DeleteObjectIf("bkt", "dir/k", DeleteConditions{}); err != nil || !removed {
+		t.Fatal(removed, err)
 	}
 	if exists(s, "dir/k") {
 		t.Fatal("still in the bucket")

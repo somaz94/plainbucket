@@ -50,7 +50,7 @@ log-format: json
 
 ## Reloading
 
-A running server re-reads its configuration on `SIGHUP` (`docker kill --signal=HUP`, `systemctl reload` with `ExecReload=kill -HUP $MAINPID`), and on its own when the config file, the credentials file or the TLS certificate or key changes; it checks them every 30 seconds.
+A running server re-reads its configuration on `SIGHUP` (`docker kill --signal=HUP`, `systemctl reload` with `ExecReload=kill -HUP $MAINPID`), and on its own when the config file, the credentials file, a webhook's `secret-file` or the TLS certificate or key changes; it checks them every 30 seconds.
 
 - Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, `min-free-space`, and the certificate files. A request already authenticated finishes with the key it was signed with.
 - Every other setting changes only on restart; the server logs which ones differ. Environment variables are read again too, but a process's environment does not change after it starts, so values set there need a restart.
@@ -107,6 +107,12 @@ buckets:
     evict: true             # over max-size, remove the least recently used
   docs:
     trash-after: 168h       # deleted objects stay restorable for a week
+  uploads:
+    notify:                 # POST the bucket's events to a webhook
+      - url: https://hooks.example.com/plainbucket
+        events: ["s3:ObjectCreated:*"]
+        prefix: incoming/
+        secret-file: /etc/plainbucket/notify/key
 ```
 
 These settings are the only way to change bucket behavior: the bucket policy, ACL, website and CORS APIs are not implemented.
@@ -145,6 +151,20 @@ The background job applies both hourly, and at once when a write takes an evicti
 
 Only deletes are kept: an overwrite replaces the object, and expiry and eviction under the bucket's limits remove objects for good. Trashed objects still take disk space until they are removed. Turning `trash-after` off keeps the entries already trashed until their own period ends.
 
+### Event Notifications
+
+`notify` lists webhooks that receive the bucket's object events as an HTTP `POST` of an [S3 event notification](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html) document, one record per request, so code written for S3 events reads them. Each entry takes:
+
+- `url`: an `http` or `https` URL. A redirect counts as a failure. The URL sits in the config file and is logged without its query, so put credentials in the signing key, not in the URL.
+- `events`: S3 event names, or a group ending in `*`; empty means all of them. `s3:ObjectCreated:Put`, `Post`, `Copy` and `CompleteMultipartUpload`; `s3:ObjectRemoved:Delete`, sent only when a delete removed an object (moving it to the [trash](#trash) counts); and `s3:LifecycleExpiration:Delete` for objects that expiry or eviction removed. Restoring from the trash is an `s3:ObjectCreated:Put`.
+- `prefix`, `suffix`: only keys that start or end with these.
+- `id`: the record's `configurationId`, `notify-<n>` by default.
+- `secret-file`: a file holding the key that signs each request; a trailing newline is not part of it. Without one the requests are unsigned.
+
+A signed request carries `X-Plainbucket-Timestamp` (Unix seconds) and `X-Plainbucket-Signature: sha256=<hex>`, the HMAC-SHA256 of the timestamp, a `.` and the body. A receiver recomputes it over the raw body, compares in constant time, and may refuse timestamps more than a few minutes old to stop replays; each retry is signed again with its own timestamp. `X-Plainbucket-Event` names the event. The record's object `key` is form-encoded as in S3 events (a space becomes `+`), `size` and `eTag` are set for created objects, and `sequencer` grows from event to event when compared as strings, though two requests changing one key at the same moment may be numbered in the order their events were sent rather than stored.
+
+Delivery is best-effort. Each webhook has a queue in memory that holds a thousand events; when it is full new events are dropped. A failed request is retried four times over about fifteen seconds when the connection fails or the answer is `429` or `5xx`, and given up on for any other status. Events still queued when the server stops get a few seconds to go out, and are lost after that or on a crash. Drops and failures are logged as warnings and counted in the [metrics](#metrics). The notification API itself is not implemented: webhooks are configured here, and a reload takes changes to them, including a rotated `secret-file`, over without a restart.
+
 <br/>
 
 ## Virtual-Hosted Addressing
@@ -177,6 +197,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - `plainbucket_received_bytes_total` (stored by successful uploads) and `plainbucket_sent_bytes_total`.
 - `plainbucket_objects`, `plainbucket_stored_bytes` and `plainbucket_usage_scan_timestamp_seconds`, measured at startup and then hourly by walking the buckets, so they lag recent uploads.
 - `plainbucket_filesystem_free_bytes` and `plainbucket_filesystem_size_bytes` for the filesystem holding the root, read at each scrape, and `plainbucket_min_free_bytes`, the configured minimum.
+- `plainbucket_notifications_total{result}` for [event notifications](#event-notifications), `sent`, `failed` (given up after retries, or refused) and `dropped` (a full queue, or still queued at shutdown), and `plainbucket_notification_queue`, the events waiting.
 - For buckets with `expire-after` or `max-size`: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, `plainbucket_bucket_max_size_bytes{bucket,evict}` for those with `max-size`, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.
 
 A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, and only unsigned `GET` requests are answered by these endpoints.

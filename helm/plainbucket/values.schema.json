@@ -267,6 +267,52 @@
               },
               "evict": {
                 "type": "boolean"
+              },
+              "notify": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "url"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "url": {
+                      "type": "string",
+                      "pattern": "^https?://([^/?#@]*@)?[^/?#@]+([/?#].*)?$"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "s3:ObjectCreated:*",
+                          "s3:ObjectCreated:Put",
+                          "s3:ObjectCreated:Post",
+                          "s3:ObjectCreated:Copy",
+                          "s3:ObjectCreated:CompleteMultipartUpload",
+                          "s3:ObjectRemoved:*",
+                          "s3:ObjectRemoved:Delete",
+                          "s3:LifecycleExpiration:*",
+                          "s3:LifecycleExpiration:Delete"
+                        ]
+                      }
+                    },
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "suffix": {
+                      "type": "string"
+                    },
+                    "secret-file": {
+                      "type": "string",
+                      "pattern": "^/"
+                    }
+                  }
+                }
               }
             },
             "allOf": [
@@ -311,6 +357,9 @@
               }
             ]
           }
+        },
+        "notifySecret": {
+          "type": "string"
         },
         "accessLog": {
           "type": "boolean"

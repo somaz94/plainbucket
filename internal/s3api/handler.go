@@ -18,6 +18,7 @@ import (
 
 	"github.com/somaz94/plainbucket/internal/console"
 	"github.com/somaz94/plainbucket/internal/httpx"
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/sigv4"
 	"github.com/somaz94/plainbucket/internal/storage"
@@ -46,6 +47,8 @@ type Options struct {
 	BodyTimeout time.Duration
 	// Console serves the browser console under /_console/ on path-style hosts.
 	Console bool
+	// Notifier receives the object events; nil sends none.
+	Notifier *notify.Notifier
 }
 
 // Handler is the S3 API http.Handler.
@@ -151,7 +154,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte("ok"))
 			return
 		case r.URL.Path == "/metrics" && h.opts.Metrics:
-			h.metrics.serve(w, h.store)
+			h.metrics.serve(w, h.store, h.opts.Notifier)
 			return
 		}
 	}
@@ -200,6 +203,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("remote", r.RemoteAddr),
 			slog.String("access_key", accessKey), slog.String("user_agent", r.UserAgent()), slog.String("request_id", id))
 	}
+}
+
+// publish sends the event name for key, changed by req, to the bucket's webhooks.
+func (h *Handler) publish(req *request, name, key string, info storage.ObjectInfo) {
+	if h.opts.Notifier == nil {
+		return
+	}
+	e := notify.Event{Name: name, Bucket: req.bucket, Key: key, Size: info.Size, ETag: info.ETag, RequestID: req.id, Time: h.now()}
+	if req.cred != nil {
+		e.Principal = req.cred.AccessKey
+	}
+	if host, _, err := net.SplitHostPort(req.r.RemoteAddr); err == nil {
+		e.SourceIP = host
+	}
+	h.opts.Notifier.Publish(e)
 }
 
 func requestID() string {

@@ -178,6 +178,11 @@ spec:
               mountPath: /etc/plainbucket/credentials
               readOnly: true
             {{- end }}
+            {{- if .Values.config.notifySecret }}
+            - name: notify
+              mountPath: /etc/plainbucket/notify
+              readOnly: true
+            {{- end }}
             {{- if $tls }}
             - name: tls
               mountPath: /etc/plainbucket/tls
@@ -201,6 +206,11 @@ spec:
         {{- end }}
         {{- with .Values.auth.credentialsSecret }}
         - name: credentials
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+        {{- with .Values.config.notifySecret }}
+        - name: notify
           secret:
             secretName: {{ . }}
         {{- end }}

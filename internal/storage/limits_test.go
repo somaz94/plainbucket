@@ -30,6 +30,13 @@ func age(t *testing.T, s *Store, key string, when time.Time) {
 	_ = os.Chtimes(s.metaPath("bkt", key), when, when)
 }
 
+// limitRemovals records what OnLimitRemove reports.
+func limitRemovals(s *Store) *[]string {
+	var got []string
+	s.OnLimitRemove(func(bucket, key string) { got = append(got, bucket+"/"+key) })
+	return &got
+}
+
 func exists(s *Store, key string) bool {
 	_, err := s.HeadObject("bkt", key)
 	return err == nil
@@ -47,7 +54,11 @@ func TestExpireAfterLastUse(t *testing.T) {
 	age(t, s, "old", twoDays)
 	age(t, s, "read", twoDays)
 	_ = os.Chtimes(s.metaPath("bkt", "read"), c.t, c.t) // read recently
+	removed := limitRemovals(s)
 	expired, _ := s.enforceLimits(context.Background())
+	if strings.Join(*removed, ",") != "bkt/old" {
+		t.Errorf("OnLimitRemove got %v", *removed)
+	}
 	if expired != 1 || exists(s, "old") || !exists(s, "read") || !exists(s, "fresh") {
 		t.Errorf("expired %d; old=%v read=%v fresh=%v", expired, exists(s, "old"), exists(s, "read"), exists(s, "fresh"))
 	}
@@ -101,7 +112,11 @@ func TestEvictLeastRecentlyUsed(t *testing.T) {
 	default:
 		t.Fatal("janitor not woken")
 	}
+	removed := limitRemovals(s)
 	_, evicted := s.enforceLimits(context.Background())
+	if strings.Join(*removed, ",") != "bkt/a" {
+		t.Errorf("OnLimitRemove got %v", *removed)
+	}
 	if evicted != 1 || exists(s, "a") || !exists(s, "b") || !exists(s, "c") {
 		t.Errorf("evicted %d; a=%v b=%v c=%v", evicted, exists(s, "a"), exists(s, "b"), exists(s, "c"))
 	}

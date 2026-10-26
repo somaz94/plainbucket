@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/somaz94/plainbucket/internal/checksum"
+	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
@@ -160,6 +161,7 @@ func (h *Handler) completeMultipartUpload(req *request) error {
 	if err != nil {
 		return err
 	}
+	h.publish(req, notify.ObjectCreatedComplete, req.key, info)
 	res := completeMultipartUploadResult{NS: s3NS, Location: req.url(req.key), Bucket: req.bucket, Key: req.key, ETag: info.ETag}
 	if len(info.Checksums) > 0 {
 		res.checksumFields, res.ChecksumType = newChecksumFields(info.Checksums), info.ChecksumType

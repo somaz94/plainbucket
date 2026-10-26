@@ -169,6 +169,16 @@ type candidate struct {
 	used    time.Time
 }
 
+// OnLimitRemove sets fn to be called, outside the store's locks, for every object that
+// expiry or eviction removes.
+func (s *Store) OnLimitRemove(fn func(bucket, key string)) { s.onLimit.Store(&fn) }
+
+func (s *Store) limitRemoved(bucket, key string) {
+	if fn := s.onLimit.Load(); fn != nil {
+		(*fn)(bucket, key)
+	}
+}
+
 // enforceLimits expires and evicts objects in the buckets that have limits.
 func (s *Store) enforceLimits(ctx context.Context) (expired, evicted int) {
 	for bucket, l := range s.limitsNow() {
@@ -184,6 +194,7 @@ func (s *Store) enforceLimits(ctx context.Context) (expired, evicted int) {
 			objs = slices.DeleteFunc(objs, func(c candidate) bool {
 				if c.used.Before(cutoff) && s.removeIfUnused(bucket, c, cutoff) {
 					expired++
+					s.limitRemoved(bucket, c.key)
 					return true
 				}
 				return false
@@ -203,6 +214,7 @@ func (s *Store) enforceLimits(ctx context.Context) (expired, evicted int) {
 				if s.removeIfUnused(bucket, c, c.used.Add(time.Nanosecond)) {
 					total -= c.size
 					evicted++
+					s.limitRemoved(bucket, c.key)
 				}
 			}
 		}
@@ -251,5 +263,6 @@ func (s *Store) removeIfUnused(bucket string, c candidate, usedBefore time.Time)
 	if !s.lastUse(bucket, c.key, fi).Before(usedBefore) {
 		return false
 	}
-	return s.removeFile(bucket, c.key, p, fi) == nil
+	removed, err := s.removeFile(bucket, c.key, p, fi)
+	return removed && err == nil
 }

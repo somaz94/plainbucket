@@ -200,6 +200,11 @@ func TestBucketPolicies(t *testing.T) {
 	if tr := bucketTrash(cfg); len(tr) != 1 || tr["docs"] != 48*time.Hour {
 		t.Errorf("trash = %+v", tr)
 	}
+	cfg.Buckets["events"] = config.Bucket{Notify: []config.Notify{{ID: "a", URL: "http://h", Events: []string{"s3:ObjectCreated:*"}, Prefix: "p/", Suffix: ".x", Secret: []byte("k")}}}
+	if nt := notifyTargets(cfg); len(nt) != 1 || len(nt["events"]) != 1 || nt["events"][0].ID != "a" || nt["events"][0].Suffix != ".x" ||
+		string(nt["events"][0].Secret) != "k" || nt["events"][0].Events[0] != "s3:ObjectCreated:*" {
+		t.Errorf("notify targets = %+v", nt)
+	}
 	got := bucketPolicies(cfg)
 	www := got["www"]
 	if !www.Public || www.Website.Error != "404.html" || www.CORS.MaxAge != time.Minute || got["plain"].Website != nil {
