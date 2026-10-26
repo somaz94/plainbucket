@@ -241,7 +241,7 @@ expect_fail "url" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=http:/
 expect_fail "events" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=http://h" --set "config.buckets.uploads.notify[0].events={s3:ObjectTagging:*}"
 expect_fail "secret-file" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=http://h" --set "config.buckets.uploads.notify[0].secret-file=key"
 expect_fail "secret" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=http://h" --set "config.buckets.uploads.notify[0].secret=x"
-expect_fail "set" "${KEY[@]}" --set "config.buckets.www.headers[0].set.Content-Type=text/html"
+expect_fail "Content-Type" "${KEY[@]}" --set "config.buckets.www.headers[0].set.Content-Type=text/html"
 expect_fail "set" "${KEY[@]}" --set "config.buckets.www.headers[0].prefix=a/"
 printf 'config:\n  buckets:\n    www:\n      headers:\n        - set: {Cache-Control: "a\\nb"}\n' >"${TMP_VALUES}"
 expect_fail "Cache-Control" "${KEY[@]}" -f "${TMP_VALUES}"
