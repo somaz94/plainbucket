@@ -2,6 +2,29 @@ apiVersion: v1
 entries:
   plainbucket:
   - apiVersion: v2
+    appVersion: v0.6.1
+    created: "2026-10-26T03:55:14.912420168Z"
+    description: A Helm chart for plainbucket, a single-node S3-compatible server
+      that stores objects as plain files
+    digest: f34a01f594dd99b03a5a1276228c3a8a53b8d8ac79ce1d6c97d4cb8ba3323b0e
+    home: https://github.com/somaz94/plainbucket
+    keywords:
+    - s3
+    - object-storage
+    - gitlab-runner-cache
+    - static-hosting
+    kubeVersion: '>=1.21.0-0'
+    maintainers:
+    - name: somaz94
+      url: https://github.com/somaz94
+    name: plainbucket
+    sources:
+    - https://github.com/somaz94/plainbucket
+    type: application
+    urls:
+    - https://somaz94.github.io/plainbucket/helm-repo/plainbucket-0.6.1.tgz
+    version: 0.6.1
+  - apiVersion: v2
     appVersion: v0.6.0
     created: "2026-10-26T03:15:03.170707628Z"
     description: A Helm chart for plainbucket, a single-node S3-compatible server
@@ -139,4 +162,4 @@ entries:
     urls:
     - https://somaz94.github.io/plainbucket/helm-repo/plainbucket-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-26T03:15:03.169744903Z"
+generated: "2026-10-26T03:55:14.911096567Z"
