@@ -35,14 +35,14 @@ spec:
         {{- with $r.errors }}{{ if .enabled }}
         - alert: PlainbucketHighErrorRate
           expr: |-
-            sum by (namespace, job) (rate(plainbucket_requests_total{ {{- $sel }}, status=~"5..", status!~"501|507"}[5m]))
+            sum by (namespace, job) (rate(plainbucket_requests_total{ {{- $sel }}, status=~"5..", status!~"501|503|507"}[5m]))
               / sum by (namespace, job) (rate(plainbucket_requests_total{ {{- $sel -}} }[5m])) > {{ .ratio }}
           for: {{ .for }}
           labels:
             severity: {{ .severity }}
           annotations:
             summary: plainbucket answers too many requests with a server error.
-            description: {{ printf "%s of requests failed with 5xx (501 and 507 aside) over the last 5 minutes; the server log has the errors." "{{ $value | humanizePercentage }}" | quote }}
+            description: {{ printf "%s of requests failed with 5xx (501, 503 and 507 aside) over the last 5 minutes; the server log has the errors." "{{ $value | humanizePercentage }}" | quote }}
         {{- end }}{{ end }}
         {{- with $r.writesRefused }}{{ if .enabled }}
         - alert: PlainbucketWritesRefused

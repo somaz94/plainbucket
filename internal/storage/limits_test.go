@@ -337,3 +337,50 @@ func TestPutUnknownSize(t *testing.T) {
 		t.Errorf("empty marker: %v", err)
 	}
 }
+
+func TestPausedJanitorRemovesNothing(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetLimits(map[string]Limit{"bkt": {ExpireAfter: time.Hour}})
+	put(t, s, "old", "data")
+	age(t, s, "old", c.t.Add(-2*time.Hour))
+	stale := filepath.Join(s.sys("tmp"), "stale")
+	if err := os.WriteFile(stale, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chtimes(stale, c.t.Add(-2*staleTmpAge), c.t.Add(-2*staleTmpAge))
+	// A HeadObject would count as a read and keep the object from expiring.
+	onDisk := func() bool { _, err := os.Stat(filepath.Join(s.root, "bkt", "old")); return err == nil }
+	log := slog.New(slog.DiscardHandler)
+	ctx := context.Background()
+
+	s.SetPaused(true)
+	s.applyLimits(ctx, log)
+	if n := s.sweepUnlessPaused(ctx, time.Hour); n != 0 || !onDisk() {
+		t.Fatalf("paused janitor removed %d, old kept %v", n, onDisk())
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatal("paused sweep removed a staging file")
+	}
+
+	// A pass already under way removes nothing once paused, nor does a direct sweep.
+	fi, _ := os.Stat(filepath.Join(s.root, "bkt", "old"))
+	if s.removeIfUnused("bkt", candidate{key: "old", size: fi.Size(), mtimeNs: fi.ModTime().UnixNano()}, c.t) || !onDisk() {
+		t.Fatal("removeIfUnused removed an object while paused")
+	}
+	if n := s.Sweep(ctx, time.Hour); n != 0 {
+		t.Fatalf("paused Sweep removed %d", n)
+	}
+
+	s.SetPaused(false)
+	select {
+	case <-s.kick:
+	default:
+		t.Error("resuming did not wake the janitor")
+	}
+	s.applyLimits(ctx, log)
+	if n := s.sweepUnlessPaused(ctx, time.Hour); n == 0 || onDisk() {
+		t.Errorf("resumed janitor removed %d, old kept %v", n, onDisk())
+	}
+}

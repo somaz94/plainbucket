@@ -80,6 +80,8 @@ render "${KEY[@]}" --set config.accessLog=true
 has 'value: "true"' "access log"
 render "${KEY[@]}" --set config.console=true --show-only templates/deployment.yaml
 grep -A1 -F "name: PLAINBUCKET_CONSOLE" <<<"${OUT}" | grep -qF 'value: "true"' || fail "console: PLAINBUCKET_CONSOLE not true"
+render "${KEY[@]}" --set config.readOnly=true --show-only templates/deployment.yaml
+grep -A1 -F "name: PLAINBUCKET_READ_ONLY" <<<"${OUT}" | grep -qF 'value: "true"' || fail "readOnly: PLAINBUCKET_READ_ONLY not true"
 render "${KEY[@]}" --set-string config.bodyTimeout=0
 has 'value: "0"' "body timeout disabled"
 ok "config values"
@@ -196,6 +198,7 @@ expect_fail "replicaCount" "${KEY[@]}" --set replicaCount=2
 expect_fail "metrics" "${KEY[@]}" --set config.metrics=yes
 expect_fail "accessLog" "${KEY[@]}" --set config.accessLog=yes
 expect_fail "console" "${KEY[@]}" --set config.console=yes
+expect_fail "readOnly" "${KEY[@]}" --set config.readOnly=yes
 expect_fail "publicBuckets" "${KEY[@]}" --set "config.publicBuckets={Bad_Name}"
 expect_fail "maxObjectSize" "${KEY[@]}" --set config.maxObjectSize=10Gi
 expect_fail "minFreeSpace" "${KEY[@]}" --set-string config.minFreeSpace=1Gi

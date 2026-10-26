@@ -49,12 +49,14 @@ type Config struct {
 	BodyTimeout   time.Duration `yaml:"body-timeout"`
 	Metrics       bool          `yaml:"metrics"`
 	Console       bool          `yaml:"console"`
-	LogFormat     string        `yaml:"log-format"`
-	Debug         bool          `yaml:"debug"`
-	AccessLog     bool          `yaml:"access-log"`
-	TLSCert       string        `yaml:"tls-cert"`
-	TLSKey        string        `yaml:"tls-key"`
-	TLSMinVers    string        `yaml:"tls-min-vers"`
+	// ReadOnly refuses every write and pauses the background removals, for maintenance.
+	ReadOnly   bool   `yaml:"read-only"`
+	LogFormat  string `yaml:"log-format"`
+	Debug      bool   `yaml:"debug"`
+	AccessLog  bool   `yaml:"access-log"`
+	TLSCert    string `yaml:"tls-cert"`
+	TLSKey     string `yaml:"tls-key"`
+	TLSMinVers string `yaml:"tls-min-vers"`
 }
 
 // Credential is one access key. Buckets limits it to those buckets (empty = all) and
@@ -189,6 +191,7 @@ func (c *Config) loadEnv() error {
 	e.duration("BODY_TIMEOUT", &c.BodyTimeout)
 	e.bool("METRICS", &c.Metrics)
 	e.bool("CONSOLE", &c.Console)
+	e.bool("READ_ONLY", &c.ReadOnly)
 	e.string("LOG_FORMAT", &c.LogFormat)
 	e.bool("DEBUG", &c.Debug)
 	e.bool("ACCESS_LOG", &c.AccessLog)
@@ -501,6 +504,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Duration("body_timeout", c.BodyTimeout),
 		slog.Bool("metrics", c.Metrics),
 		slog.Bool("console", c.Console),
+		slog.Bool("read_only", c.ReadOnly),
 		slog.String("log_format", c.LogFormat),
 		slog.Bool("debug", c.Debug),
 		slog.Bool("access_log", c.AccessLog),
@@ -513,7 +517,7 @@ func (c *Config) LogValue() slog.Value {
 // reloads; the certificate files are re-read too, but switching TLS on or off is not.
 var reloadable = map[string]bool{
 	"access-key": true, "secret-key": true, "credentials": true, "credentials-file": true,
-	"public-buckets": true, "buckets": true, "min-free-space": true, "tls-cert": true, "tls-key": true,
+	"public-buckets": true, "buckets": true, "min-free-space": true, "read-only": true, "tls-cert": true, "tls-key": true,
 }
 
 // RestartNeeded lists the settings, by YAML name, that differ in next and take effect

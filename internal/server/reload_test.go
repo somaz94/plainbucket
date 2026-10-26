@@ -144,6 +144,17 @@ func TestReloadOnFileChangeAndSignal(t *testing.T) {
 		return doAs(t, http.MethodPut, url+"/full/k", "ak", "sk", "x") == http.StatusInsufficientStorage
 	})
 
+	// The read-only mode turns on and off without a restart.
+	writeFile(t, file, base+"read-only: true\n")
+	eventually(t, "read-only on", func() bool {
+		return doAs(t, http.MethodPut, url+"/full/k", "ak", "sk", "x") == http.StatusServiceUnavailable
+	})
+	if !strings.Contains(logs.String(), "read-only mode changed") {
+		t.Error("read-only change not logged")
+	}
+	writeFile(t, file, base)
+	eventually(t, "read-only off", func() bool { return doAs(t, http.MethodPut, url+"/full/k", "ak", "sk", "x") == http.StatusOK })
+
 	// A setting that needs a restart is reported; a signal reloads without a file change.
 	writeFile(t, file, base+"metrics: true\n")
 	eventually(t, "the restart warning", func() bool { return strings.Contains(logs.String(), "settings=[metrics]") })
@@ -281,7 +292,7 @@ func TestReloadSwapsTheCertificate(t *testing.T) {
 func TestRestartNeededIgnoresReloadableSettings(t *testing.T) {
 	a := config.Default()
 	b := config.Default()
-	b.AccessKey, b.Buckets, b.MinFreeSpace = "other", map[string]config.Bucket{"x": {Public: true}}, 1
+	b.AccessKey, b.Buckets, b.MinFreeSpace, b.ReadOnly = "other", map[string]config.Bucket{"x": {Public: true}}, 1, true
 	if got := a.RestartNeeded(b); len(got) != 0 {
 		t.Errorf("reloadable settings reported: %v", got)
 	}

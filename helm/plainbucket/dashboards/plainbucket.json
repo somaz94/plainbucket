@@ -194,7 +194,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(plainbucket_requests_total{job=\"$job\",namespace=\"$namespace\",status=~\"5..\",status!~\"501|507\"}[$__rate_interval])) / sum(rate(plainbucket_requests_total{job=\"$job\",namespace=\"$namespace\"}[$__rate_interval]))",
+          "expr": "sum(rate(plainbucket_requests_total{job=\"$job\",namespace=\"$namespace\",status=~\"5..\",status!~\"501|503|507\"}[$__rate_interval])) / sum(rate(plainbucket_requests_total{job=\"$job\",namespace=\"$namespace\"}[$__rate_interval]))",
           "legendFormat": "",
           "refId": "A"
         }

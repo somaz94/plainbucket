@@ -49,16 +49,20 @@ type Options struct {
 	Console bool
 	// Notifier receives the object events; nil sends none.
 	Notifier *notify.Notifier
+	// ReadOnly refuses every write with 503; SetReadOnly changes it while serving.
+	ReadOnly bool
 }
 
 // Handler is the S3 API http.Handler.
 type Handler struct {
-	opts    Options
-	store   *storage.Store
-	log     *slog.Logger
-	now     func() time.Time
-	metrics *metrics
-	access  atomic.Pointer[access] // swapped whole by SetAccess while serving
+	opts     Options
+	store    *storage.Store
+	log      *slog.Logger
+	now      func() time.Time
+	metrics  *metrics
+	access   atomic.Pointer[access] // swapped whole by SetAccess while serving
+	readOnly atomic.Bool
+	writes   atomic.Int64 // requests in flight that may write
 }
 
 // access is the keys and bucket policies in force.
@@ -75,8 +79,12 @@ func New(opts Options) *Handler {
 	}
 	h := &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics()}
 	h.SetAccess(opts.Credentials, opts.Buckets, opts.PublicBuckets)
+	h.readOnly.Store(opts.ReadOnly)
 	return h
 }
+
+// SetReadOnly turns the server-wide read-only mode on or off; it is safe while serving.
+func (h *Handler) SetReadOnly(on bool) { h.readOnly.Store(on) }
 
 // SetAccess replaces the access keys and bucket policies; it is safe while serving.
 // A request already authenticated finishes with the key it was signed with.
@@ -99,16 +107,17 @@ func (h *Handler) SetAccess(creds []Credential, buckets map[string]BucketPolicy,
 
 // request is one API call. auth and cred are nil for an anonymous one.
 type request struct {
-	w       http.ResponseWriter
-	r       *http.Request
-	id      string
-	auth    *sigv4.Auth
-	cred    *Credential
-	vhost   bool // the bucket came from the Host header
-	website bool // an unsigned read of a website bucket
-	bucket  string
-	key     string
-	q       url.Values
+	w        http.ResponseWriter
+	r        *http.Request
+	id       string
+	auth     *sigv4.Auth
+	cred     *Credential
+	vhost    bool // the bucket came from the Host header
+	readOnly bool // the server-wide mode, read once per request
+	website  bool // an unsigned read of a website bucket
+	bucket   string
+	key      string
+	q        url.Values
 }
 
 // Subresources this server does not implement; requests naming one get 501 (bar those
@@ -154,14 +163,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte("ok"))
 			return
 		case r.URL.Path == "/metrics" && h.opts.Metrics:
-			h.metrics.serve(w, h.store, h.opts.Notifier)
+			h.metrics.serve(w, h.store, h.opts.Notifier, h.readOnly.Load(), h.writes.Load())
 			return
 		}
 	}
 
 	rec := httpx.NewRecorder(w)
 	start := time.Now()
-	req := &request{w: rec, r: r, id: id, vhost: vhost, bucket: vbucket}
+	req := &request{w: rec, r: r, id: id, vhost: vhost, bucket: vbucket, readOnly: h.readOnly.Load()}
+	// Counted so an operator turning read-only on can see when the last write is done.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		h.writes.Add(1)
+		defer h.writes.Add(-1)
+	}
 	if vhost {
 		req.key = strings.TrimPrefix(r.URL.Path, "/")
 	} else {

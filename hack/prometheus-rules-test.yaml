@@ -70,7 +70,7 @@ tests:
           - exp_labels: {severity: warning, job: t-plainbucket, namespace: ns}
             exp_annotations:
               summary: plainbucket answers too many requests with a server error.
-              description: "33.33% of requests failed with 5xx (501 and 507 aside) over the last 5 minutes; the server log has the errors."
+              description: "33.33% of requests failed with 5xx (501, 503 and 507 aside) over the last 5 minutes; the server log has the errors."
 
   # A healthy server, an evicting bucket at its limit and unsupported APIs probed: quiet.
   - interval: 1m
@@ -88,6 +88,9 @@ tests:
       - series: 'plainbucket_filesystem_size_bytes{job="t-plainbucket",namespace="ns"}'
         values: '100x20'
       - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="NotImplemented",method="GET",status="501"}'
+        values: '0+5x20'
+      # Writes refused by the read-only mode.
+      - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="PutObject",method="PUT",status="503"}'
         values: '0+5x20'
       - series: 'plainbucket_requests_total{job="t-plainbucket",namespace="ns",operation="GetObject",method="GET",status="200"}'
         values: '0+1x20'

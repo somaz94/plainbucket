@@ -158,6 +158,9 @@
         "console": {
           "type": "boolean"
         },
+        "readOnly": {
+          "type": "boolean"
+        },
         "logFormat": {
           "enum": [
             "text",

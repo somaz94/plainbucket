@@ -118,6 +118,8 @@ spec:
               value: {{ .Values.config.metrics | quote }}
             - name: PLAINBUCKET_CONSOLE
               value: {{ .Values.config.console | quote }}
+            - name: PLAINBUCKET_READ_ONLY
+              value: {{ .Values.config.readOnly | quote }}
             - name: PLAINBUCKET_LOG_FORMAT
               value: {{ .Values.config.logFormat | quote }}
             - name: PLAINBUCKET_DEBUG

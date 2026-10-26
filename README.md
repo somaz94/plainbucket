@@ -20,7 +20,7 @@ plainbucket is a single binary with no runtime dependencies beyond the Go standa
 - **Checksums**: CRC32, CRC32C, CRC64NVME, SHA-1 and SHA-256 are verified on upload and returned on request. An upload that declares none gets a CRC64NVME, as on S3.
 - **Plain files**: objects are files, metadata lives in a separate system directory, and files changed outside the server are detected and re-hashed. See [docs/layout.md](docs/layout.md).
 - **Tested with real clients**: the official AWS SDK for Go v2, the aws cli, rclone, the `gitlab-runner` cache helper and a subset of the ceph/s3-tests conformance suite run against the server in CI. See [docs/gitlab-runner.md](docs/gitlab-runner.md) for using it as a runner cache.
-- **Operations**: Prometheus metrics per S3 operation, a free-space floor that refuses writes before the disk fills, an access log, configuration and certificate reloads without a restart, a `/healthz` endpoint with a `healthcheck` command for the shell-less image, an offline `fsck`, and protection against uploads that stall.
+- **Operations**: Prometheus metrics per S3 operation, a free-space floor that refuses writes before the disk fills, a read-only mode for maintenance, an access log, configuration and certificate reloads without a restart, a `/healthz` endpoint with a `healthcheck` command for the shell-less image, an offline `fsck`, and protection against uploads that stall.
 
 <br/>
 

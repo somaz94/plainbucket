@@ -24,6 +24,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut an upload that delivers less than 32 KiB in this long; `0` disables it |
 | `PLAINBUCKET_METRICS` | `metrics` | `false` | Serve Prometheus metrics at `GET /metrics` |
 | `PLAINBUCKET_CONSOLE` | `console` | `false` | Serve the web console at `/_console/`; see [Web Console](#web-console) |
+| `PLAINBUCKET_READ_ONLY` | `read-only` | `false` | Refuse every write and pause the background removals; see [Read-Only Mode](#read-only-mode) |
 | `PLAINBUCKET_LOG_FORMAT` | `log-format` | `text` | `text` or `json` |
 | `PLAINBUCKET_DEBUG` | `debug` | `false` | Log the startup configuration, denied requests and, like `PLAINBUCKET_ACCESS_LOG`, every request |
 | `PLAINBUCKET_ACCESS_LOG` | `access-log` | `false` | Log every request at info level; see [Access Log](#access-log) |
@@ -52,7 +53,7 @@ log-format: json
 
 A running server re-reads its configuration on `SIGHUP` (`docker kill --signal=HUP`, `systemctl reload` with `ExecReload=kill -HUP $MAINPID`), and on its own when the config file, the credentials file, a webhook's `secret-file` or the TLS certificate or key changes; it checks them every 30 seconds.
 
-- Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, `min-free-space`, and the certificate files. A request already authenticated finishes with the key it was signed with.
+- Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, `min-free-space`, `read-only`, and the certificate files. A request already authenticated finishes with the key it was signed with.
 - Every other setting changes only on restart; the server logs which ones differ. Environment variables are read again too, but a process's environment does not change after it starts, so values set there need a restart.
 - A file that fails to load or validate leaves the running configuration as it was, and the error is logged.
 
@@ -189,6 +190,19 @@ A filesystem that fills up anyway (another writer, a quota, or no minimum set) g
 
 <br/>
 
+## Read-Only Mode
+
+`read-only: true` keeps the files under the root still, for a backup, a migration or a check of the disk, while clients go on reading:
+
+- Every write through the API is refused with `503 ServiceUnavailable` and `Retry-After`, whatever the key: objects, parts, copies, deletes, tags, POST uploads, buckets, and the console's trash restores and removals. The SDKs retry a `503` a few times, so a short window passes unnoticed by clients that write rarely. A read-only key still gets its own `403`.
+- The background job stops removing anything: no expiry, eviction, expired trash, stale multipart uploads or leftovers. It still measures usage.
+- Reads still record their last use on the metadata files and rebuild the metadata of files edited outside the server; stop the server instead when not even those may change.
+- A write that started before the mode turned on still finishes. `plainbucket_writes_in_flight` counts them: start the backup once it is `0`.
+
+Set it in the config file and reload (`SIGHUP`, or wait for the file check) to turn it on or off without a restart; the change is logged as a warning, the console shows a `maintenance` badge to keys that sign in while it is on, and the `plainbucket_read_only` metric is `1`. An environment variable overrides the file and cannot change while the process runs, so with `PLAINBUCKET_READ_ONLY` set, as the [Helm chart](../helm/plainbucket/README.md) does, changing it means a restart.
+
+<br/>
+
 ## Metrics
 
 With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format without authentication:
@@ -196,6 +210,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - `plainbucket_requests_total{operation,method,status}` and the `plainbucket_request_duration_seconds{operation}` histogram. `operation` is the S3 operation name (`PutObject`, `UploadPart`, `ListObjectsV2`, ...), decided from the request alone, so refused requests count under the operation they asked for; `Console` covers the web console, `Preflight` CORS preflights, `NotImplemented` unsupported operations and `Unknown` anything else.
 - `plainbucket_received_bytes_total` (stored by successful uploads) and `plainbucket_sent_bytes_total`.
 - `plainbucket_objects`, `plainbucket_stored_bytes` and `plainbucket_usage_scan_timestamp_seconds`, measured at startup and then hourly by walking the buckets, so they lag recent uploads.
+- `plainbucket_read_only`, `1` while the [read-only mode](#read-only-mode) is on, and `plainbucket_writes_in_flight`, the requests other than `GET` and `HEAD` being served.
 - `plainbucket_filesystem_free_bytes` and `plainbucket_filesystem_size_bytes` for the filesystem holding the root, read at each scrape, and `plainbucket_min_free_bytes`, the configured minimum.
 - `plainbucket_notifications_total{result}` for [event notifications](#event-notifications), `sent`, `failed` (given up after retries, or refused) and `dropped` (a full queue, or still queued at shutdown), and `plainbucket_notification_queue`, the events waiting.
 - For buckets with `expire-after` or `max-size`: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, `plainbucket_bucket_max_size_bytes{bucket,evict}` for those with `max-size`, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.

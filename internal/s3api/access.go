@@ -65,14 +65,24 @@ func (h *Handler) authorizeAnonymous(req *request) error {
 	return nil
 }
 
-// authorize applies the bucket scope and read-only flag of the key that signed req.
+// readOnlyRetry is the Retry-After of a write refused in read-only mode, in seconds.
+const readOnlyRetry = "60"
+
+// authorize applies the bucket scope and read-only flag of the key that signed req, and
+// the server's read-only mode.
 func (req *request) authorize() error {
 	c := req.cred
-	if c.ReadOnly && req.r.Method != http.MethodGet && req.r.Method != http.MethodHead {
+	write := req.r.Method != http.MethodGet && req.r.Method != http.MethodHead
+	if c.ReadOnly && write {
 		return s3err.AccessDenied("This access key is read-only.")
 	}
 	if req.bucket != "" && !c.allows(req.bucket) {
 		return s3err.AccessDenied("This access key may not access the bucket.")
+	}
+	// After the permanent refusals: a 503 makes clients retry.
+	if req.readOnly && write {
+		req.w.Header().Set("Retry-After", readOnlyRetry)
+		return s3err.ServiceUnavailable("The server is read-only for maintenance; try again later.")
 	}
 	return nil
 }

@@ -78,6 +78,10 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 	}
 	store.SetMinFree(cfg.MinFreeSpace)
 	store.SetTrash(bucketTrash(cfg))
+	store.SetPaused(cfg.ReadOnly)
+	if cfg.ReadOnly {
+		logger.Warn("read-only mode: writes are refused and the background removals are paused")
+	}
 	if _, _, err := store.DiskSpace(); err != nil && cfg.MinFreeSpace > 0 {
 		logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
 	}
@@ -115,6 +119,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		AccessLog:     cfg.AccessLog || cfg.Debug,
 		BodyTimeout:   cfg.BodyTimeout,
 		Notifier:      notifier,
+		ReadOnly:      cfg.ReadOnly,
 	})
 	srv := &http.Server{
 		Handler:           handler,

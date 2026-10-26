@@ -879,7 +879,8 @@ function header(active) {
     el("nav", {}, link("Buckets", "#/"), link("Usage", "#/usage")),
     el("span", { class: "spacer" }),
     el("span", { class: "muted" }, cred.accessKey),
-    keyInfo.readOnly ? el("span", { class: "badge" }, "read-only") : null,
+    keyInfo.maintenance ? el("span", { class: "badge", title: "The server refuses writes until its read-only mode is turned off." }, "read-only: maintenance")
+      : keyInfo.readOnly ? el("span", { class: "badge" }, "read-only") : null,
     themeButton(),
     button("Sign out", () => {
       const running = [uploads.size ? plural(uploads.size, "upload") : "", downloads.size ? plural(downloads.size, "ZIP download") : ""].filter(Boolean);
@@ -1416,7 +1417,8 @@ function loginView() {
     cred = { accessKey: accessKey.value.trim(), secretKey: secretKey.value, region };
     try {
       await s3("GET", "");
-      keyInfo = { readOnly: Boolean((await consoleUsage().catch(() => ({}))).read_only) };
+      const usage = await consoleUsage().catch(() => ({}));
+      keyInfo = { readOnly: Boolean(usage.read_only), maintenance: Boolean(usage.maintenance) };
       render();
     } catch (err) {
       cred = null;

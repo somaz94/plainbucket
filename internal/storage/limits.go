@@ -255,6 +255,9 @@ func (s *Store) removeIfUnused(bucket string, c candidate, usedBefore time.Time)
 	defer bl.RUnlock()
 	unlock := s.lock(bucket, c.key)
 	defer unlock()
+	if s.paused.Load() {
+		return false // paused while a pass was under way
+	}
 	p := s.dataPath(bucket, c.key)
 	fi, err := s.r.Lstat(s.rel(p))
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() != c.size || fi.ModTime().UnixNano() != c.mtimeNs {

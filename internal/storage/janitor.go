@@ -15,7 +15,7 @@ const staleTmpAge = 24 * time.Hour
 
 // RunJanitor measures usage and applies the bucket limits, then every interval sweeps,
 // applies the limits and re-measures until ctx is cancelled. A write that takes an
-// evicting bucket over its limit applies the limits at once.
+// evicting bucket over its limit applies the limits at once. SetPaused skips the removals.
 func (s *Store) RunJanitor(ctx context.Context, interval, uploadExpiry time.Duration, log *slog.Logger) {
 	s.MeasureUsage(ctx)
 	s.applyLimits(ctx, log)
@@ -28,7 +28,7 @@ func (s *Store) RunJanitor(ctx context.Context, interval, uploadExpiry time.Dura
 		case <-s.kick:
 			s.applyLimits(ctx, log)
 		case <-t.C:
-			if n := s.Sweep(ctx, uploadExpiry); n > 0 {
+			if n := s.sweepUnlessPaused(ctx, uploadExpiry); n > 0 {
 				log.Info("janitor removed stale entries", "count", n)
 			}
 			s.applyLimits(ctx, log)
@@ -37,7 +37,25 @@ func (s *Store) RunJanitor(ctx context.Context, interval, uploadExpiry time.Dura
 	}
 }
 
+// SetPaused stops or resumes the janitor's removals (sweep, expiry, eviction); usage is
+// still measured. The read-only mode pauses them so a backup sees every file stay.
+func (s *Store) SetPaused(on bool) {
+	if s.paused.Swap(on) && !on {
+		s.wake() // writes made while paused may have taken a bucket over its limit
+	}
+}
+
+func (s *Store) sweepUnlessPaused(ctx context.Context, uploadExpiry time.Duration) int {
+	if s.paused.Load() {
+		return 0
+	}
+	return s.Sweep(ctx, uploadExpiry)
+}
+
 func (s *Store) applyLimits(ctx context.Context, log *slog.Logger) {
+	if s.paused.Load() {
+		return
+	}
 	if expired, evicted := s.enforceLimits(ctx); expired+evicted > 0 {
 		log.Info("bucket limits applied", "expired", expired, "evicted", evicted)
 	}
@@ -47,7 +65,7 @@ func (s *Store) applyLimits(ctx context.Context, log *slog.Logger) {
 // trash, and metadata whose object or bucket is gone. It returns how many entries it
 // removed and stops early when ctx is cancelled.
 func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
-	return s.sweep(ctx, uploadExpiry, func(_, path string) bool { return os.RemoveAll(path) == nil })
+	return s.sweep(ctx, uploadExpiry, func(_, path string) bool { return !s.paused.Load() && os.RemoveAll(path) == nil })
 }
 
 // Leftover kinds reported by sweep.

@@ -62,9 +62,11 @@ type consoleBucket struct {
 }
 
 type consoleUsageResponse struct {
-	// ReadOnly tells the console to hide what the signing key may not do.
-	ReadOnly bool            `json:"read_only,omitempty"`
-	Buckets  []consoleBucket `json:"buckets"`
+	// ReadOnly tells the console to hide writes: the key is read-only or the server is in maintenance.
+	ReadOnly bool `json:"read_only,omitempty"`
+	// Maintenance is the server-wide read-only mode alone.
+	Maintenance bool            `json:"maintenance,omitempty"`
+	Buckets     []consoleBucket `json:"buckets"`
 	// Total and Disk are reported only to a key that may see every bucket.
 	Total *consoleBucket `json:"total,omitempty"`
 	Disk  *consoleDisk   `json:"disk,omitempty"`
@@ -91,7 +93,7 @@ func (h *Handler) consoleUsage(req *request) error {
 		return err
 	}
 	usage := h.store.AllBucketUsage()
-	res := consoleUsageResponse{ReadOnly: req.cred.ReadOnly, Buckets: []consoleBucket{}}
+	res := consoleUsageResponse{ReadOnly: req.cred.ReadOnly || req.readOnly, Maintenance: req.readOnly, Buckets: []consoleBucket{}}
 	// The total sums the tracked per-bucket figures rather than the last walk, so it
 	// matches the rows; it is dated by that walk.
 	total := consoleBucket{MeasuredAt: h.store.Usage().At}

@@ -144,6 +144,7 @@ type Store struct {
 	expired     atomic.Int64
 	evicted     atomic.Int64
 	onLimit     atomic.Pointer[func(bucket, key string)] // see OnLimitRemove
+	paused      atomic.Bool                              // see SetPaused
 
 	trashAfter atomic.Pointer[map[string]time.Duration] // swapped whole by SetTrash
 	trashMu    sync.Mutex                               // serializes restores, purges and the sweep's expiry

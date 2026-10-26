@@ -46,7 +46,8 @@ func (c *certificate) load(certFile, keyFile string) error {
 func (c *certificate) get(*tls.ClientHelloInfo) (*tls.Certificate, error) { return c.pair.Load(), nil }
 
 // reloader takes a changed configuration over: access keys, bucket policies, limits, trash and
-// webhooks, min-free-space and the certificate. Other settings are reported as needing a restart.
+// webhooks, min-free-space, the read-only mode and the certificate. Other settings are
+// reported as needing a restart.
 type reloader struct {
 	src      reloadSource
 	boot     *config.Config // what the server started with
@@ -144,6 +145,11 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 		r.logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
 	}
 	r.handler.SetAccess(credentials(next), bucketPolicies(next), nil)
+	if next.ReadOnly != r.cfg.ReadOnly {
+		r.logger.Warn("read-only mode changed", "read_only", next.ReadOnly)
+	}
+	r.handler.SetReadOnly(next.ReadOnly)
+	r.store.SetPaused(next.ReadOnly)
 	if r.notifier != nil {
 		r.notifier.SetTargets(notifyTargets(next))
 	}

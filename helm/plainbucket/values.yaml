@@ -77,6 +77,9 @@ config:
   metrics: false
   # Web console at /_console/ (signs requests in the browser; see docs/configuration.md).
   console: false
+  # Refuse every write with 503 and pause the background removals, for maintenance.
+  # Changing it restarts the pod; turning it on without one needs a config file you edit.
+  readOnly: false
   logFormat: text
   debug: false
   # One info-level line per request (method, bucket, key, status, bytes, access key, ...).
@@ -156,7 +159,7 @@ prometheusRule:
     # The server is not scraped as up.
     down: {enabled: true, for: 5m, severity: critical}
     # More than ratio of requests answered 5xx, leaving out 501 (unsupported APIs, which
-    # tools probe) and 507 (writesRefused).
+    # tools probe), 503 (writes refused in read-only mode) and 507 (writesRefused).
     errors: {enabled: true, for: 10m, severity: warning, ratio: 0.05}
     # Writes refused with 507: below config.minFreeSpace, or the volume is full.
     writesRefused: {enabled: true, for: 0m, severity: warning}

@@ -74,7 +74,7 @@ type storeStats interface {
 	MinFree() int64
 }
 
-func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifier) {
+func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifier, readOnly bool, writes int64) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
 	m.mu.Lock()
@@ -133,6 +133,9 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifie
 		fmt.Fprintf(w, "plainbucket_notifications_total{result=\"dropped\"} %d\n", dropped)
 		metric("gauge", "plainbucket_notification_queue", "Bucket event notifications waiting to be sent.", int64(queued))
 	}
+
+	metric("gauge", "plainbucket_read_only", "1 while the server-wide read-only mode refuses writes.", map[bool]int64{true: 1}[readOnly])
+	metric("gauge", "plainbucket_writes_in_flight", "Requests other than GET and HEAD being served, including those started before read-only mode.", writes)
 
 	metric("gauge", "plainbucket_min_free_bytes", "Free bytes writes must leave (min-free-space); 0 when off.", st.MinFree())
 	if free, size, err := st.DiskSpace(); err == nil {
