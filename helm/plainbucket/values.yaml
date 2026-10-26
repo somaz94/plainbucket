@@ -64,6 +64,13 @@ config:
   # examples/static-site.yaml and examples/runner-cache.yaml. An entry with no settings
   # needs {}: Helm drops a key whose value is empty.
   buckets: {}
+  # Rate limits (docs/configuration.md#rate-limits), rendered into the ConfigMap: rateLimit
+  # for every key without its own (set in auth.credentialsSecret), anonymousRateLimit per
+  # client address of unsigned requests; {} turns it off. Behind an Ingress, or a Service with
+  # externalTrafficPolicy: Cluster, all clients share the proxy's address. A fractional
+  # requests needs -f or --set-json: --set passes 0.5 as a string.
+  rateLimit: {}
+  anonymousRateLimit: {}
   # Secret mounted at /etc/plainbucket/notify for webhook keys: point
   # buckets.<name>.notify[].secret-file at /etc/plainbucket/notify/<key>. A notify url
   # lands in the ConfigMap, so use one that carries no token.
@@ -161,7 +168,7 @@ prometheusRule:
     # The server is not scraped as up.
     down: {enabled: true, for: 5m, severity: critical}
     # More than ratio of requests answered 5xx, leaving out 501 (unsupported APIs, which
-    # tools probe), 503 (writes refused in read-only mode) and 507 (writesRefused).
+    # tools probe), 503 (read-only mode and rate limits) and 507 (writesRefused).
     errors: {enabled: true, for: 10m, severity: warning, ratio: 0.05}
     # Writes refused with 507: below config.minFreeSpace, or the volume is full.
     writesRefused: {enabled: true, for: 0m, severity: warning}

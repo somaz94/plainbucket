@@ -7,6 +7,9 @@ import (
 	"net/http"
 )
 
+// MinBodyProgress is how many body bytes an upload must deliver within each body timeout.
+const MinBodyProgress = 32 << 10
+
 // StoredHeaders are kept with an object and returned on GET and HEAD.
 var StoredHeaders = []string{"Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Expires"}
 

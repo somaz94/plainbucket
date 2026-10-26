@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/config"
+	"github.com/somaz94/plainbucket/internal/ratelimit"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
@@ -289,5 +290,28 @@ func TestRunScrubWaitsFromTheLastRun(t *testing.T) {
 	runScrub(ctx, store, time.Hour, 0, slog.New(slog.NewTextHandler(logs, nil)))
 	if strings.Contains(logs.String(), "scrub finished") {
 		t.Errorf("scrubbed again right away:\n%s", logs.String())
+	}
+}
+
+func TestCredentialRateLimits(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.RateLimit = &config.RateLimit{Requests: 10}
+	cfg.Credentials = []config.Credential{
+		{AccessKey: "own", SecretKey: "s", RateLimit: &config.RateLimit{Bytes: 1 << 20}},
+		{AccessKey: "default", SecretKey: "s"},
+	}
+	got := map[string]ratelimit.Limit{}
+	for _, c := range credentials(cfg) {
+		got[c.AccessKey] = c.RateLimit
+	}
+	// A key's own limit replaces the default whole; the others take the default.
+	if got["own"] != (ratelimit.Limit{Bytes: 1 << 20}) || got["default"] != (ratelimit.Limit{Requests: 10}) {
+		t.Errorf("limits = %+v", got)
+	}
+	cfg.RateLimit = nil
+	for _, c := range credentials(cfg) {
+		if c.AccessKey == "default" && !c.RateLimit.Zero() {
+			t.Errorf("no default, yet %+v", c.RateLimit)
+		}
 	}
 }

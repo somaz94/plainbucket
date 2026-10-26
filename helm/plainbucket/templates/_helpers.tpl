@@ -83,3 +83,10 @@ Name of the data claim (chart-created or existing).
 {{- define "plainbucket.dataClaimName" -}}
 {{- .Values.persistence.existingClaim | default (printf "%s-data" (include "plainbucket.fullname" .)) -}}
 {{- end }}
+
+{{/*
+"true" when the server needs a config file: the settings that only exist in YAML.
+*/}}
+{{- define "plainbucket.configFile" -}}
+{{- if or .Values.config.buckets .Values.config.rateLimit .Values.config.anonymousRateLimit }}true{{ end }}
+{{- end }}

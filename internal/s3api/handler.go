@@ -19,6 +19,7 @@ import (
 	"github.com/somaz94/plainbucket/internal/console"
 	"github.com/somaz94/plainbucket/internal/httpx"
 	"github.com/somaz94/plainbucket/internal/notify"
+	"github.com/somaz94/plainbucket/internal/ratelimit"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/sigv4"
 	"github.com/somaz94/plainbucket/internal/storage"
@@ -51,24 +52,28 @@ type Options struct {
 	Notifier *notify.Notifier
 	// ReadOnly refuses every write with 503; SetReadOnly changes it while serving.
 	ReadOnly bool
+	// AnonymousRateLimit caps unsigned requests per client address.
+	AnonymousRateLimit ratelimit.Limit
 }
 
 // Handler is the S3 API http.Handler.
 type Handler struct {
-	opts     Options
-	store    *storage.Store
-	log      *slog.Logger
-	now      func() time.Time
-	metrics  *metrics
-	access   atomic.Pointer[access] // swapped whole by SetAccess while serving
-	readOnly atomic.Bool
-	writes   atomic.Int64 // requests in flight that may write
+	opts      Options
+	store     *storage.Store
+	log       *slog.Logger
+	now       func() time.Time
+	metrics   *metrics
+	access    atomic.Pointer[access] // swapped whole by SetAccess while serving
+	readOnly  atomic.Bool
+	writes    atomic.Int64                  // requests in flight that may write
+	anonymous atomic.Pointer[ratelimit.Set] // nil without an anonymous rate limit
 }
 
 // access is the keys and bucket policies in force.
 type access struct {
-	creds   map[string]*Credential
-	buckets map[string]*BucketPolicy
+	creds    map[string]*Credential
+	limiters map[string]*ratelimit.Limiter // of the keys with a rate limit
+	buckets  map[string]*BucketPolicy
 }
 
 // New returns a Handler.
@@ -80,7 +85,24 @@ func New(opts Options) *Handler {
 	h := &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics()}
 	h.SetAccess(opts.Credentials, opts.Buckets, opts.PublicBuckets)
 	h.readOnly.Store(opts.ReadOnly)
+	h.SetAnonymousRateLimit(opts.AnonymousRateLimit)
 	return h
+}
+
+// Anonymous clients tracked at once, and how long one must be idle to be dropped when full.
+const (
+	anonClients = 10000
+	anonIdle    = 10 * time.Minute
+)
+
+// SetAnonymousRateLimit replaces the per-address limit of unsigned requests, starting
+// every address afresh; it is safe while serving.
+func (h *Handler) SetAnonymousRateLimit(l ratelimit.Limit) {
+	if l.Zero() {
+		h.anonymous.Store(nil)
+		return
+	}
+	h.anonymous.Store(ratelimit.NewSet(l, anonIdle, anonClients))
 }
 
 // SetReadOnly turns the server-wide read-only mode on or off; it is safe while serving.
@@ -89,9 +111,19 @@ func (h *Handler) SetReadOnly(on bool) { h.readOnly.Store(on) }
 // SetAccess replaces the access keys and bucket policies; it is safe while serving.
 // A request already authenticated finishes with the key it was signed with.
 func (h *Handler) SetAccess(creds []Credential, buckets map[string]BucketPolicy, public []string) {
-	a := &access{creds: map[string]*Credential{}, buckets: map[string]*BucketPolicy{}}
+	a := &access{creds: map[string]*Credential{}, limiters: map[string]*ratelimit.Limiter{}, buckets: map[string]*BucketPolicy{}}
+	old := h.access.Load()
 	for _, c := range creds {
 		a.creds[c.AccessKey] = &c
+		if c.RateLimit.Zero() {
+			continue
+		}
+		// A key whose limit did not change keeps its limiter, and with it its spent allowance.
+		if prev := old; prev != nil && prev.creds[c.AccessKey] != nil && prev.creds[c.AccessKey].RateLimit == c.RateLimit {
+			a.limiters[c.AccessKey] = prev.limiters[c.AccessKey]
+		} else {
+			a.limiters[c.AccessKey] = ratelimit.New(c.RateLimit)
+		}
 	}
 	for name, p := range buckets {
 		a.buckets[name] = &p
@@ -250,6 +282,9 @@ func (h *Handler) serve(req *request) error {
 		if err := h.authorizeAnonymous(req); err != nil {
 			return err
 		}
+		if err := h.throttle(req, h.anonLimiter(req), true); err != nil {
+			return err
+		}
 	} else {
 		auth, e := sigv4.Verify(req.r, h.credentials, h.now())
 		if e != nil {
@@ -257,6 +292,9 @@ func (h *Handler) serve(req *request) error {
 		}
 		req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
 		if err := req.authorize(); err != nil {
+			return err
+		}
+		if err := h.throttle(req, h.keyLimiter(req), false); err != nil {
 			return err
 		}
 	}

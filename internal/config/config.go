@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/textproto"
 	"net/url"
 	"os"
@@ -40,6 +41,10 @@ type Config struct {
 	Credentials     []Credential `yaml:"credentials"`
 	CredentialsFile string       `yaml:"credentials-file"`
 	PublicBuckets   []string     `yaml:"public-buckets"`
+	// RateLimit applies to every key without its own; AnonymousRateLimit to unsigned
+	// requests, per client address.
+	RateLimit          *RateLimit `yaml:"rate-limit"`
+	AnonymousRateLimit *RateLimit `yaml:"anonymous-rate-limit"`
 	// Buckets holds per-bucket behavior; PublicBuckets marks entries public.
 	Buckets map[string]Bucket `yaml:"buckets"`
 	// Domains enable virtual-hosted-style requests: Host <bucket>.<domain>.
@@ -67,10 +72,37 @@ type Config struct {
 // Credential is one access key. Buckets limits it to those buckets (empty = all) and
 // ReadOnly to GET and HEAD.
 type Credential struct {
-	AccessKey string   `yaml:"access-key"`
-	SecretKey string   `yaml:"secret-key"`
-	Buckets   []string `yaml:"buckets"`
-	ReadOnly  bool     `yaml:"read-only"`
+	AccessKey string     `yaml:"access-key"`
+	SecretKey string     `yaml:"secret-key"`
+	Buckets   []string   `yaml:"buckets"`
+	ReadOnly  bool       `yaml:"read-only"`
+	RateLimit *RateLimit `yaml:"rate-limit"`
+}
+
+// RateLimit caps a client: Requests per second, Burst of them at once (default Requests
+// rounded up), and request and response body Bytes per second; zero Requests or Bytes
+// does not limit.
+type RateLimit struct {
+	Requests float64 `yaml:"requests"`
+	Burst    int     `yaml:"burst"`
+	Bytes    int64   `yaml:"bytes"`
+}
+
+// check validates r against the body timeout: a byte rate so low that a read waits past
+// it would cut uploads off instead of slowing them.
+func (r *RateLimit) check(what string, bodyTimeout time.Duration) error {
+	if r == nil {
+		return nil
+	}
+	if r.Requests < 0 || math.IsNaN(r.Requests) || math.IsInf(r.Requests, 0) || r.Burst < 0 || r.Bytes < 0 {
+		return fmt.Errorf("%s: requests, burst and bytes must be finite and not negative", what)
+	}
+	if secs := int64(bodyTimeout / time.Second); secs > 0 && r.Bytes > 0 {
+		if floor := int64(httpx.MinBodyProgress) / secs; r.Bytes < floor {
+			return fmt.Errorf("%s: bytes must be at least %d with body-timeout %s", what, floor, bodyTimeout)
+		}
+	}
+	return nil
 }
 
 // Bucket is the configured behavior of one bucket.
@@ -360,8 +392,14 @@ func (c *Config) validateAccess() error {
 		if err := checkBuckets("credential "+cr.AccessKey+" buckets", cr.Buckets); err != nil {
 			return err
 		}
+		if err := cr.RateLimit.check("credential "+cr.AccessKey+" rate-limit", c.BodyTimeout); err != nil {
+			return err
+		}
 	}
 	if err := checkBuckets("PLAINBUCKET_PUBLIC_BUCKETS", c.PublicBuckets); err != nil {
+		return err
+	}
+	if err := errors.Join(c.RateLimit.check("rate-limit", c.BodyTimeout), c.AnonymousRateLimit.check("anonymous-rate-limit", c.BodyTimeout)); err != nil {
 		return err
 	}
 	if err := c.validateBuckets(); err != nil {
@@ -569,6 +607,8 @@ func (c *Config) LogValue() slog.Value {
 		slog.Bool("secret_key", c.SecretKey != ""),
 		slog.Int("access_keys", len(c.AllCredentials())),
 		slog.Any("public_buckets", c.PublicBuckets),
+		slog.Bool("rate_limit", c.RateLimit != nil),
+		slog.Bool("anonymous_rate_limit", c.AnonymousRateLimit != nil),
 		slog.Int("configured_buckets", len(c.Buckets)),
 		slog.Any("domains", c.Domains),
 		slog.String("region", c.Region),
@@ -593,7 +633,7 @@ func (c *Config) LogValue() slog.Value {
 // reloads; the certificate files are re-read too, but switching TLS on or off is not.
 var reloadable = map[string]bool{
 	"access-key": true, "secret-key": true, "credentials": true, "credentials-file": true,
-	"public-buckets": true, "buckets": true, "min-free-space": true, "read-only": true, "tls-cert": true, "tls-key": true,
+	"public-buckets": true, "buckets": true, "rate-limit": true, "anonymous-rate-limit": true, "min-free-space": true, "read-only": true, "tls-cert": true, "tls-key": true,
 }
 
 // RestartNeeded lists the settings, by YAML name, that differ in next and take effect

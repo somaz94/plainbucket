@@ -28,6 +28,16 @@ type metrics struct {
 
 	receivedBytes atomic.Int64
 	sentBytes     atomic.Int64
+	throttledKey  atomic.Int64
+	throttledAnon atomic.Int64
+}
+
+func (m *metrics) throttled(anonymous bool) {
+	if anonymous {
+		m.throttledAnon.Add(1)
+	} else {
+		m.throttledKey.Add(1)
+	}
 }
 
 type requestKey struct {
@@ -120,6 +130,11 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifie
 	}
 	metric("counter", "plainbucket_received_bytes_total", "Bytes stored by successful object and part uploads.", m.receivedBytes.Load())
 	metric("counter", "plainbucket_sent_bytes_total", "Bytes sent in responses.", m.sentBytes.Load())
+
+	fmt.Fprintln(w, "# HELP plainbucket_throttled_requests_total Requests refused with 503 SlowDown past a rate limit, by client: an access key or an anonymous address.")
+	fmt.Fprintln(w, "# TYPE plainbucket_throttled_requests_total counter")
+	fmt.Fprintf(w, "plainbucket_throttled_requests_total{client=\"key\"} %d\n", m.throttledKey.Load())
+	fmt.Fprintf(w, "plainbucket_throttled_requests_total{client=\"anonymous\"} %d\n", m.throttledAnon.Load())
 
 	expired, evicted := st.Removed()
 	metric("counter", "plainbucket_expired_objects_total", "Objects removed by a bucket's expire-after.", expired)

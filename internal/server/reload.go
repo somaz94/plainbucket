@@ -145,6 +145,9 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 		r.logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
 	}
 	r.handler.SetAccess(credentials(next), bucketPolicies(next), nil)
+	if rateLimit(next.AnonymousRateLimit) != rateLimit(r.cfg.AnonymousRateLimit) {
+		r.handler.SetAnonymousRateLimit(rateLimit(next.AnonymousRateLimit))
+	}
 	if next.ReadOnly != r.cfg.ReadOnly {
 		r.logger.Warn("read-only mode changed", "read_only", next.ReadOnly)
 	}

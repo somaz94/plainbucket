@@ -16,6 +16,8 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_CREDENTIALS_FILE` | `credentials-file` | | YAML file holding a `credentials` list, added to the others |
 | `PLAINBUCKET_PUBLIC_BUCKETS` | `public-buckets` | | Comma-separated buckets whose objects anyone may read; see [Buckets](#buckets) |
 | | `buckets` | | Per-bucket settings: public reads, static website, CORS, expiry, size limit; see [Buckets](#buckets) |
+| | `rate-limit` | | Requests and body bytes per second for every key without its own; see [Rate Limits](#rate-limits) |
+| | `anonymous-rate-limit` | | Requests and body bytes per second for unsigned requests, per client address |
 | `PLAINBUCKET_DOMAINS` | `domains` | | Comma-separated domains for virtual-hosted-style requests; see [Virtual-Hosted Addressing](#virtual-hosted-addressing) |
 | `PLAINBUCKET_REGION` | `region` | `us-east-1` | Region reported by `GetBucketLocation` and `HeadBucket` |
 | `PLAINBUCKET_MAX_OBJECT_SIZE` | `max-object-size` | `0` | Largest object or part in bytes; `0` means no limit |
@@ -55,7 +57,7 @@ log-format: json
 
 A running server re-reads its configuration on `SIGHUP` (`docker kill --signal=HUP`, `systemctl reload` with `ExecReload=kill -HUP $MAINPID`), and on its own when the config file, the credentials file, a webhook's `secret-file` or the TLS certificate or key changes; it checks them every 30 seconds.
 
-- Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, `min-free-space`, `read-only`, and the certificate files. A request already authenticated finishes with the key it was signed with.
+- Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, `rate-limit` and `anonymous-rate-limit`, `min-free-space`, `read-only`, and the certificate files. A request already authenticated finishes with the key it was signed with.
 - Every other setting changes only on restart; the server logs which ones differ. Environment variables are read again too, but a process's environment does not change after it starts, so values set there need a restart.
 - A file that fails to load or validate leaves the running configuration as it was, and the error is logged.
 
@@ -84,6 +86,28 @@ A key limited to some buckets can create and delete only those buckets and lists
 Unsigned requests get `403 AccessDenied`, except object reads from a public bucket and `/healthz`, plus `/metrics` when enabled.
 
 The region in a request's credential scope is not checked against `PLAINBUCKET_REGION`, so clients configured for any region work.
+
+<br/>
+
+## Rate Limits
+
+A rate limit keeps one client from taking the server's disk and network from the others. Each limit takes `requests` (per second), `burst` (requests allowed at once, by default `requests` rounded up) and `bytes` (request and response bodies per second, all of the client's requests together); a field left out does not limit.
+
+```yaml
+rate-limit: {requests: 50, burst: 100, bytes: 52428800}   # every key without its own
+anonymous-rate-limit: {requests: 10, bytes: 10485760}      # unsigned requests, per address
+credentials:
+  - access-key: gitlab-runner
+    secret-key: change-me-too
+    rate-limit: {requests: 500}   # replaces the default whole for this key; fields are not merged
+```
+
+- A request past its client's request rate is refused with `503 SlowDown` and `Retry-After`, the code S3 uses, so the SDKs back off and retry. It is counted only once the request is signed by a valid key, so forged requests cannot spend another key's allowance.
+- `rate-limit` applies to every key without its own, the full-access `PLAINBUCKET_ACCESS_KEY` included; to leave that key unlimited, give the limits to the other keys instead of a default.
+- Bytes are not refused but slowed: uploads and downloads of a client share its rate, so concurrent uploads each get a share. An upload must still deliver 32 KiB per `body-timeout` (see [Slow Uploads](#slow-uploads)); a `bytes` below 32 KiB per `body-timeout` is refused at startup, and a share that small cuts uploads off. A download slowed this way is copied through memory instead of sent straight from the file by the kernel.
+- Unsigned requests, which only read public buckets and website documents, are limited per client address, an IPv6 one by its /64, which a single host can fill. Behind a proxy or Ingress every client has the proxy's address, so there the limit applies to them all together. The console's own pages and CORS preflights are not limited. Past 10,000 clients at once the newcomers share one allowance.
+- Limits are taken over by a reload. A key whose limit did not change keeps what it has spent; a changed one, and every address after a change of `anonymous-rate-limit`, starts afresh.
+- `plainbucket_throttled_requests_total{client}` counts the refusals, for keys and for addresses.
 
 <br/>
 
@@ -232,6 +256,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 
 - `plainbucket_requests_total{operation,method,status}` and the `plainbucket_request_duration_seconds{operation}` histogram. `operation` is the S3 operation name (`PutObject`, `UploadPart`, `ListObjectsV2`, ...), decided from the request alone, so refused requests count under the operation they asked for; `Console` covers the web console, `Preflight` CORS preflights, `NotImplemented` unsupported operations and `Unknown` anything else.
 - `plainbucket_received_bytes_total` (stored by successful uploads) and `plainbucket_sent_bytes_total`.
+- `plainbucket_throttled_requests_total{client}`, requests refused by a [rate limit](#rate-limits), `client` being `key` or `anonymous`.
 - `plainbucket_objects`, `plainbucket_stored_bytes` and `plainbucket_usage_scan_timestamp_seconds`, measured at startup and then hourly by walking the buckets, so they lag recent uploads.
 - After an [integrity check](#integrity-checks), including one from before a restart: `plainbucket_scrub_objects`, `plainbucket_scrub_bytes`, `plainbucket_scrub_skipped_objects`, `plainbucket_scrub_unchecked_objects`, `plainbucket_scrub_corrupt_objects` and `plainbucket_scrub_timestamp_seconds`, for the last completed run.
 - `plainbucket_read_only`, `1` while the [read-only mode](#read-only-mode) is on, and `plainbucket_writes_in_flight`, the requests other than `GET` and `HEAD` being served.

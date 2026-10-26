@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/checksum"
+	"github.com/somaz94/plainbucket/internal/httpx"
 	"github.com/somaz94/plainbucket/internal/s3err"
 	"github.com/somaz94/plainbucket/internal/sigv4"
 )
@@ -52,7 +53,7 @@ type bodyReader struct {
 }
 
 // minProgress is the data an upload must deliver within each BodyTimeout window.
-const minProgress = 32 << 10
+const minProgress = httpx.MinBodyProgress
 
 func newBodyReader(req *request, timeout time.Duration) *bodyReader {
 	b := &bodyReader{r: req.r.Body, timeout: timeout}

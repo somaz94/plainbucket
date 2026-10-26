@@ -1,4 +1,4 @@
-{{- if .Values.config.buckets }}
+{{- if include "plainbucket.configFile" . }}
 {{- range $name, $b := .Values.config.buckets }}
 {{- range $i, $n := $b.notify }}
 {{- $f := toString (index $n "secret-file") }}
@@ -15,6 +15,16 @@ metadata:
     {{- include "plainbucket.labels" . | nindent 4 }}
 data:
   config.yaml: |
+    {{- with .Values.config.buckets }}
     buckets:
-      {{- toYaml .Values.config.buckets | nindent 6 }}
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.config.rateLimit }}
+    rate-limit:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.config.anonymousRateLimit }}
+    anonymous-rate-limit:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
 {{- end }}

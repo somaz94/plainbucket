@@ -157,7 +157,7 @@ render "${KEY[@]}" -f "${CHART}/examples/static-site.yaml" --show-only templates
 has 'args: ["-c", "/etc/plainbucket/config.yaml"]' "config file argument"
 has "checksum/config:" "config checksum annotation"
 render "${KEY[@]}" --show-only templates/deployment.yaml
-lacks "args:" "no config file without bucket settings"
+lacks "args:" "no config file without bucket or rate limit settings"
 render -f "${CHART}/examples/runner-cache.yaml" --show-only templates/configmap.yaml
 has "max-size: 85899345920" "byte size kept as an integer"
 has "expire-after: 336h" "expiry in the config file"
@@ -178,6 +178,18 @@ has "Cache-Control: no-cache" "header rule in the config file"
 render "${KEY[@]}" --set "config.buckets.ci-cache.lifecycle[0].prefix=logs/" --set "config.buckets.ci-cache.lifecycle[0].delete-after=168h" \
     --show-only templates/configmap.yaml
 has "delete-after: 168h" "lifecycle rule in the config file"
+render "${KEY[@]}" --set config.rateLimit.requests=50
+has "rate-limit:" "rate limit in the config file"
+has 'args: ["-c", "/etc/plainbucket/config.yaml"]' "a rate limit alone passes the config file"
+has "checksum/config:" "rate limit changes restart the pod"
+lacks "buckets:" "no empty buckets map"
+lacks "anonymous-rate-limit:" "no anonymous limit unless set"
+render "${KEY[@]}" --set config.anonymousRateLimit.requests=5
+has "anonymous-rate-limit:" "anonymous rate limit in the config file"
+has 'args: ["-c", "/etc/plainbucket/config.yaml"]' "an anonymous rate limit alone passes the config file"
+render "${KEY[@]}" --set config.buckets.docs.trash-after=168h --set config.rateLimit.requests=50 --show-only templates/configmap.yaml
+has "trash-after: 168h" "buckets kept beside a rate limit"
+has "rate-limit:" "rate limit kept beside buckets"
 ok "bucket settings"
 
 render "${KEY[@]}" --show-only templates/tests/test-connection.yaml
@@ -247,6 +259,10 @@ expect_fail "secret" "${KEY[@]}" --set "config.buckets.uploads.notify[0].url=htt
 expect_fail "Content-Type" "${KEY[@]}" --set "config.buckets.www.headers[0].set.Content-Type=text/html"
 expect_fail "set" "${KEY[@]}" --set "config.buckets.www.headers[0].prefix=a/"
 expect_fail "delete-after" "${KEY[@]}" --set "config.buckets.ci-cache.lifecycle[0].delete-after=7d"
+expect_fail "requests" "${KEY[@]}" --set config.rateLimit.requests=-1
+expect_fail "rps" "${KEY[@]}" --set config.anonymousRateLimit.rps=5
+expect_fail "bytes" "${KEY[@]}" --set-string config.rateLimit.bytes=10Mi
+expect_fail "burst" "${KEY[@]}" --set-json 'config.anonymousRateLimit={"burst":1.5}'
 expect_fail "expire" "${KEY[@]}" --set "config.buckets.ci-cache.lifecycle[0].expire=1h"
 printf 'config:\n  buckets:\n    www:\n      headers:\n        - set: {Cache-Control: "a\\nb"}\n' >"${TMP_VALUES}"
 expect_fail "Cache-Control" "${KEY[@]}" -f "${TMP_VALUES}"

@@ -19,6 +19,7 @@ import (
 
 	"github.com/somaz94/plainbucket/internal/config"
 	"github.com/somaz94/plainbucket/internal/notify"
+	"github.com/somaz94/plainbucket/internal/ratelimit"
 	"github.com/somaz94/plainbucket/internal/s3api"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
@@ -124,6 +125,8 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		BodyTimeout:   cfg.BodyTimeout,
 		Notifier:      notifier,
 		ReadOnly:      cfg.ReadOnly,
+
+		AnonymousRateLimit: rateLimit(cfg.AnonymousRateLimit),
 	})
 	srv := &http.Server{
 		Handler:           handler,
@@ -217,9 +220,21 @@ func runScrub(ctx context.Context, store *storage.Store, interval time.Duration,
 func credentials(cfg *config.Config) []s3api.Credential {
 	var out []s3api.Credential
 	for _, c := range cfg.AllCredentials() {
-		out = append(out, s3api.Credential{AccessKey: c.AccessKey, SecretKey: c.SecretKey, Buckets: c.Buckets, ReadOnly: c.ReadOnly})
+		limit := c.RateLimit
+		if limit == nil {
+			limit = cfg.RateLimit
+		}
+		out = append(out, s3api.Credential{AccessKey: c.AccessKey, SecretKey: c.SecretKey, Buckets: c.Buckets, ReadOnly: c.ReadOnly,
+			RateLimit: rateLimit(limit)})
 	}
 	return out
+}
+
+func rateLimit(r *config.RateLimit) ratelimit.Limit {
+	if r == nil {
+		return ratelimit.Limit{}
+	}
+	return ratelimit.Limit{Requests: r.Requests, Burst: r.Burst, Bytes: r.Bytes}
 }
 
 func bucketPolicies(cfg *config.Config) map[string]s3api.BucketPolicy {

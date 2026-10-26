@@ -162,6 +162,10 @@ func InsufficientStorage() *Error {
 	return newErr(http.StatusInsufficientStorage, "InsufficientStorage", "There is not enough free disk space to store the data.")
 }
 
+func SlowDown() *Error {
+	return newErr(http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.")
+}
+
 func ServiceUnavailable(msg string) *Error {
 	return newErr(http.StatusServiceUnavailable, "ServiceUnavailable", msg)
 }

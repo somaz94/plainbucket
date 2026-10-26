@@ -135,7 +135,7 @@ func (h *Handler) consoleAuth(req *request) error {
 		return e
 	}
 	req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
-	return nil
+	return h.throttle(req, h.keyLimiter(req), false)
 }
 
 func writeConsoleJSON(req *request, v any) error {

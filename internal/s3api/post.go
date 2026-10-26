@@ -63,6 +63,10 @@ func (h *Handler) postObject(req *request) error {
 	if err := req.authorize(); err != nil {
 		return err
 	}
+	lm := h.keyLimiter(req)
+	if err := h.throttle(req, lm, false); err != nil {
+		return err
+	}
 	minLen, maxLen, err := checkPostPolicy(fields["policy"], req.bucket, fields, h.now())
 	if err != nil {
 		return err
@@ -89,7 +93,12 @@ func (h *Handler) postObject(req *request) error {
 			return err
 		}
 	}
-	body := &sizeRange{r: file, min: minLen, max: maxLen}
+	// The multipart reader holds the body from before throttle wrapped it.
+	var src io.Reader = file
+	if lm != nil {
+		src = lm.Reader(req.r.Context(), file)
+	}
+	body := &sizeRange{r: src, min: minLen, max: maxLen}
 	info, err := h.store.PutObject(req.bucket, req.key, body, -1, storage.PutOptions{Metadata: md})
 	if err != nil {
 		return err

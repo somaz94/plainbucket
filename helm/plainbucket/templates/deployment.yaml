@@ -22,7 +22,7 @@ spec:
         {{- if and (not .Values.auth.existingSecret) .Values.auth.accessKey }}
         checksum/auth: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
-        {{- if .Values.config.buckets }}
+        {{- if include "plainbucket.configFile" . }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
@@ -56,7 +56,7 @@ spec:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if .Values.config.buckets }}
+          {{- if include "plainbucket.configFile" . }}
           args: ["-c", "/etc/plainbucket/config.yaml"]
           {{- end }}
           {{- with .Values.securityContext }}
@@ -176,7 +176,7 @@ spec:
               {{- with .Values.persistence.subPath }}
               subPath: {{ . }}
               {{- end }}
-            {{- if .Values.config.buckets }}
+            {{- if include "plainbucket.configFile" . }}
             - name: config
               mountPath: /etc/plainbucket/config.yaml
               subPath: config.yaml
@@ -209,7 +209,7 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
-        {{- if .Values.config.buckets }}
+        {{- if include "plainbucket.configFile" . }}
         - name: config
           configMap:
             name: {{ include "plainbucket.fullname" . }}-config

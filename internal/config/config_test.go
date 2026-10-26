@@ -346,3 +346,59 @@ func TestLoadUnvalidated(t *testing.T) {
 		t.Error("missing file accepted")
 	}
 }
+
+func TestRateLimits(t *testing.T) {
+	setRequired(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.yaml")
+	_ = os.WriteFile(path, []byte(`rate-limit: {requests: 50, burst: 100, bytes: 10485760}
+anonymous-rate-limit: {requests: 5}
+credentials:
+  - {access-key: ci, secret-key: ci-secret, rate-limit: {requests: 1000}}
+`), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := cfg.RateLimit; r == nil || r.Requests != 50 || r.Burst != 100 || r.Bytes != 10<<20 {
+		t.Errorf("rate-limit = %+v", r)
+	}
+	if r := cfg.AnonymousRateLimit; r == nil || r.Requests != 5 {
+		t.Errorf("anonymous-rate-limit = %+v", r)
+	}
+	if c := cfg.Credentials[0]; c.RateLimit == nil || c.RateLimit.Requests != 1000 {
+		t.Errorf("credential rate-limit = %+v", c.RateLimit)
+	}
+	for name, body := range map[string]string{
+		"negative requests":  "rate-limit: {requests: -1}\n",
+		"negative anonymous": "anonymous-rate-limit: {bytes: -1}\n",
+		"negative key":       "credentials: [{access-key: ci, secret-key: s, rate-limit: {burst: -1}}]\n",
+		"unknown field":      "rate-limit: {rps: 5}\n",
+	} {
+		_ = os.WriteFile(path, []byte(body), 0o600)
+		if _, err := Load(path); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestRateLimitBounds(t *testing.T) {
+	setRequired(t)
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	for name, body := range map[string]string{
+		"nan requests":     "rate-limit: {requests: .nan}\n",
+		"infinite":         "rate-limit: {requests: .inf}\n",
+		"bytes below body": "rate-limit: {bytes: 100}\n", // 32 KiB per 1m body-timeout needs about 546
+	} {
+		_ = os.WriteFile(path, []byte(body), 0o600)
+		if _, err := Load(path); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// Without a body timeout any byte rate is possible.
+	t.Setenv("PLAINBUCKET_BODY_TIMEOUT", "0")
+	_ = os.WriteFile(path, []byte("rate-limit: {bytes: 100}\n"), 0o600)
+	if _, err := Load(path); err != nil {
+		t.Errorf("slow rate without a body timeout: %v", err)
+	}
+}
