@@ -51,7 +51,7 @@ func newEnv(t *testing.T) *env {
 	}
 	_ = e.dst.CreateBucket("dst")
 	e.r = New(e.src, 0, slog.New(slog.NewTextHandler(e.logs, nil)))
-	e.r.retry = []time.Duration{time.Millisecond}
+	e.r.backoff = []time.Duration{time.Millisecond}
 	t.Cleanup(e.r.Close)
 	return e
 }

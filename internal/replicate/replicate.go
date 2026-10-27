@@ -73,7 +73,7 @@ const (
 	minRate = 1 << 20
 )
 
-var backoff = []time.Duration{time.Second, 4 * time.Second, 16 * time.Second}
+var defaultBackoff = []time.Duration{time.Second, 4 * time.Second, 16 * time.Second}
 
 // Replicator runs the rules.
 type Replicator struct {
@@ -88,7 +88,7 @@ type Replicator struct {
 
 	copied, deleted, failed, dropped atomic.Int64
 	now                              func() time.Time
-	retry                            []time.Duration
+	backoff                          []time.Duration
 }
 
 type worker struct {
@@ -109,7 +109,7 @@ type worker struct {
 
 // New returns a Replicator that compares the listings every interval.
 func New(src Source, interval time.Duration, log *slog.Logger) *Replicator {
-	r := &Replicator{src: src, log: log, interval: interval, workers: map[Rule]*worker{}, now: time.Now, retry: backoff,
+	r := &Replicator{src: src, log: log, interval: interval, workers: map[Rule]*worker{}, now: time.Now, backoff: defaultBackoff,
 		http: &http.Client{
 			// A redirect would be replayed without its signature; report it instead.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -296,7 +296,7 @@ func (r *Replicator) drain(ctx context.Context, w *worker) {
 }
 
 func (r *Replicator) syncWithRetry(ctx context.Context, w *worker, key string) {
-	err := retry(ctx, r.retry, func() error { return r.sync(ctx, w, key) })
+	err := retry(ctx, r.backoff, func() error { return r.sync(ctx, w, key) })
 	if err != nil && ctx.Err() == nil {
 		r.failed.Add(1)
 		r.log.Warn("replication failed; the next comparison retries it", "rule", w.rule.ID, "bucket", w.rule.Bucket, "key", key, "err", err)
@@ -472,7 +472,7 @@ func (r *Replicator) upload(ctx context.Context, c *s3client.Client, w *worker, 
 	for i, n := range sizes {
 		sum, err := md5Of(io.NewSectionReader(f, off, n))
 		if err == nil {
-			err = retry(ctx, r.retry, func() error {
+			err = retry(ctx, r.backoff, func() error {
 				pctx, cancel := deadline(ctx, n)
 				defer cancel()
 				var err error
