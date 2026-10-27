@@ -18,9 +18,9 @@ import (
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-// reloadPoll is how often the configuration, credentials, certificate and secret files
-// (webhook and replication) are checked for changes. A Kubernetes Secret update reaches a mounted file within about a
-// minute, so polling faster gains little.
+// reloadPoll is how often the configuration, credentials, certificate, webhook and
+// replication credential files are checked for changes. A Kubernetes Secret update
+// reaches a mounted file within about a minute, so polling faster gains little.
 const reloadPoll = 30 * time.Second
 
 // reloadSource says where a new configuration comes from; the zero value never reloads.
@@ -116,11 +116,16 @@ func (r *reloader) snapshot() map[string]fileStamp {
 	return out
 }
 
+// afterLoad runs once a reload has read the files; tests replace it to write one meanwhile.
+var afterLoad = func() {}
+
 func (r *reloader) reload(ctx context.Context, cause string) {
 	// Taken first, so a file that fails to load is not retried on every tick.
 	r.missing = ""
-	r.stamps = r.snapshot()
+	before := r.snapshot()
+	r.stamps = before
 	next, err := config.Load(r.src.configFile)
+	afterLoad()
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && errors.Is(pe, fs.ErrNotExist) {
 		r.missing = pe.Path // such as a secret-file whose Secret is not mounted yet
 		r.stamps[pe.Path] = fileStamp{}
@@ -165,6 +170,13 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 		r.replicator.SetRules(replicateRules(next))
 	}
 	r.cfg = next
+	// The files read keep the stamps from before Load, so one rewritten since (a refreshed
+	// key, secret or token written one by one) still triggers the next reload.
 	r.stamps = r.snapshot()
+	for f, s := range before {
+		if _, ok := r.stamps[f]; ok {
+			r.stamps[f] = s
+		}
+	}
 	r.logger.Info("configuration reloaded", "cause", cause, "keys", len(next.AllCredentials()), "buckets", len(next.Buckets))
 }

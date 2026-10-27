@@ -368,3 +368,34 @@ func TestReloadReadsReplicationToken(t *testing.T) {
 	doAs(t, http.MethodPut, url+"/src/after", "ak", "sk", "data")
 	eventually(t, "the copy with the new token", func() bool { return has("after") })
 }
+
+// A credential file rewritten while a reload reads the others is taken over by the next one.
+func TestReloadCatchesAWriteDuringLoad(t *testing.T) {
+	dir := t.TempDir()
+	dst, err := storage.New(filepath.Join(dir, "target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dst.Close() }()
+	_ = dst.CreateBucket("copy")
+	target := httptest.NewServer(s3api.New(s3api.Options{Store: dst, Region: "us-east-1", Credentials: []s3api.Credential{{AccessKey: "tk", SecretKey: "ts"}}}))
+	defer target.Close()
+	creds := session.Issue("ts", session.Claims{Parent: "tk", Expires: time.Now().Add(time.Hour)})
+	keyFile, secretFile, tokenFile, file := filepath.Join(dir, "key"), filepath.Join(dir, "secret"), filepath.Join(dir, "token"), filepath.Join(dir, "config.yaml")
+	writeFile(t, keyFile, creds.AccessKey)
+	writeFile(t, secretFile, creds.SecretKey)
+	writeFile(t, tokenFile, "stale-token")
+	writeFile(t, file, "root: "+filepath.Join(dir, "data")+"\naccess-key: ak\nsecret-key: sk\nbuckets: {src: {replicate: [{endpoint: \""+target.URL+
+		"\", bucket: copy, access-key-file: "+keyFile+", secret-key-file: "+secretFile+", session-token-file: "+tokenFile+"}]}}\n")
+	logs := &syncBuffer{}
+	url, _ := startReloading(t, file, logs)
+	eventually(t, "the server", func() bool { return doAs(t, http.MethodPut, url+"/src", "ak", "sk", "") == http.StatusOK })
+
+	var once sync.Once
+	t.Cleanup(func() { afterLoad = func() {} })
+	afterLoad = func() { once.Do(func() { writeFile(t, tokenFile, creds.Token) }) }
+	writeFile(t, tokenFile, "another-stale-token") // triggers the reload that reads it, then gets the real one
+	eventually(t, "two reloads", func() bool { return strings.Count(logs.String(), "configuration reloaded") >= 2 })
+	doAs(t, http.MethodPut, url+"/src/k", "ak", "sk", "data")
+	eventually(t, "the copy", func() bool { _, err := dst.HeadObject("copy", "k"); return err == nil })
+}
