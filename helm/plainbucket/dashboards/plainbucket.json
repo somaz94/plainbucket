@@ -966,8 +966,8 @@
     },
     {
       "type": "timeseries",
-      "title": "Buckets with limits",
-      "description": "Buckets with expire-after or max-size, tracked as objects are written and deleted.",
+      "title": "Bucket usage",
+      "description": "Buckets with expire-after or max-size, or every bucket with bucket-metrics; tracked as objects are written and deleted.",
       "id": 18,
       "datasource": {
         "type": "prometheus",

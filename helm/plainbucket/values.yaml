@@ -84,6 +84,8 @@ config:
   scrubRate: ""      # bytes per second as a string; empty keeps the server default
   bodyTimeout: ""    # Go duration; empty keeps the server default
   metrics: false
+  # Report plainbucket_bucket_objects / _bytes for every bucket, not only those with limits (one series pair each).
+  bucketMetrics: false
   # Web console at /_console/ (signs requests in the browser; see docs/configuration.md).
   console: false
   # Refuse every write with 503 and pause the background removals, for maintenance.

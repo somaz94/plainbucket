@@ -166,6 +166,9 @@
         "metrics": {
           "type": "boolean"
         },
+        "bucketMetrics": {
+          "type": "boolean"
+        },
         "console": {
           "type": "boolean"
         },

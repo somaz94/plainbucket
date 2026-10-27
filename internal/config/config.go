@@ -58,7 +58,9 @@ type Config struct {
 	ScrubRate     int64         `yaml:"scrub-rate"` // bytes per second the scrub may read; 0 for no cap
 	BodyTimeout   time.Duration `yaml:"body-timeout"`
 	Metrics       bool          `yaml:"metrics"`
-	Console       bool          `yaml:"console"`
+	// BucketMetrics reports usage for every bucket, not only those with limits.
+	BucketMetrics bool `yaml:"bucket-metrics"`
+	Console       bool `yaml:"console"`
 	// ReadOnly refuses every write and pauses the background removals, for maintenance.
 	ReadOnly   bool   `yaml:"read-only"`
 	LogFormat  string `yaml:"log-format"`
@@ -248,6 +250,7 @@ func (c *Config) loadEnv() error {
 	e.int64("SCRUB_RATE", &c.ScrubRate)
 	e.duration("BODY_TIMEOUT", &c.BodyTimeout)
 	e.bool("METRICS", &c.Metrics)
+	e.bool("BUCKET_METRICS", &c.BucketMetrics)
 	e.bool("CONSOLE", &c.Console)
 	e.bool("READ_ONLY", &c.ReadOnly)
 	e.string("LOG_FORMAT", &c.LogFormat)
@@ -619,6 +622,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Int64("scrub_rate", c.ScrubRate),
 		slog.Duration("body_timeout", c.BodyTimeout),
 		slog.Bool("metrics", c.Metrics),
+		slog.Bool("bucket_metrics", c.BucketMetrics),
 		slog.Bool("console", c.Console),
 		slog.Bool("read_only", c.ReadOnly),
 		slog.String("log_format", c.LogFormat),

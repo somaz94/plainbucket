@@ -120,6 +120,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		MaxObjectSize: cfg.MaxObjectSize,
 		Logger:        logger,
 		Metrics:       cfg.Metrics,
+		BucketMetrics: cfg.BucketMetrics,
 		Console:       cfg.Console,
 		AccessLog:     cfg.AccessLog || cfg.Debug,
 		BodyTimeout:   cfg.BodyTimeout,

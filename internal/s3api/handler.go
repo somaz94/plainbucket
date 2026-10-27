@@ -42,6 +42,8 @@ type Options struct {
 	Logger        *slog.Logger // nil = slog.Default()
 	// Metrics serves Prometheus metrics at an unauthenticated GET /metrics.
 	Metrics bool
+	// BucketMetrics reports every bucket's usage in /metrics, not only that of buckets with limits.
+	BucketMetrics bool
 	// AccessLog logs every request at info level.
 	AccessLog bool
 	// BodyTimeout is how long an upload may go without delivering minProgress bytes
@@ -201,7 +203,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.serveReady(w)
 			return
 		case r.URL.Path == "/metrics" && h.opts.Metrics:
-			h.metrics.serve(w, h.store, h.opts.Notifier, h.readOnly.Load(), h.writes.Load())
+			h.metrics.serve(w, h.store, h.opts.Notifier, h.readOnly.Load(), h.opts.BucketMetrics, h.writes.Load())
 			return
 		}
 	}

@@ -27,6 +27,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_SCRUB_RATE` | `scrub-rate` | `33554432` | Bytes per second the integrity check may read; `0` for no limit |
 | `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut an upload that delivers less than 32 KiB in this long; `0` disables it |
 | `PLAINBUCKET_METRICS` | `metrics` | `false` | Serve Prometheus metrics at `GET /metrics` |
+| `PLAINBUCKET_BUCKET_METRICS` | `bucket-metrics` | `false` | Report the usage of every bucket in the metrics, not only of those with limits; see [Metrics](#metrics) |
 | `PLAINBUCKET_CONSOLE` | `console` | `false` | Serve the web console at `/_console/`; see [Web Console](#web-console) |
 | `PLAINBUCKET_READ_ONLY` | `read-only` | `false` | Refuse every write and pause the background removals; see [Read-Only Mode](#read-only-mode) |
 | `PLAINBUCKET_LOG_FORMAT` | `log-format` | `text` | `text` or `json` |
@@ -282,7 +283,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - `plainbucket_read_only`, `1` while the [read-only mode](#read-only-mode) is on, and `plainbucket_writes_in_flight`, the requests other than `GET` and `HEAD` being served.
 - `plainbucket_filesystem_free_bytes` and `plainbucket_filesystem_size_bytes` for the filesystem holding the root, read at each scrape, and `plainbucket_min_free_bytes`, the configured minimum.
 - `plainbucket_notifications_total{result}` for [event notifications](#event-notifications), `sent`, `failed` (given up after retries, or refused) and `dropped` (a full queue, or still queued at shutdown), and `plainbucket_notification_queue`, the events waiting.
-- For buckets with `expire-after` or `max-size`: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, `plainbucket_bucket_max_size_bytes{bucket,evict}` for those with `max-size`, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.
+- For buckets with `expire-after` or `max-size`, and with `bucket-metrics` for every bucket once the first scan has measured them: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, a new bucket from its creation, `plainbucket_bucket_max_size_bytes{bucket,evict}` for those with `max-size`, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.
 
 A bucket named `metrics`, `healthz` or `readyz` stays reachable: S3 requests are signed, and only unsigned `GET` requests are answered by these endpoints.
 

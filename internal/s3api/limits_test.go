@@ -47,8 +47,14 @@ func TestMetricsEndpoint(t *testing.T) {
 	if strings.Contains(body, "plainbucket_objects") {
 		t.Error("usage gauges before the first scan")
 	}
+	x.h.opts.BucketMetrics = true
+	if strings.Contains(scrape(), "plainbucket_bucket_bytes") {
+		t.Error("bucket-metrics gauges before the first scan")
+	}
+	x.h.opts.BucketMetrics = false
 	x.h.store.MeasureUsage(context.Background())
-	if body := scrape(); !strings.Contains(body, "plainbucket_objects 1") || !strings.Contains(body, "plainbucket_stored_bytes 5") {
+	body = scrape()
+	if !strings.Contains(body, "plainbucket_objects 1") || !strings.Contains(body, "plainbucket_stored_bytes 5") {
 		t.Errorf("usage gauges:\n%s", body)
 	}
 	if strings.Contains(body, "plainbucket_bucket_bytes") || !strings.Contains(body, "plainbucket_evicted_objects_total 0") {
@@ -62,6 +68,26 @@ func TestMetricsEndpoint(t *testing.T) {
 	if body := scrape(); !strings.Contains(body, `plainbucket_bucket_bytes{bucket="bkt"} 5`) || !strings.Contains(body, `plainbucket_bucket_objects{bucket="bkt"} 1`) ||
 		!strings.Contains(body, `plainbucket_bucket_max_size_bytes{bucket="bkt",evict="false"} 100`) {
 		t.Errorf("per-bucket gauges:\n%s", body)
+	}
+
+	// With bucket-metrics every bucket is reported, an empty one as soon as it exists.
+	// A bucket with limits but not created yet stays listed as without the setting.
+	x.h.opts.BucketMetrics = true
+	x.h.store.SetLimits(map[string]storage.Limit{"bkt": {MaxSize: 100}, "planned": {MaxSize: 10}})
+	x.mustDo(http.MethodPut, "/empty", nil, nil, http.StatusOK)
+	body = scrape()
+	for _, want := range []string{`plainbucket_bucket_bytes{bucket="bkt"} 5`, `plainbucket_bucket_objects{bucket="empty"} 0`, `plainbucket_bucket_bytes{bucket="empty"} 0`,
+		`plainbucket_bucket_bytes{bucket="planned"} 0`, `plainbucket_bucket_max_size_bytes{bucket="planned",evict="false"} 10`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("bucket-metrics lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `plainbucket_bucket_max_size_bytes{bucket="empty"`) {
+		t.Error("max size of a bucket without one")
+	}
+	x.mustDo(http.MethodDelete, "/empty", nil, nil, http.StatusNoContent)
+	if strings.Contains(scrape(), `bucket="empty"`) {
+		t.Error("a deleted bucket still reported")
 	}
 }
 

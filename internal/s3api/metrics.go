@@ -78,6 +78,7 @@ func (m *metrics) record(op, method string, status int, sent int64, d time.Durat
 type storeStats interface {
 	Usage() storage.Usage
 	BucketUsage() map[string]storage.Usage
+	AllBucketUsage() map[string]storage.Usage
 	BucketLimit(bucket string) storage.Limit
 	Removed() (expired, evicted int64)
 	DiskSpace() (free, size int64, err error)
@@ -85,7 +86,7 @@ type storeStats interface {
 	MinFree() int64
 }
 
-func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifier, readOnly bool, writes int64) {
+func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifier, readOnly, allBuckets bool, writes int64) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
 	m.mu.Lock()
@@ -159,14 +160,20 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifie
 		metric("gauge", "plainbucket_filesystem_size_bytes", "Size of the filesystem holding the root.", size)
 	}
 
-	if per := st.BucketUsage(); len(per) > 0 {
+	// Buckets with limits are listed even before they exist; every bucket only once a
+	// walk has measured it, since before that only the changes since startup are known.
+	per := st.BucketUsage()
+	if allBuckets && !st.Usage().At.IsZero() {
+		maps.Copy(per, st.AllBucketUsage())
+	}
+	if len(per) > 0 {
 		names := slices.Sorted(maps.Keys(per))
-		fmt.Fprintln(w, "# HELP plainbucket_bucket_objects Files in a bucket with limits, tracked between usage scans.")
+		fmt.Fprintln(w, "# HELP plainbucket_bucket_objects Files in a bucket, tracked between usage scans.")
 		fmt.Fprintln(w, "# TYPE plainbucket_bucket_objects gauge")
 		for _, n := range names {
 			fmt.Fprintf(w, "plainbucket_bucket_objects{bucket=%q} %d\n", n, per[n].Objects)
 		}
-		fmt.Fprintln(w, "# HELP plainbucket_bucket_bytes Bytes in a bucket with limits, tracked between usage scans.")
+		fmt.Fprintln(w, "# HELP plainbucket_bucket_bytes Bytes in a bucket, tracked between usage scans.")
 		fmt.Fprintln(w, "# TYPE plainbucket_bucket_bytes gauge")
 		for _, n := range names {
 			fmt.Fprintf(w, "plainbucket_bucket_bytes{bucket=%q} %d\n", n, per[n].Bytes)

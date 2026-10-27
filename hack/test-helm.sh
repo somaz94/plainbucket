@@ -87,6 +87,8 @@ render "${KEY[@]}" --set config.console=true --show-only templates/deployment.ya
 grep -A1 -F "name: PLAINBUCKET_CONSOLE" <<<"${OUT}" | grep -qF 'value: "true"' || fail "console: PLAINBUCKET_CONSOLE not true"
 render "${KEY[@]}" --set config.readOnly=true --show-only templates/deployment.yaml
 grep -A1 -F "name: PLAINBUCKET_READ_ONLY" <<<"${OUT}" | grep -qF 'value: "true"' || fail "readOnly: PLAINBUCKET_READ_ONLY not true"
+render "${KEY[@]}" --set config.bucketMetrics=true --show-only templates/deployment.yaml
+grep -A1 -F "name: PLAINBUCKET_BUCKET_METRICS" <<<"${OUT}" | grep -qF 'value: "true"' || fail "bucketMetrics: PLAINBUCKET_BUCKET_METRICS not true"
 render "${KEY[@]}" --set-string config.bodyTimeout=0
 has 'value: "0"' "body timeout disabled"
 ok "config values"
