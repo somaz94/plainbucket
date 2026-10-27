@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.8.0](https://github.com/somaz94/plainbucket/compare/v0.7.0...v0.8.0) (2026-10-27)
+
+### Features
+
+- replicate buckets to another S3 endpoint ([42a05fb](https://github.com/somaz94/plainbucket/commit/42a05fbc9d7da383d120c5a542fbfb935543837e))
+- outgoing SigV4 signer and an S3 client ([4054259](https://github.com/somaz94/plainbucket/commit/4054259adfb6a27460f6e1d51f4494a1cad57838))
+- bucket tagging API ([bea0b9e](https://github.com/somaz94/plainbucket/commit/bea0b9e87428c7ac91a4c7b66d6e048387332dfb))
+- inventory command listing every object as CSV or JSON Lines ([3507461](https://github.com/somaz94/plainbucket/commit/35074619e6d67547062a41c57ce031bae7024da1))
+- bucket-metrics reporting every bucket's usage ([dbb86d6](https://github.com/somaz94/plainbucket/commit/dbb86d683e8b989a7b50d459b8c64269dfcef7d4))
+- /readyz probing the storage root, used by the chart's readiness probe ([c501939](https://github.com/somaz94/plainbucket/commit/c5019396c7b0e9f1a4433e2f57962d02fcd55449))
+- STS GetCallerIdentity for long-term and temporary keys ([dd98766](https://github.com/somaz94/plainbucket/commit/dd9876614a4983f4b0aa26f01f0be44d0457a9f4))
+
+### Bug Fixes
+
+- keep the tags CreateBucket sends ([a915437](https://github.com/somaz94/plainbucket/commit/a915437ee7d7c1e26b958b02b4c3ca56907048b9))
+- keep bucket usage exact when buckets are created or deleted during a measurement ([bb37473](https://github.com/somaz94/plainbucket/commit/bb37473440c599390e9a145c1d7c28521aa3844f))
+
+### Tests
+
+- terraform s3 backend end-to-end with its lock file ([70ad3b0](https://github.com/somaz94/plainbucket/commit/70ad3b0fcf348f6f1c36b4b13af064b98e36fa28))
+
+### Chores
+
+- bump version to v0.8.0 ([cca8fc4](https://github.com/somaz94/plainbucket/commit/cca8fc463a27fd154d49e32a212d8061059eefab))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.7.0](https://github.com/somaz94/plainbucket/compare/v0.6.1...v0.7.0) (2026-10-27)
 
 ### Features
