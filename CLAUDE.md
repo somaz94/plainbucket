@@ -25,7 +25,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - `internal/server/` - listener lifecycle, the hourly janitor, and configuration reloads on `SIGHUP` or a changed config, credentials, certificate or webhook secret file.
 - `compat/` - separate Go module running the AWS SDK for Go v2 against the handler.
 - `helm/plainbucket/` - Helm chart; `hack/test-helm.sh` lints it, renders it and checks the fail guards and schema. Published by `.github/workflows/helm-release.yml` on tags.
-- `hack/test-awscli.sh`, `hack/test-rclone.sh`, `hack/test-gitlab-runner.sh`, `hack/test-terraform.sh`, `hack/test-console.sh` (with `hack/test-console.mjs`) - client end-to-end scripts against `bin/plainbucket`; `hack/e2e-lib.sh` starts the server for them. The runner and terraform scripts download the official release at the version and SHA-256 pinned in them and cache it in `bin/`; `compat/cmd/presign` makes its presigned URLs.
+- `hack/test-awscli.sh`, `hack/test-rclone.sh`, `hack/test-gitlab-runner.sh`, `hack/test-terraform.sh`, `hack/test-console.sh` (with `hack/test-console.mjs`) - client end-to-end scripts against `bin/plainbucket`; `hack/e2e-lib.sh` starts the server for them and holds the pinned-download helper (`fetch_pinned`). The runner and terraform scripts download the official release at the version and SHA-256 pinned in them and cache it in `bin/`; `compat/cmd/presign` makes its presigned URLs.
 - `hack/test-s3tests.sh` - ceph/s3-tests subset at a pinned commit with frozen `hack/s3tests-requirements.txt`, kept in `bin/`; the run must keep every test in `hack/s3tests-pass.txt` passing.
 
 <br/>

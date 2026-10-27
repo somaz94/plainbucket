@@ -13,12 +13,7 @@ GLR_VERSION="19.5.0"
 # shellcheck source=hack/e2e-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/e2e-lib.sh"
 
-os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-arch="$(uname -m)"
-case "${arch}" in
-    x86_64) arch=amd64 ;;
-    aarch64) arch=arm64 ;;
-esac
+read -r os arch <<<"$(detect_platform)"
 # From https://gitlab-runner-downloads.s3.amazonaws.com/v${GLR_VERSION}/release.sha256
 case "${os}-${arch}" in
     linux-amd64) want=f5f3322cb5482e1176b159730717b5ee37fb6eb8cbf195065b35062e02825579 ;;
@@ -28,18 +23,9 @@ case "${os}-${arch}" in
     *) echo "no pinned gitlab-runner checksum for ${os}-${arch}" >&2; exit 1 ;;
 esac
 
-sha256() {
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
-}
-
 GLR="${ROOT_DIR}/bin/gitlab-runner-${GLR_VERSION}-${os}-${arch}"
-if [ ! -x "${GLR}" ] || [ "$(sha256 "${GLR}")" != "${want}" ]; then
-    url="https://gitlab-runner-downloads.s3.amazonaws.com/v${GLR_VERSION}/binaries/gitlab-runner-${os}-${arch}"
-    echo "downloading ${url}"
-    curl -fsSL -o "${WORK}/gitlab-runner" "${url}"
-    [ "$(sha256 "${WORK}/gitlab-runner")" = "${want}" ] || { echo "gitlab-runner checksum mismatch" >&2; exit 1; }
-    install -m 0755 "${WORK}/gitlab-runner" "${GLR}"
-fi
+fetch_pinned "${GLR}" "${want}" \
+    "https://gitlab-runner-downloads.s3.amazonaws.com/v${GLR_VERSION}/binaries/gitlab-runner-${os}-${arch}" 0755 gitlab-runner
 
 (cd "${ROOT_DIR}/compat" && go build -o "${WORK}/presign" ./cmd/presign)
 

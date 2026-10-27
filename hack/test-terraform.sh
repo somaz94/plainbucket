@@ -12,12 +12,7 @@ TF_VERSION="1.17.0"
 # shellcheck source=hack/e2e-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/e2e-lib.sh"
 
-os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-arch="$(uname -m)"
-case "${arch}" in
-    x86_64) arch=amd64 ;;
-    aarch64) arch=arm64 ;;
-esac
+read -r os arch <<<"$(detect_platform)"
 # From https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_SHA256SUMS
 case "${os}-${arch}" in
     linux-amd64) want=c168cab7c637a8769fdb90089ddd19de701bc6ff8aca64dc2e2185fe46f59f67 ;;
@@ -27,18 +22,9 @@ case "${os}-${arch}" in
     *) echo "no pinned terraform checksum for ${os}-${arch}" >&2; exit 1 ;;
 esac
 
-sha256() {
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
-}
-
 ZIP="${ROOT_DIR}/bin/terraform_${TF_VERSION}_${os}_${arch}.zip"
-if [ ! -f "${ZIP}" ] || [ "$(sha256 "${ZIP}")" != "${want}" ]; then
-    url="https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_${os}_${arch}.zip"
-    echo "downloading ${url}"
-    curl -fsSL --retry 3 -o "${WORK}/terraform.zip" "${url}"
-    [ "$(sha256 "${WORK}/terraform.zip")" = "${want}" ] || { echo "terraform checksum mismatch" >&2; exit 1; }
-    install -m 0644 "${WORK}/terraform.zip" "${ZIP}"
-fi
+fetch_pinned "${ZIP}" "${want}" \
+    "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_${os}_${arch}.zip" 0644 terraform --retry 3
 unzip -q -o "${ZIP}" terraform -d "${WORK}/bin"
 TF="${WORK}/bin/terraform"
 
