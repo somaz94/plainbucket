@@ -85,4 +85,4 @@ CI (`.github/workflows/test.yml`) runs `test`, `cover-check`, `test-compat`, `te
 - `docs/configuration.md` - settings table and the web console; update it with `internal/config`.
 - `docs/layout.md` - disk layout, external edits, key mapping limits.
 - `docs/gitlab-runner.md` - runner `config.toml` for the cache, and what the runner e2e covers.
-- `docs/compatibility.md` - supported and unsupported operations; update it with the router in `internal/s3api/handler.go`.
+- `docs/compatibility.md` - supported and unsupported operations; update it with the router in `internal/s3api/route.go`.
