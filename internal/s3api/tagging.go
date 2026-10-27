@@ -145,6 +145,7 @@ func (h *Handler) putObjectTagging(req *request) error {
 	if err := h.store.SetTags(req.bucket, req.key, tags); err != nil {
 		return err
 	}
+	h.replicate(req.bucket, req.key)
 	req.w.WriteHeader(http.StatusOK)
 	return nil
 }
@@ -153,6 +154,7 @@ func (h *Handler) deleteObjectTagging(req *request) error {
 	if err := h.store.SetTags(req.bucket, req.key, nil); err != nil {
 		return err
 	}
+	h.replicate(req.bucket, req.key)
 	req.w.WriteHeader(http.StatusNoContent)
 	return nil
 }

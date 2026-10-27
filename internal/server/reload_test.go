@@ -20,7 +20,10 @@ import (
 
 	"github.com/somaz94/plainbucket/internal/config"
 	"github.com/somaz94/plainbucket/internal/notify"
+	"github.com/somaz94/plainbucket/internal/replicate"
+	"github.com/somaz94/plainbucket/internal/s3api"
 	"github.com/somaz94/plainbucket/internal/sigv4/sigv4test"
+	"github.com/somaz94/plainbucket/internal/storage"
 )
 
 // syncBuffer is a log sink the test can read while the server writes to it.
@@ -239,7 +242,7 @@ func TestLifecycleEvents(t *testing.T) {
 	n := notify.New("us-east-1", slog.New(slog.DiscardHandler))
 	defer n.Close(context.Background())
 	n.SetTargets(map[string][]notify.Target{"b": {{URL: hook}}})
-	lifecycleEvents(n)("b", "old")
+	lifecycleEvents(n, replicate.New(nil, time.Hour, slog.New(slog.DiscardHandler)))("b", "old")
 	eventually(t, "the event", func() bool { return len(sink.got()) == 1 })
 	if got := sink.got()[0]; got != "LifecycleExpiration:Delete false" {
 		t.Errorf("event %s", got)
@@ -300,4 +303,36 @@ func TestRestartNeededIgnoresReloadableSettings(t *testing.T) {
 	if got := strings.Join(a.RestartNeeded(b), ","); got != "address,tls-cert" {
 		t.Errorf("restart needed = %s", got)
 	}
+}
+
+func TestReplicationThroughTheServer(t *testing.T) {
+	dir := t.TempDir()
+	dst, err := storage.New(filepath.Join(dir, "target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dst.Close() }()
+	for _, b := range []string{"copy", "copy-2"} {
+		_ = dst.CreateBucket(b)
+	}
+	target := httptest.NewServer(s3api.New(s3api.Options{Store: dst, Region: "us-east-1", Credentials: []s3api.Credential{{AccessKey: "tk", SecretKey: "ts"}}}))
+	defer target.Close()
+	secretFile, file := filepath.Join(dir, "target-secret"), filepath.Join(dir, "config.yaml")
+	writeFile(t, secretFile, "ts\n")
+	rule := func(id, bucket string) string {
+		return "{id: " + id + ", endpoint: \"" + target.URL + "\", bucket: " + bucket + ", access-key: tk, secret-key-file: " + secretFile + "}"
+	}
+	base := "root: " + filepath.Join(dir, "data") + "\naccess-key: ak\nsecret-key: sk\n"
+	writeFile(t, file, base+"buckets: {src: {replicate: ["+rule("a", "copy")+"]}}\n")
+	logs := &syncBuffer{}
+	url, _ := startReloading(t, file, logs)
+	has := func(bucket, key string) bool { _, err := dst.HeadObject(bucket, key); return err == nil }
+
+	eventually(t, "the server", func() bool { return doAs(t, http.MethodPut, url+"/src", "ak", "sk", "") == http.StatusOK })
+	doAs(t, http.MethodPut, url+"/src/k", "ak", "sk", "data")
+	eventually(t, "the copy", func() bool { return has("copy", "k") })
+
+	// A rule added by a reload copies what is already there with its first comparison.
+	writeFile(t, file, base+"buckets: {src: {replicate: ["+rule("a", "copy")+", "+rule("b", "copy-2")+"]}}\n")
+	eventually(t, "the second copy", func() bool { return has("copy-2", "k") })
 }

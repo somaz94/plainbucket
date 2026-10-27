@@ -6,6 +6,12 @@
 {{- fail (printf "config.buckets.%s.notify[%d].secret-file %s needs config.notifySecret: the server would not start without the file" $name $i $f) }}
 {{- end }}
 {{- end }}
+{{- range $i, $r := $b.replicate }}
+{{- $f := toString (index $r "secret-key-file") }}
+{{- if and (hasPrefix "/etc/plainbucket/replicate/" $f) (not $.Values.config.replicateSecret) }}
+{{- fail (printf "config.buckets.%s.replicate[%d].secret-key-file %s needs config.replicateSecret: the server would not start without the file" $name $i $f) }}
+{{- end }}
+{{- end }}
 {{- end }}
 apiVersion: v1
 kind: ConfigMap

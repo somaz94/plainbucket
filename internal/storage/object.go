@@ -129,6 +129,13 @@ func (s *Store) GetObject(bucket, key string) (*os.File, ObjectInfo, error) {
 	return f, info, err
 }
 
+// ReadObject opens bucket/key like GetObject without counting as a use, for the server's
+// own copies, which must not keep an object from expiring.
+func (s *Store) ReadObject(bucket, key string) (*os.File, ObjectInfo, error) {
+	// Saving a rebuilt sidecar would move its mtime, which is the object's last use.
+	return s.open(bucket, key, false)
+}
+
 // open opens bucket/key. persist lets it save a rebuilt sidecar, which takes the key
 // lock, so callers already holding that lock pass false.
 func (s *Store) open(bucket, key string, persist bool) (*os.File, ObjectInfo, error) {

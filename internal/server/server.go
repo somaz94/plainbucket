@@ -20,6 +20,7 @@ import (
 	"github.com/somaz94/plainbucket/internal/config"
 	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/ratelimit"
+	"github.com/somaz94/plainbucket/internal/replicate"
 	"github.com/somaz94/plainbucket/internal/s3api"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
@@ -98,7 +99,11 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		defer cancel()
 		notifier.Close(ctx)
 	}()
-	store.OnLimitRemove(lifecycleEvents(notifier))
+	// Without rules it starts no workers; created anyway, a reload can add rules.
+	replicator := replicate.New(store, cfg.ReplicateInterval, logger)
+	replicator.SetRules(replicateRules(cfg))
+	defer replicator.Close()
+	store.OnLimitRemove(lifecycleEvents(notifier, replicator))
 
 	janitorCtx, stopJanitor := context.WithCancel(context.Background())
 	var janitor sync.WaitGroup
@@ -125,6 +130,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		AccessLog:     cfg.AccessLog || cfg.Debug,
 		BodyTimeout:   cfg.BodyTimeout,
 		Notifier:      notifier,
+		Replicator:    replicator,
 		ReadOnly:      cfg.ReadOnly,
 
 		AnonymousRateLimit: rateLimit(cfg.AnonymousRateLimit),
@@ -147,7 +153,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		srv.TLSConfig = &tls.Config{MinVersion: cfg.TLSMinVersion(), GetCertificate: cert.get}
 	}
 
-	rl := &reloader{src: src, boot: cfg, cfg: cfg, handler: handler, store: store, notifier: notifier, cert: cert, logger: logger}
+	rl := &reloader{src: src, boot: cfg, cfg: cfg, handler: handler, store: store, notifier: notifier, replicator: replicator, cert: cert, logger: logger}
 	reloadCtx, stopReload := context.WithCancel(context.Background())
 	var reloads sync.WaitGroup
 	reloads.Go(func() { rl.run(reloadCtx) })
@@ -267,11 +273,23 @@ func bucketTrash(cfg *config.Config) map[string]time.Duration {
 	return out
 }
 
-// lifecycleEvents reports objects removed by expiry or eviction to n.
-func lifecycleEvents(n *notify.Notifier) func(bucket, key string) {
+// lifecycleEvents reports objects removed by expiry or eviction to n and r.
+func lifecycleEvents(n *notify.Notifier, r *replicate.Replicator) func(bucket, key string) {
 	return func(bucket, key string) {
 		n.Publish(notify.Event{Name: notify.LifecycleExpiration, Bucket: bucket, Key: key, Time: time.Now()})
+		r.Changed(bucket, key)
 	}
+}
+
+func replicateRules(cfg *config.Config) []replicate.Rule {
+	var out []replicate.Rule
+	for name, b := range cfg.Buckets {
+		for _, r := range b.Replicate {
+			out = append(out, replicate.Rule{ID: r.ID, Bucket: name, Prefix: r.Prefix, Endpoint: r.Endpoint, Region: r.Region,
+				VirtualHosted: r.VirtualHosted, TargetBucket: r.Bucket, AccessKey: r.AccessKey, SecretKey: r.SecretKey, Delete: r.Delete})
+		}
+	}
+	return out
 }
 
 func notifyTargets(cfg *config.Config) map[string][]notify.Target {

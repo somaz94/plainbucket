@@ -177,8 +177,15 @@ has "secretName: pb-hooks" "webhook secret volume"
 has "mountPath: /etc/plainbucket/notify" "webhook secret mounted as a directory"
 lacks "subPath: key" "webhook secret not mounted by subPath"
 has "checksum/config:" "webhook changes restart the pod"
+printf 'config:\n  replicateSecret: pb-replica\n  replicateInterval: 30m\n  buckets:\n    uploads:\n      replicate:\n        - {endpoint: "https://s3.example.com", bucket: backup, access-key: AKX, secret-key-file: /etc/plainbucket/replicate/key, delete: true}\n' >"${TMP_VALUES}"
+render "${KEY[@]}" -f "${TMP_VALUES}"
+has "secret-key-file: /etc/plainbucket/replicate/key" "replication in the config file"
+has "secretName: pb-replica" "replication secret volume"
+has "mountPath: /etc/plainbucket/replicate" "replication secret mounted as a directory"
+grep -A1 -F "name: PLAINBUCKET_REPLICATE_INTERVAL" <<<"${OUT}" | grep -qF 'value: "30m"' || fail "replicateInterval env"
 render "${KEY[@]}" --show-only templates/deployment.yaml
 lacks "/etc/plainbucket/notify" "no webhook secret by default"
+lacks "/etc/plainbucket/replicate" "no replication secret by default"
 render "${KEY[@]}" --set "config.buckets.www.headers[0].suffix=.html" --set "config.buckets.www.headers[0].set.Cache-Control=no-cache" \
     --show-only templates/configmap.yaml
 has "Cache-Control: no-cache" "header rule in the config file"
@@ -274,6 +281,14 @@ expect_fail "expire" "${KEY[@]}" --set "config.buckets.ci-cache.lifecycle[0].exp
 printf 'config:\n  buckets:\n    www:\n      headers:\n        - set: {Cache-Control: "a\\nb"}\n' >"${TMP_VALUES}"
 expect_fail "Cache-Control" "${KEY[@]}" -f "${TMP_VALUES}"
 expect_fail "timeoutSeconds" "${KEY[@]}" --set probes.readiness.timeoutSeconds=2
+expect_fail "needs config.replicateSecret" "${KEY[@]}" --set "config.buckets.uploads.replicate[0].endpoint=https://s3.example.com" \
+    --set "config.buckets.uploads.replicate[0].bucket=backup" --set "config.buckets.uploads.replicate[0].access-key=AKX" \
+    --set "config.buckets.uploads.replicate[0].secret-key-file=/etc/plainbucket/replicate/key"
+expect_fail "secret-key-file" "${KEY[@]}" --set "config.buckets.uploads.replicate[0].endpoint=https://s3.example.com" \
+    --set "config.buckets.uploads.replicate[0].bucket=backup" --set "config.buckets.uploads.replicate[0].access-key=AKX"
+expect_fail "endpoint" "${KEY[@]}" --set "config.buckets.uploads.replicate[0].endpoint=https://s3.example.com/base" \
+    --set "config.buckets.uploads.replicate[0].bucket=backup" --set "config.buckets.uploads.replicate[0].access-key=AKX" \
+    --set "config.buckets.uploads.replicate[0].secret-key-file=/k"
 expect_fail "allowed-methods" "${KEY[@]}" --set "config.buckets.www.cors.allowed-origins={*}" --set "config.buckets.www.cors.allowed-methods={PATCH}"
 ok "schema rejects invalid values"
 

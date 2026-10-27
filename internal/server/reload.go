@@ -13,12 +13,13 @@ import (
 
 	"github.com/somaz94/plainbucket/internal/config"
 	"github.com/somaz94/plainbucket/internal/notify"
+	"github.com/somaz94/plainbucket/internal/replicate"
 	"github.com/somaz94/plainbucket/internal/s3api"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-// reloadPoll is how often the configuration, credentials, certificate and webhook secret files are
-// checked for changes. A Kubernetes Secret update reaches a mounted file within about a
+// reloadPoll is how often the configuration, credentials, certificate and secret files
+// (webhook and replication) are checked for changes. A Kubernetes Secret update reaches a mounted file within about a
 // minute, so polling faster gains little.
 const reloadPoll = 30 * time.Second
 
@@ -45,20 +46,21 @@ func (c *certificate) load(certFile, keyFile string) error {
 
 func (c *certificate) get(*tls.ClientHelloInfo) (*tls.Certificate, error) { return c.pair.Load(), nil }
 
-// reloader takes a changed configuration over: access keys, bucket policies, limits, trash and
-// webhooks, min-free-space, the read-only mode and the certificate. Other settings are
-// reported as needing a restart.
+// reloader takes a changed configuration over: access keys, bucket policies, limits, trash,
+// webhooks and replication rules, min-free-space, the read-only mode and the certificate.
+// Other settings, replicate-interval among them, are reported as needing a restart.
 type reloader struct {
-	src      reloadSource
-	boot     *config.Config // what the server started with
-	cfg      *config.Config // in force
-	handler  *s3api.Handler
-	store    *storage.Store
-	notifier *notify.Notifier
-	cert     *certificate // nil without TLS
-	logger   *slog.Logger
-	stamps   map[string]fileStamp
-	missing  string // a file the last failed reload could not read; its appearance retries
+	src        reloadSource
+	boot       *config.Config // what the server started with
+	cfg        *config.Config // in force
+	handler    *s3api.Handler
+	store      *storage.Store
+	notifier   *notify.Notifier
+	replicator *replicate.Replicator
+	cert       *certificate // nil without TLS
+	logger     *slog.Logger
+	stamps     map[string]fileStamp
+	missing    string // a file the last failed reload could not read; its appearance retries
 }
 
 type fileStamp struct {
@@ -96,6 +98,9 @@ func (r *reloader) snapshot() map[string]fileStamp {
 	for _, b := range r.cfg.Buckets {
 		for _, n := range b.Notify {
 			files = append(files, n.SecretFile)
+		}
+		for _, rp := range b.Replicate {
+			files = append(files, rp.SecretKeyFile)
 		}
 	}
 	for _, f := range files {
@@ -155,6 +160,9 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 	r.store.SetPaused(next.ReadOnly)
 	if r.notifier != nil {
 		r.notifier.SetTargets(notifyTargets(next))
+	}
+	if r.replicator != nil {
+		r.replicator.SetRules(replicateRules(next))
 	}
 	r.cfg = next
 	r.stamps = r.snapshot()

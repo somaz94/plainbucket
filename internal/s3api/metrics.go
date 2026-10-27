@@ -86,7 +86,7 @@ type storeStats interface {
 	MinFree() int64
 }
 
-func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifier, readOnly, allBuckets bool, writes int64) {
+func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifier, rp Replicator, readOnly, allBuckets bool, writes int64) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
 	m.mu.Lock()
@@ -149,6 +149,25 @@ func (m *metrics) serve(w http.ResponseWriter, st storeStats, nt *notify.Notifie
 		fmt.Fprintf(w, "plainbucket_notifications_total{result=\"failed\"} %d\n", failed)
 		fmt.Fprintf(w, "plainbucket_notifications_total{result=\"dropped\"} %d\n", dropped)
 		metric("gauge", "plainbucket_notification_queue", "Bucket event notifications waiting to be sent.", int64(queued))
+	}
+	if rp != nil {
+		copied, deleted, failed, dropped, queued := rp.Stats()
+		fmt.Fprintln(w, "# HELP plainbucket_replication_total Replication by result: keys copied, target keys deleted, keys failed after retries, changes dropped on a full queue.")
+		fmt.Fprintln(w, "# TYPE plainbucket_replication_total counter")
+		for _, c := range []struct {
+			result string
+			n      int64
+		}{{"copied", copied}, {"deleted", deleted}, {"failed", failed}, {"dropped", dropped}} {
+			fmt.Fprintf(w, "plainbucket_replication_total{result=%q} %d\n", c.result, c.n)
+		}
+		metric("gauge", "plainbucket_replication_queue", "Replication changes waiting to be applied.", int64(queued))
+		if last := rp.LastCompared(); len(last) > 0 {
+			fmt.Fprintln(w, "# HELP plainbucket_replication_compared_timestamp_seconds When a replication rule last finished comparing the two listings.")
+			fmt.Fprintln(w, "# TYPE plainbucket_replication_compared_timestamp_seconds gauge")
+			for _, rule := range slices.Sorted(maps.Keys(last)) {
+				fmt.Fprintf(w, "plainbucket_replication_compared_timestamp_seconds{rule=%q} %d\n", rule, last[rule].Unix())
+			}
+		}
 	}
 
 	metric("gauge", "plainbucket_read_only", "1 while the server-wide read-only mode refuses writes.", map[bool]int64{true: 1}[readOnly])

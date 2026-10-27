@@ -22,7 +22,7 @@ func TestDefaultsAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Root != "/data" || cfg.Address != ":9000" || cfg.Region != "us-east-1" || cfg.UploadExpiry != 7*24*time.Hour ||
-		cfg.BodyTimeout != time.Minute || cfg.Metrics || cfg.BucketMetrics || cfg.Console || cfg.HasTLS() || cfg.ScrubInterval != 0 || cfg.ScrubRate != 32<<20 {
+		cfg.BodyTimeout != time.Minute || cfg.Metrics || cfg.BucketMetrics || cfg.Console || cfg.HasTLS() || cfg.ScrubInterval != 0 || cfg.ScrubRate != 32<<20 || cfg.ReplicateInterval != time.Hour {
 		t.Errorf("defaults = %+v", cfg)
 	}
 
@@ -83,27 +83,28 @@ func TestYAMLThenEnv(t *testing.T) {
 
 func TestInvalid(t *testing.T) {
 	cases := map[string]map[string]string{
-		"no keys":        {"PLAINBUCKET_ACCESS_KEY": ""},
-		"no root":        {"PLAINBUCKET_ROOT": ""},
-		"no address":     {"PLAINBUCKET_ADDRESS": ""},
-		"no region":      {"PLAINBUCKET_REGION": ""},
-		"negative size":  {"PLAINBUCKET_MAX_OBJECT_SIZE": "-1"},
-		"negative free":  {"PLAINBUCKET_MIN_FREE_SPACE": "-1"},
-		"zero expiry":    {"PLAINBUCKET_UPLOAD_EXPIRY": "0s"},
-		"negative body":  {"PLAINBUCKET_BODY_TIMEOUT": "-1s"},
-		"negative scrub": {"PLAINBUCKET_SCRUB_INTERVAL": "-1h"},
-		"negative rate":  {"PLAINBUCKET_SCRUB_RATE": "-1"},
-		"half tls":       {"PLAINBUCKET_TLS_CERT": "c.pem"},
-		"tls version":    {"PLAINBUCKET_TLS_MIN_VERS": "TLS10"},
-		"log format":     {"PLAINBUCKET_LOG_FORMAT": "xml"},
-		"bad bool":       {"PLAINBUCKET_DEBUG": "maybe"},
-		"bad duration":   {"PLAINBUCKET_UPLOAD_EXPIRY": "7d"},
-		"bad size":       {"PLAINBUCKET_MAX_OBJECT_SIZE": "10Gi"},
-		"half key":       {"PLAINBUCKET_SECRET_KEY": ""},
-		"public bucket":  {"PLAINBUCKET_PUBLIC_BUCKETS": "ok-bucket,Bad_Name"},
-		"creds missing":  {"PLAINBUCKET_CREDENTIALS_FILE": "/nonexistent/creds.yaml"},
-		"domain port":    {"PLAINBUCKET_DOMAINS": "s3.example.com:9000"},
-		"domain scheme":  {"PLAINBUCKET_DOMAINS": "https://s3.example.com"},
+		"no keys":         {"PLAINBUCKET_ACCESS_KEY": ""},
+		"no root":         {"PLAINBUCKET_ROOT": ""},
+		"no address":      {"PLAINBUCKET_ADDRESS": ""},
+		"no region":       {"PLAINBUCKET_REGION": ""},
+		"negative size":   {"PLAINBUCKET_MAX_OBJECT_SIZE": "-1"},
+		"negative free":   {"PLAINBUCKET_MIN_FREE_SPACE": "-1"},
+		"zero expiry":     {"PLAINBUCKET_UPLOAD_EXPIRY": "0s"},
+		"negative body":   {"PLAINBUCKET_BODY_TIMEOUT": "-1s"},
+		"negative scrub":  {"PLAINBUCKET_SCRUB_INTERVAL": "-1h"},
+		"replicate often": {"PLAINBUCKET_REPLICATE_INTERVAL": "30s"},
+		"negative rate":   {"PLAINBUCKET_SCRUB_RATE": "-1"},
+		"half tls":        {"PLAINBUCKET_TLS_CERT": "c.pem"},
+		"tls version":     {"PLAINBUCKET_TLS_MIN_VERS": "TLS10"},
+		"log format":      {"PLAINBUCKET_LOG_FORMAT": "xml"},
+		"bad bool":        {"PLAINBUCKET_DEBUG": "maybe"},
+		"bad duration":    {"PLAINBUCKET_UPLOAD_EXPIRY": "7d"},
+		"bad size":        {"PLAINBUCKET_MAX_OBJECT_SIZE": "10Gi"},
+		"half key":        {"PLAINBUCKET_SECRET_KEY": ""},
+		"public bucket":   {"PLAINBUCKET_PUBLIC_BUCKETS": "ok-bucket,Bad_Name"},
+		"creds missing":   {"PLAINBUCKET_CREDENTIALS_FILE": "/nonexistent/creds.yaml"},
+		"domain port":     {"PLAINBUCKET_DOMAINS": "s3.example.com:9000"},
+		"domain scheme":   {"PLAINBUCKET_DOMAINS": "https://s3.example.com"},
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -279,30 +280,54 @@ func TestBuckets(t *testing.T) {
 	if lc := cfg.Buckets["ci-cache"].Lifecycle; len(lc) != 3 || lc[0].DeleteAfter != 168*time.Hour || lc[1].ExpireAfter != 24*time.Hour || lc[2].Prefix != "keep/" {
 		t.Errorf("lifecycle = %+v", lc)
 	}
+	_ = os.WriteFile(path, []byte(`buckets:
+  uploads:
+    replicate:
+      - {endpoint: "https://s3.example.com/", bucket: backup, prefix: in/, access-key: AKX, secret-key-file: `+secret+`, delete: true}
+      - {id: dr, endpoint: "http://192.0.2.10:9000", region: eu-west-1, bucket: dr-copy, virtual-hosted: true, access-key: B, secret-key-file: `+secret+`}
+`), 0o600)
+	if cfg, err = Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if r := cfg.Buckets["uploads"].Replicate; len(r) != 2 || r[0].ID != "replicate-1" || r[0].Endpoint != "https://s3.example.com" ||
+		r[0].Region != "us-east-1" || r[0].SecretKey != "k3y" || !r[0].Delete || r[0].Prefix != "in/" ||
+		r[1].ID != "dr" || r[1].Region != "eu-west-1" || !r[1].VirtualHosted {
+		t.Errorf("replicate = %+v", r)
+	}
 	empty := filepath.Join(dir, "empty-secret")
 	_ = os.WriteFile(empty, []byte("\n"), 0o600)
 
 	for name, body := range map[string]string{
-		"notify no url":        "buckets: {u: {notify: [{events: [\"s3:ObjectCreated:*\"]}]}}\n",
-		"notify bad scheme":    "buckets: {u: {notify: [{url: \"ftp://h/x\"}]}}\n",
-		"notify no host":       "buckets: {u: {notify: [{url: \"http:///x\"}]}}\n",
-		"notify bad event":     "buckets: {u: {notify: [{url: \"http://h\", events: [\"s3:ObjectTagging:*\"]}]}}\n",
-		"notify same id":       "buckets: {u: {notify: [{id: a, url: \"http://h\"}, {id: a, url: \"http://g\"}]}}\n",
-		"notify no secret":     "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + filepath.Join(dir, "missing") + "}]}}\n",
-		"notify empty secret":  "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + empty + "}]}}\n",
-		"notify inline secret": "buckets: {u: {notify: [{url: \"http://h\", secret: x}]}}\n",
-		"headers empty set":    "buckets: {www: {headers: [{prefix: a/}]}}\n",
-		"lifecycle twice":      "buckets: {ci-cache: {lifecycle: [{prefix: a/, expire-after: 1h}, {prefix: a/, delete-after: 1h}]}}\n",
-		"lifecycle negative":   "buckets: {ci-cache: {lifecycle: [{prefix: a/, delete-after: -1h}]}}\n",
-		"lifecycle bad key":    "buckets: {ci-cache: {lifecycle: [{prefix: a/, expire: 1h}]}}\n",
-		"headers content type": "buckets: {www: {headers: [{set: {Content-Type: text/html}}]}}\n",
-		"headers csp":          "buckets: {www: {headers: [{set: {Content-Security-Policy: none}}]}}\n",
-		"headers twice":        "buckets: {www: {headers: [{set: {cache-control: a, Cache-Control: b}}]}}\n",
-		"headers empty value":  "buckets: {www: {headers: [{set: {Cache-Control: \"\"}}]}}\n",
-		"headers newline":      "buckets: {www: {headers: [{set: {Cache-Control: \"a\\nb\"}}]}}\n",
-		"headers blank":        "buckets: {www: {headers: [{set: {Cache-Control: \" \"}}]}}\n",
-		"headers non-ascii":    "buckets: {www: {headers: [{set: {Content-Disposition: \"é\"}}]}}\n",
-		"headers too long":     "buckets: {www: {headers: [{set: {Cache-Control: " + strings.Repeat("a", 4097) + "}}]}}\n",
+		"notify no url":            "buckets: {u: {notify: [{events: [\"s3:ObjectCreated:*\"]}]}}\n",
+		"notify bad scheme":        "buckets: {u: {notify: [{url: \"ftp://h/x\"}]}}\n",
+		"notify no host":           "buckets: {u: {notify: [{url: \"http:///x\"}]}}\n",
+		"notify bad event":         "buckets: {u: {notify: [{url: \"http://h\", events: [\"s3:ObjectTagging:*\"]}]}}\n",
+		"notify same id":           "buckets: {u: {notify: [{id: a, url: \"http://h\"}, {id: a, url: \"http://g\"}]}}\n",
+		"notify no secret":         "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + filepath.Join(dir, "missing") + "}]}}\n",
+		"notify empty secret":      "buckets: {u: {notify: [{url: \"http://h\", secret-file: " + empty + "}]}}\n",
+		"notify inline secret":     "buckets: {u: {notify: [{url: \"http://h\", secret: x}]}}\n",
+		"replicate bad scheme":     "buckets: {u: {replicate: [{endpoint: \"ftp://h\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}]}}\n",
+		"replicate path":           "buckets: {u: {replicate: [{endpoint: \"https://h/base\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}]}}\n",
+		"replicate bad bucket":     "buckets: {u: {replicate: [{endpoint: \"https://h\", bucket: B, access-key: a, secret-key-file: " + secret + "}]}}\n",
+		"replicate no key":         "buckets: {u: {replicate: [{endpoint: \"https://h\", bucket: b-1, secret-key-file: " + secret + "}]}}\n",
+		"replicate no secret":      "buckets: {u: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a}]}}\n",
+		"replicate missing secret": "buckets: {u: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key-file: " + filepath.Join(dir, "missing") + "}]}}\n",
+		"replicate empty secret":   "buckets: {u: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key-file: " + empty + "}]}}\n",
+		"replicate inline secret":  "buckets: {u: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key: x}]}}\n",
+		"replicate overlapping":    "buckets: {u: {replicate: [{endpoint: \"https://h\", bucket: b-1, prefix: a/, access-key: a, secret-key-file: " + secret + "}]}, v: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}]}}\n",
+		"replicate same id":        "buckets: {u: {replicate: [{id: x, endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}, {id: x, endpoint: \"https://g\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}]}}\n",
+		"headers empty set":        "buckets: {www: {headers: [{prefix: a/}]}}\n",
+		"lifecycle twice":          "buckets: {ci-cache: {lifecycle: [{prefix: a/, expire-after: 1h}, {prefix: a/, delete-after: 1h}]}}\n",
+		"lifecycle negative":       "buckets: {ci-cache: {lifecycle: [{prefix: a/, delete-after: -1h}]}}\n",
+		"lifecycle bad key":        "buckets: {ci-cache: {lifecycle: [{prefix: a/, expire: 1h}]}}\n",
+		"headers content type":     "buckets: {www: {headers: [{set: {Content-Type: text/html}}]}}\n",
+		"headers csp":              "buckets: {www: {headers: [{set: {Content-Security-Policy: none}}]}}\n",
+		"headers twice":            "buckets: {www: {headers: [{set: {cache-control: a, Cache-Control: b}}]}}\n",
+		"headers empty value":      "buckets: {www: {headers: [{set: {Cache-Control: \"\"}}]}}\n",
+		"headers newline":          "buckets: {www: {headers: [{set: {Cache-Control: \"a\\nb\"}}]}}\n",
+		"headers blank":            "buckets: {www: {headers: [{set: {Cache-Control: \" \"}}]}}\n",
+		"headers non-ascii":        "buckets: {www: {headers: [{set: {Content-Disposition: \"é\"}}]}}\n",
+		"headers too long":         "buckets: {www: {headers: [{set: {Cache-Control: " + strings.Repeat("a", 4097) + "}}]}}\n",
 	} {
 		_ = os.WriteFile(path, []byte(body), 0o600)
 		if _, err := Load(path); err == nil {

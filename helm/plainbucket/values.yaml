@@ -75,12 +75,16 @@ config:
   # buckets.<name>.notify[].secret-file at /etc/plainbucket/notify/<key>. A notify url
   # lands in the ConfigMap, so use one that carries no token.
   notifySecret: ""
+  # Secret mounted at /etc/plainbucket/replicate for replication targets' secret keys:
+  # point buckets.<name>.replicate[].secret-key-file at /etc/plainbucket/replicate/<key>.
+  replicateSecret: ""
   # Domains for virtual-hosted-style requests (<bucket>.<domain>); needs wildcard DNS.
   domains: []
   maxObjectSize: ""  # bytes as a string; empty means unlimited
   minFreeSpace: ""   # bytes as a string that writes must leave free on the volume; empty means no check
   uploadExpiry: ""   # Go duration; empty keeps the server default
   scrubInterval: ""  # Go duration such as 720h; re-reads every object against its ETag and checksums; empty means never
+  replicateInterval: ""  # Go duration, at least 1m; how often replication compares both listings; empty keeps the server default
   scrubRate: ""      # bytes per second as a string; empty keeps the server default
   bodyTimeout: ""    # Go duration; empty keeps the server default
   metrics: false

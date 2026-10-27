@@ -114,6 +114,10 @@ spec:
             - name: PLAINBUCKET_SCRUB_INTERVAL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.config.replicateInterval }}
+            - name: PLAINBUCKET_REPLICATE_INTERVAL
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.config.scrubRate }}
             - name: PLAINBUCKET_SCRUB_RATE
               value: {{ . | quote }}
@@ -195,6 +199,11 @@ spec:
               mountPath: /etc/plainbucket/notify
               readOnly: true
             {{- end }}
+            {{- if .Values.config.replicateSecret }}
+            - name: replicate
+              mountPath: /etc/plainbucket/replicate
+              readOnly: true
+            {{- end }}
             {{- if $tls }}
             - name: tls
               mountPath: /etc/plainbucket/tls
@@ -223,6 +232,11 @@ spec:
         {{- end }}
         {{- with .Values.config.notifySecret }}
         - name: notify
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+        {{- with .Values.config.replicateSecret }}
+        - name: replicate
           secret:
             secretName: {{ . }}
         {{- end }}

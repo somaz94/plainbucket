@@ -15,7 +15,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | | `credentials` | | More access keys, each optionally limited; see [Credentials](#credentials) |
 | `PLAINBUCKET_CREDENTIALS_FILE` | `credentials-file` | | YAML file holding a `credentials` list, added to the others |
 | `PLAINBUCKET_PUBLIC_BUCKETS` | `public-buckets` | | Comma-separated buckets whose objects anyone may read; see [Buckets](#buckets) |
-| | `buckets` | | Per-bucket settings: public reads, static website, CORS, expiry, size limit; see [Buckets](#buckets) |
+| | `buckets` | | Per-bucket settings: public reads, static website, CORS, expiry, size limit, webhooks, replication; see [Buckets](#buckets) |
 | | `rate-limit` | | Requests and body bytes per second for every key without its own; see [Rate Limits](#rate-limits) |
 | | `anonymous-rate-limit` | | Requests and body bytes per second for unsigned requests, per client address |
 | `PLAINBUCKET_DOMAINS` | `domains` | | Comma-separated domains for virtual-hosted-style requests; see [Virtual-Hosted Addressing](#virtual-hosted-addressing) |
@@ -25,6 +25,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_UPLOAD_EXPIRY` | `upload-expiry` | `168h` | Age after which an unfinished multipart upload is removed |
 | `PLAINBUCKET_SCRUB_INTERVAL` | `scrub-interval` | `0` | How often every object is read again to find damaged data; `0` turns it off. See [Integrity Checks](#integrity-checks) |
 | `PLAINBUCKET_SCRUB_RATE` | `scrub-rate` | `33554432` | Bytes per second the integrity check may read; `0` for no limit |
+| `PLAINBUCKET_REPLICATE_INTERVAL` | `replicate-interval` | `1h` | How often each [replication](#replication) rule compares the source and target listings; at least `1m` |
 | `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut an upload that delivers less than 32 KiB in this long; `0` disables it |
 | `PLAINBUCKET_METRICS` | `metrics` | `false` | Serve Prometheus metrics at `GET /metrics` |
 | `PLAINBUCKET_BUCKET_METRICS` | `bucket-metrics` | `false` | Report the usage of every bucket in the metrics, not only of those with limits; see [Metrics](#metrics) |
@@ -234,6 +235,34 @@ A signed request carries `X-Plainbucket-Timestamp` (Unix seconds) and `X-Plainbu
 
 Delivery is best-effort. Each webhook has a queue in memory that holds a thousand events; when it is full new events are dropped. A failed request is retried four times over about fifteen seconds when the connection fails or the answer is `429` or `5xx`, and given up on for any other status. Events still queued when the server stops get a few seconds to go out, and are lost after that or on a crash. Drops and failures are logged as warnings and counted in the [metrics](#metrics). The notification API itself is not implemented: webhooks are configured here, and a reload takes changes to them, including a rotated `secret-file`, over without a restart.
 
+### Replication
+
+`replicate` copies the bucket's objects to a bucket on another S3 server (AWS S3, MinIO, another plainbucket), under the same keys, for a second copy elsewhere:
+
+```yaml
+buckets:
+  uploads:
+    replicate:
+      - endpoint: https://s3.eu-west-1.amazonaws.com
+        region: eu-west-1
+        bucket: uploads-backup
+        virtual-hosted: true      # bucket.endpoint instead of endpoint/bucket
+        access-key: backup-writer
+        secret-key-file: /etc/plainbucket/replicate/backup
+        prefix: reports/          # only these keys; empty means all
+        delete: false             # the default: the copy keeps what the source deletes
+```
+
+- `endpoint` is the scheme and host only. The target bucket must exist; the server does not create it.
+- `secret-key-file` holds the secret key; a trailing newline is not part of it. The key is never written inline, and a reload re-reads the file.
+- `id` names the rule in logs and metrics, `replicate-<n>` by default. `region` defaults to `us-east-1`.
+- Two rules may not write overlapping keys of one target bucket (the same target with prefixes where one starts the other): each would undo the other.
+- Each rule follows the bucket's writes, deletes, tag changes, trash restores and expiry as they happen, from a queue in memory that holds a thousand keys, each once however often it changes. It also compares the two listings, by size and ETag, when it starts and every `replicate-interval`, and copies what differs, which catches up after a full queue, a failed request, a restart, and on objects that were there before the rule. Each rule works on one key at a time, so changes and comparisons never race.
+- A copy carries the data, `Content-Type`, user metadata, the stored headers (`Cache-Control` and the like) and tags. An object assembled from parts is uploaded in the same parts, so the target computes the same ETag; every piece carries its MD5 for the target to check. Over plain `http` that is the only integrity check, so prefer `https`. The copy also gets the user metadata `plainbucket-etag`, the source ETag, which lets a target that computes ETags differently (encryption at rest) still be recognized as current.
+- With `delete: true` a target key whose source key is gone is deleted, when the change is seen or at the next comparison; that includes keys removed by expiry or by eviction for `max-size`, and keys under the prefix that were only ever written to the target. Without it, the target keeps them, which makes it a copy deletes cannot reach. A source bucket that cannot be read, such as an unmounted volume, stops the comparison instead of deleting anything.
+- A comparison looks at sizes and ETags only, so a change to tags or metadata alone that the queue lost reaches the target when the object changes again. A key whose data matches has its tags read and written only when they differ, so two servers replicating to each other settle instead of echoing writes.
+- Requests never wait for replication. A request that fails with a server error, a timeout or `429` is retried three times over about twenty seconds, each part of a multipart upload on its own; after that, or at once for other refusals, it is logged as a warning, counted in the [metrics](#metrics), and left to the next comparison. A reload that only changes a rule's access key or secret keeps its queue. Reads made for replication do not count as uses, so they do not keep an object from [expiring](#expiry-and-size-limits).
+
 <br/>
 
 ## Virtual-Hosted Addressing
@@ -282,6 +311,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - After an [integrity check](#integrity-checks), including one from before a restart: `plainbucket_scrub_objects`, `plainbucket_scrub_bytes`, `plainbucket_scrub_skipped_objects`, `plainbucket_scrub_unchecked_objects`, `plainbucket_scrub_corrupt_objects` and `plainbucket_scrub_timestamp_seconds`, for the last completed run.
 - `plainbucket_read_only`, `1` while the [read-only mode](#read-only-mode) is on, and `plainbucket_writes_in_flight`, the requests other than `GET` and `HEAD` being served.
 - `plainbucket_filesystem_free_bytes` and `plainbucket_filesystem_size_bytes` for the filesystem holding the root, read at each scrape, and `plainbucket_min_free_bytes`, the configured minimum.
+- `plainbucket_replication_total{result}` for [replication](#replication): `copied`, `deleted` (target keys), `failed` (given up on after retries, until the next comparison) and `dropped` (a full queue, which brings the next comparison forward); `plainbucket_replication_queue`, the changes waiting; and `plainbucket_replication_compared_timestamp_seconds{rule}`, when each rule (`<bucket>/<id>`) last finished comparing the listings.
 - `plainbucket_notifications_total{result}` for [event notifications](#event-notifications), `sent`, `failed` (given up after retries, or refused) and `dropped` (a full queue, or still queued at shutdown), and `plainbucket_notification_queue`, the events waiting.
 - For buckets with `expire-after` or `max-size`, and with `bucket-metrics` for every bucket once the first scan has measured them: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, a new bucket from its creation, `plainbucket_bucket_max_size_bytes{bucket,evict}` for those with `max-size`, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.
 

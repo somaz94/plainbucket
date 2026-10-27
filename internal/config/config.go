@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"net/textproto"
 	"net/url"
@@ -55,9 +56,11 @@ type Config struct {
 	UploadExpiry  time.Duration `yaml:"upload-expiry"`
 	// ScrubInterval re-reads every object this often to find damaged data; 0 turns it off.
 	ScrubInterval time.Duration `yaml:"scrub-interval"`
-	ScrubRate     int64         `yaml:"scrub-rate"` // bytes per second the scrub may read; 0 for no cap
-	BodyTimeout   time.Duration `yaml:"body-timeout"`
-	Metrics       bool          `yaml:"metrics"`
+	// ReplicateInterval is how often each replication rule compares the two listings.
+	ReplicateInterval time.Duration `yaml:"replicate-interval"`
+	ScrubRate         int64         `yaml:"scrub-rate"` // bytes per second the scrub may read; 0 for no cap
+	BodyTimeout       time.Duration `yaml:"body-timeout"`
+	Metrics           bool          `yaml:"metrics"`
 	// BucketMetrics reports usage for every bucket, not only those with limits.
 	BucketMetrics bool `yaml:"bucket-metrics"`
 	Console       bool `yaml:"console"`
@@ -123,6 +126,24 @@ type Bucket struct {
 	Notify     []Notify      `yaml:"notify"`
 	Headers    []HeaderRule  `yaml:"headers"`
 	Lifecycle  []Lifecycle   `yaml:"lifecycle"`
+	Replicate  []Replicate   `yaml:"replicate"`
+}
+
+// Replicate copies the bucket's objects under Prefix to Bucket at Endpoint, another S3
+// server, under the same keys.
+type Replicate struct {
+	ID            string `yaml:"id"` // default replicate-<n>
+	Endpoint      string `yaml:"endpoint"`
+	Region        string `yaml:"region"` // default us-east-1
+	Bucket        string `yaml:"bucket"`
+	Prefix        string `yaml:"prefix"`
+	VirtualHosted bool   `yaml:"virtual-hosted"`
+	AccessKey     string `yaml:"access-key"`
+	// SecretKeyFile holds the secret key (e.g. a mounted Secret); validation reads it into SecretKey.
+	SecretKeyFile string `yaml:"secret-key-file"`
+	SecretKey     string `yaml:"-"`
+	// Delete removes target keys whose source key is gone.
+	Delete bool `yaml:"delete"`
 }
 
 // Lifecycle overrides the bucket's ExpireAfter for the objects under Prefix; the longest
@@ -171,13 +192,14 @@ type CORS struct {
 // Default returns the default configuration.
 func Default() *Config {
 	return &Config{
-		Root:         "/data",
-		Address:      ":9000",
-		Region:       "us-east-1",
-		UploadExpiry: 7 * 24 * time.Hour,
-		ScrubRate:    32 << 20,
-		BodyTimeout:  time.Minute,
-		LogFormat:    "text",
+		Root:              "/data",
+		Address:           ":9000",
+		Region:            "us-east-1",
+		UploadExpiry:      7 * 24 * time.Hour,
+		ScrubRate:         32 << 20,
+		ReplicateInterval: time.Hour,
+		BodyTimeout:       time.Minute,
+		LogFormat:         "text",
 	}
 }
 
@@ -247,6 +269,7 @@ func (c *Config) loadEnv() error {
 	e.int64("MIN_FREE_SPACE", &c.MinFreeSpace)
 	e.duration("UPLOAD_EXPIRY", &c.UploadExpiry)
 	e.duration("SCRUB_INTERVAL", &c.ScrubInterval)
+	e.duration("REPLICATE_INTERVAL", &c.ReplicateInterval)
 	e.int64("SCRUB_RATE", &c.ScrubRate)
 	e.duration("BODY_TIMEOUT", &c.BodyTimeout)
 	e.bool("METRICS", &c.Metrics)
@@ -360,6 +383,8 @@ func (c *Config) validate() error {
 		return errors.New("PLAINBUCKET_UPLOAD_EXPIRY must be positive")
 	case c.ScrubInterval < 0:
 		return errors.New("PLAINBUCKET_SCRUB_INTERVAL must not be negative")
+	case c.ReplicateInterval < time.Minute:
+		return errors.New("PLAINBUCKET_REPLICATE_INTERVAL must be at least 1m")
 	case c.ScrubRate < 0:
 		return errors.New("PLAINBUCKET_SCRUB_RATE must not be negative")
 	case c.BodyTimeout < 0:
@@ -463,6 +488,9 @@ func (c *Config) validateBuckets() error {
 		if err := validateNotify(where, b.Notify); err != nil {
 			return err
 		}
+		if err := validateReplicate(where, b.Replicate); err != nil {
+			return err
+		}
 		if err := validateHeaders(where, b.Headers); err != nil {
 			return err
 		}
@@ -494,6 +522,26 @@ func (c *Config) validateBuckets() error {
 			}
 			if cr.MaxAge < 0 {
 				return fmt.Errorf("%s.cors.max-age must not be negative", where)
+			}
+		}
+	}
+	return validateReplicaTargets(c.Buckets)
+}
+
+// validateReplicaTargets refuses two rules writing overlapping keys of one target bucket:
+// each would undo the other, and one with delete would remove the other's copies.
+func validateReplicaTargets(buckets map[string]Bucket) error {
+	type rule struct{ where, target, prefix string }
+	var rules []rule
+	for _, name := range slices.Sorted(maps.Keys(buckets)) {
+		for i, r := range buckets[name].Replicate {
+			rules = append(rules, rule{fmt.Sprintf("buckets.%s.replicate[%d]", name, i), r.Endpoint + "/" + r.Bucket, r.Prefix})
+		}
+	}
+	for i, a := range rules {
+		for _, b := range rules[i+1:] {
+			if a.target == b.target && (strings.HasPrefix(a.prefix, b.prefix) || strings.HasPrefix(b.prefix, a.prefix)) {
+				return fmt.Errorf("%s and %s write overlapping keys of %s", a.where, b.where, a.target)
 			}
 		}
 	}
@@ -529,6 +577,43 @@ func validateNotify(where string, targets []Notify) error {
 			if n.Secret = bytes.TrimRight(raw, "\r\n"); len(n.Secret) == 0 {
 				return fmt.Errorf("%s.secret-file: %s is empty", at, n.SecretFile)
 			}
+		}
+	}
+	return nil
+}
+
+func validateReplicate(where string, rules []Replicate) error {
+	ids := map[string]bool{}
+	for i := range rules {
+		r := &rules[i]
+		at := fmt.Sprintf("%s.replicate[%d]", where, i)
+		if r.ID == "" {
+			r.ID = fmt.Sprintf("replicate-%d", i+1)
+		}
+		if ids[r.ID] {
+			return fmt.Errorf("%s: id %q is used twice", at, r.ID)
+		}
+		ids[r.ID] = true
+		if u, err := url.Parse(r.Endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil {
+			return fmt.Errorf("%s.endpoint: %q must be an http or https URL with no path, such as https://s3.example.com", at, r.Endpoint)
+		}
+		r.Endpoint = strings.TrimSuffix(r.Endpoint, "/")
+		if r.Region == "" {
+			r.Region = "us-east-1"
+		}
+		if !storage.ValidBucketName(r.Bucket) {
+			return fmt.Errorf("%s.bucket: %q is not a valid bucket name", at, r.Bucket)
+		}
+		if r.AccessKey == "" || r.SecretKeyFile == "" {
+			return fmt.Errorf("%s: access-key and secret-key-file are required", at)
+		}
+		raw, err := os.ReadFile(r.SecretKeyFile)
+		if err != nil {
+			return fmt.Errorf("%s.secret-key-file: %w", at, err)
+		}
+		if r.SecretKey = strings.TrimRight(string(raw), "\r\n"); r.SecretKey == "" {
+			return fmt.Errorf("%s.secret-key-file: %s is empty", at, r.SecretKeyFile)
 		}
 	}
 	return nil
@@ -619,6 +704,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Int64("min_free_space", c.MinFreeSpace),
 		slog.Duration("upload_expiry", c.UploadExpiry),
 		slog.Duration("scrub_interval", c.ScrubInterval),
+		slog.Duration("replicate_interval", c.ReplicateInterval),
 		slog.Int64("scrub_rate", c.ScrubRate),
 		slog.Duration("body_timeout", c.BodyTimeout),
 		slog.Bool("metrics", c.Metrics),

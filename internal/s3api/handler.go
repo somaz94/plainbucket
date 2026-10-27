@@ -53,6 +53,8 @@ type Options struct {
 	Console bool
 	// Notifier receives the object events; nil sends none.
 	Notifier *notify.Notifier
+	// Replicator is told of every committed change to an object; nil replicates nothing.
+	Replicator Replicator
 	// ReadOnly refuses every write with 503; SetReadOnly changes it while serving.
 	ReadOnly bool
 	// AnonymousRateLimit caps unsigned requests per client address.
@@ -203,7 +205,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.serveReady(w)
 			return
 		case r.URL.Path == "/metrics" && h.opts.Metrics:
-			h.metrics.serve(w, h.store, h.opts.Notifier, h.readOnly.Load(), h.opts.BucketMetrics, h.writes.Load())
+			h.metrics.serve(w, h.store, h.opts.Notifier, h.opts.Replicator, h.readOnly.Load(), h.opts.BucketMetrics, h.writes.Load())
 			return
 		}
 	}
@@ -265,8 +267,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// publish sends the event name for key, changed by req, to the bucket's webhooks.
+// Replicator copies committed changes elsewhere; Changed must not block.
+type Replicator interface {
+	Changed(bucket, key string)
+	Stats() (copied, deleted, failed, dropped int64, queued int)
+	LastCompared() map[string]time.Time // by "<bucket>/<rule id>"
+}
+
+func (h *Handler) replicate(bucket, key string) {
+	if h.opts.Replicator != nil {
+		h.opts.Replicator.Changed(bucket, key)
+	}
+}
+
+// publish reports the change to key, made by req, to the replicator and, as event
+// name, to the bucket's webhooks.
 func (h *Handler) publish(req *request, name, key string, info storage.ObjectInfo) {
+	h.replicate(req.bucket, key)
 	if h.opts.Notifier == nil {
 		return
 	}
