@@ -49,6 +49,7 @@ type versioningConfiguration struct {
 type createBucketConfiguration struct {
 	XMLName            xml.Name `xml:"CreateBucketConfiguration"`
 	LocationConstraint string   `xml:"LocationConstraint"`
+	Tags               []xmlTag `xml:"Tags>Tag"`
 }
 
 type listObject struct {

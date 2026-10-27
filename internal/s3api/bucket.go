@@ -69,13 +69,20 @@ func (h *Handler) createBucket(req *request) error {
 	if err != nil {
 		return err
 	}
+	var tags []storage.Tag
 	if len(body) > 0 {
 		var cfg createBucketConfiguration
 		if xml.Unmarshal(body, &cfg) != nil {
 			return s3err.MalformedXML()
 		}
+		for _, t := range cfg.Tags {
+			tags = append(tags, storage.Tag(t))
+		}
+		if tags, err = sortedBucketTags(tags); err != nil {
+			return err
+		}
 	}
-	if err := h.store.CreateBucket(req.bucket); err != nil {
+	if err := h.store.CreateBucketWithTags(req.bucket, tags); err != nil {
 		return err
 	}
 	loc := "/" + req.bucket

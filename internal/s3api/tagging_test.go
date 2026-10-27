@@ -223,3 +223,19 @@ func TestBucketTagging(t *testing.T) {
 	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
 	x.expectErr(http.MethodGet, "/bkt?tagging", nil, nil, "NoSuchTagSet")
 }
+
+// Tags sent with CreateBucket, as the AWS SDK and Terraform's aws_s3_bucket do.
+func TestCreateBucketWithTags(t *testing.T) {
+	x := newHarness(t, nil)
+	cfg := func(tags string) []byte {
+		return []byte(`<CreateBucketConfiguration><LocationConstraint>us-east-1</LocationConstraint><Tags>` + tags + `</Tags></CreateBucketConfiguration>`)
+	}
+	x.mustDo(http.MethodPut, "/tagged", cfg(`<Tag><Key>team</Key><Value>ci</Value></Tag><Tag><Key>env</Key><Value>dev</Value></Tag>`), nil, http.StatusOK)
+	if got := x.tagsOf("/tagged"); got != "env=dev&team=ci" {
+		t.Errorf("tags from CreateBucket: %s", got)
+	}
+	x.expectErr(http.MethodPut, "/refused", cfg(`<Tag><Key>aws:x</Key><Value>1</Value></Tag>`), nil, "InvalidTag")
+	if rec := x.do(http.MethodHead, "/refused", nil, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("a bucket with invalid tags was created: %d", rec.Code)
+	}
+}

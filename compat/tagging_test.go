@@ -67,6 +67,14 @@ func TestBucketTagging(t *testing.T) {
 		if _, err := e.client.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: bkt}); apiCode(err) != "NoSuchTagSet" {
 			t.Errorf("untagged: %v", err)
 		}
+		if _, err := e.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("btags-created"), CreateBucketConfiguration: &types.CreateBucketConfiguration{
+			Tags: []types.Tag{{Key: aws.String("owner"), Value: aws.String("compat")}},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := e.client.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: aws.String("btags-created")}); err != nil || len(out.TagSet) != 1 || *out.TagSet[0].Value != "compat" {
+			t.Errorf("tags from CreateBucket: %v %+v", err, out)
+		}
 		if _, err := e.client.PutBucketTagging(ctx, &s3.PutBucketTaggingInput{Bucket: bkt, Tagging: &types.Tagging{TagSet: []types.Tag{
 			{Key: aws.String("team"), Value: aws.String("ci")}, {Key: aws.String("env"), Value: aws.String("dev")},
 		}}}); err != nil {

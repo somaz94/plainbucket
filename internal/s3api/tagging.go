@@ -27,6 +27,10 @@ func sortedTags(tags []storage.Tag) ([]storage.Tag, error) {
 	return sortedTagsMax(tags, maxTags, fmt.Sprintf("Object tags cannot be greater than %d.", maxTags))
 }
 
+func sortedBucketTags(tags []storage.Tag) ([]storage.Tag, error) {
+	return sortedTagsMax(tags, maxBucketTags, fmt.Sprintf("Bucket tag count cannot be greater than %d.", maxBucketTags))
+}
+
 func sortedTagsMax(tags []storage.Tag, limit int, tooMany string) ([]storage.Tag, error) {
 	if len(tags) > limit {
 		return nil, s3err.InvalidTag(tooMany)
@@ -178,7 +182,7 @@ func (h *Handler) putBucketTagging(req *request) error {
 	if err != nil {
 		return err
 	}
-	if tags, err = sortedTagsMax(tags, maxBucketTags, fmt.Sprintf("Bucket tag count cannot be greater than %d.", maxBucketTags)); err != nil {
+	if tags, err = sortedBucketTags(tags); err != nil {
 		return err
 	}
 	if err := h.store.SetBucketTags(req.bucket, tags); err != nil {

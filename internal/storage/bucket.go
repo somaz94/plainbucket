@@ -98,7 +98,10 @@ func (s *Store) SetBucketTags(bucket string, tags []Tag) error {
 }
 
 // CreateBucket creates the bucket directory.
-func (s *Store) CreateBucket(name string) error {
+func (s *Store) CreateBucket(name string) error { return s.CreateBucketWithTags(name, nil) }
+
+// CreateBucketWithTags creates bucket name with its tags recorded at once.
+func (s *Store) CreateBucketWithTags(name string, tags []Tag) error {
 	if !ValidBucketName(name) {
 		return ErrInvalidBucketName
 	}
@@ -111,7 +114,7 @@ func (s *Store) CreateBucket(name string) error {
 		}
 		return err
 	}
-	raw, _ := json.Marshal(bucketRecord{Created: s.now().UTC()})
+	raw, _ := json.Marshal(bucketRecord{Created: s.now().UTC(), Tags: tags})
 	_ = s.writeFileAtomic(s.sys("buckets", name+".json"), raw)
 	s.usageMu.Lock()
 	s.resetUsage(name, true) // listed in the usage before its first write

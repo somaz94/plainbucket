@@ -28,7 +28,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 | Area | Operations |
 |---|---|
 | Service | `ListBuckets`, paginated with `max-buckets` and `continuation-token`, filtered by `prefix` and `bucket-region` |
-| Bucket | `CreateBucket`, `HeadBucket`, `DeleteBucket` (must be empty), `GetBucketLocation`, `GetBucketVersioning` (always unversioned), `GetBucketTagging`, `PutBucketTagging` and `DeleteBucketTagging` (up to 50 tags, stored with the bucket and removed with it) |
+| Bucket | `CreateBucket` (with `Tags` in its configuration, as the AWS SDK and Terraform's `aws_s3_bucket` send them), `HeadBucket`, `DeleteBucket` (must be empty), `GetBucketLocation`, `GetBucketVersioning` (always unversioned), `GetBucketTagging`, `PutBucketTagging` and `DeleteBucketTagging` (up to 50 tags, stored with the bucket and removed with it) |
 | Listing | `ListObjectsV2` and `ListObjects` with `prefix`, `delimiter`, `max-keys`, `start-after`, `continuation-token` / `marker`, `fetch-owner`, `encoding-type=url`; `ListObjectVersions`, which lists every object as its only version, `null`, as S3 does for an unversioned bucket |
 | Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectAttributes`, `GetObjectTagging`, `PutObjectTagging`, `DeleteObjectTagging` |
 | Browser upload | `PostObject` (an HTML form signed with a Signature Version 4 POST policy, as `PresignPostObject` in the SDKs produces) |
