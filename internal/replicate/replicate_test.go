@@ -533,7 +533,31 @@ func TestNilReplicator(t *testing.T) {
 	if c, d, f, dr, q := r.Stats(); c != 0 || d != 0 || f != 0 || dr != 0 || q != 0 {
 		t.Errorf("stats of nil = %d %d %d %d %d", c, d, f, dr, q)
 	}
-	if last := r.LastCompared(); len(last) != 0 {
-		t.Errorf("LastCompared of nil = %v", last)
+	if last := r.LastCompared(); len(last) != 0 || r.Rules() != 0 {
+		t.Errorf("LastCompared of nil = %v, Rules %d", last, r.Rules())
+	}
+}
+
+// The changed rule's worker is replaced; its comparison time carries over.
+func TestChangedRuleKeepsLastComparison(t *testing.T) {
+	e := newEnv(t)
+	rule := e.rule()
+	e.r.SetRules([]Rule{rule})
+	e.waitFor("the first comparison", func() bool { return e.worker(rule).last.Load() > 0 })
+	before := e.r.LastCompared()["src/r1"]
+	if e.r.Rules() != 1 {
+		t.Errorf("Rules = %d, want 1", e.r.Rules())
+	}
+
+	dead := httptest.NewServer(http.NotFoundHandler())
+	dead.Close()
+	moved := e.rule(func(r *Rule) { r.Endpoint = dead.URL })
+	e.r.SetRules([]Rule{moved})
+	if got, ok := e.r.LastCompared()["src/r1"]; !ok || !got.Equal(before) {
+		t.Errorf("after the change: %v %v, want %v", got, ok, before)
+	}
+	e.r.SetRules(nil)
+	if e.r.Rules() != 0 || len(e.r.LastCompared()) != 0 {
+		t.Errorf("after removing every rule: %d rules, %v", e.r.Rules(), e.r.LastCompared())
 	}
 }

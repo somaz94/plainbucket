@@ -172,7 +172,7 @@ func (m *metrics) write(w http.ResponseWriter, s scrape) {
 		fmt.Fprintf(w, "plainbucket_notifications_total{result=\"dropped\"} %d\n", dropped)
 		metric("gauge", "plainbucket_notification_queue", "Bucket event notifications waiting to be sent.", int64(queued))
 	}
-	if s.replicator != nil {
+	if s.replicator != nil && s.replicator.Rules() > 0 {
 		copied, deleted, failed, dropped, queued := s.replicator.Stats()
 		fmt.Fprintln(w, "# HELP plainbucket_replication_total Replication by result: keys copied, target keys deleted, keys failed after retries, changes dropped on a full queue.")
 		fmt.Fprintln(w, "# TYPE plainbucket_replication_total counter")

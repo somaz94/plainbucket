@@ -13,6 +13,7 @@ type Replicator interface {
 	Changed(bucket, key string)
 	Stats() (copied, deleted, failed, dropped int64, queued int)
 	LastCompared() map[string]time.Time // by "<bucket>/<rule id>"
+	Rules() int
 }
 
 func (h *Handler) replicate(bucket, key string) {

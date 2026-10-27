@@ -12,6 +12,7 @@ import (
 type fakeReplicator struct {
 	mu      sync.Mutex
 	changed []string
+	noRules bool
 }
 
 func (f *fakeReplicator) Changed(bucket, key string) {
@@ -22,6 +23,13 @@ func (f *fakeReplicator) Changed(bucket, key string) {
 
 func (f *fakeReplicator) Stats() (copied, deleted, failed, dropped int64, queued int) {
 	return 3, 1, 2, 0, 5
+}
+
+func (f *fakeReplicator) Rules() int {
+	if f.noRules {
+		return 0
+	}
+	return 1
 }
 
 func (f *fakeReplicator) LastCompared() map[string]time.Time {
@@ -49,5 +57,14 @@ func TestReplicatorHears(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("metrics lack %q", want)
 		}
+	}
+}
+
+func TestNoReplicationMetricsWithoutRules(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.Replicator = &fakeReplicator{noRules: true}; o.Metrics = true })
+	rec := httptest.NewRecorder()
+	x.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if strings.Contains(rec.Body.String(), "plainbucket_replication_") {
+		t.Errorf("replication metrics without a rule:\n%s", rec.Body.String())
 	}
 }

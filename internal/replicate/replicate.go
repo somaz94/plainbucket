@@ -135,6 +135,8 @@ func (r *Replicator) SetRules(rules []Rule) {
 		next[rule.identity()] = rule
 	}
 	var stopping []*worker
+	// A changed rule keeps its last comparison time, so a staleness alert does not lose it.
+	last := map[string]int64{}
 	for id, w := range r.workers {
 		if _, ok := next[id]; !ok {
 			w.cancel()
@@ -143,14 +145,15 @@ func (r *Replicator) SetRules(rules []Rule) {
 		}
 	}
 	for _, w := range stopping {
-		<-w.done
+		<-w.done // read after it exits: a comparison may finish while it stops
+		last[w.rule.Bucket+"/"+w.rule.ID] = w.last.Load()
 	}
 	for id, rule := range next {
 		if w, ok := r.workers[id]; ok {
 			w.signer.Store(signerOf(rule))
 			continue
 		}
-		r.workers[id] = r.start(rule)
+		r.workers[id] = r.start(rule, last[rule.Bucket+"/"+rule.ID])
 	}
 	list := slices.Collect(maps.Values(r.workers))
 	r.list.Store(&list)
@@ -160,13 +163,14 @@ func signerOf(rule Rule) *sigv4.Signer {
 	return &sigv4.Signer{AccessKey: rule.AccessKey, SecretKey: rule.SecretKey, Region: rule.Region}
 }
 
-func (r *Replicator) start(rule Rule) *worker {
+func (r *Replicator) start(rule Rule, last int64) *worker {
 	u, _ := url.Parse(rule.Endpoint)
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &worker{rule: rule.identity(), pending: map[string]bool{}, ready: make(chan struct{}, 1), kick: make(chan struct{}, 1),
 		cancel: cancel, done: make(chan struct{}),
 		base: s3client.Client{Endpoint: u, VirtualHosted: rule.VirtualHosted, HTTP: r.http, Now: r.now}}
 	w.signer.Store(signerOf(rule))
+	w.last.Store(last)
 	w.kick <- struct{}{} // compare once at start
 	go r.run(ctx, w)
 	return w
@@ -256,6 +260,14 @@ func (r *Replicator) LastCompared() map[string]time.Time {
 		}
 	}
 	return out
+}
+
+// Rules returns how many rules are running.
+func (r *Replicator) Rules() int {
+	if r == nil {
+		return 0
+	}
+	return len(*r.list.Load())
 }
 
 // Close stops every worker, abandoning queued changes; the next start compares again.
