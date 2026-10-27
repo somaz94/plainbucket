@@ -116,7 +116,7 @@ func (h *Handler) consoleUsage(req *request) error {
 	}
 	if len(req.cred.Buckets) == 0 {
 		res.Total = &total
-		if free, size, err := h.store.DiskSpace(); err == nil {
+		if free, size, err := h.store.DiskSpaceWithin(storageTimeout); err == nil {
 			res.Disk = &consoleDisk{Free: free, Size: size, MinFree: h.store.MinFree()}
 		}
 	}

@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"io"
+	"time"
 )
 
 // ErrInsufficientStorage refuses a write that would leave less free space on the root's
@@ -22,6 +23,18 @@ func (s *Store) MinFree() int64 { return s.minFree.Load() }
 // DiskSpace returns the bytes an unprivileged writer may still use on the root's
 // filesystem and the filesystem's size.
 func (s *Store) DiskSpace() (free, size int64, err error) { return s.statfs(s.root) }
+
+type spaceReading struct{ free, size int64 }
+
+// DiskSpaceWithin is DiskSpace failing with ErrProbeTimeout after timeout, for callers
+// that must answer while a network mount hangs. Calls made meanwhile share one query.
+func (s *Store) DiskSpaceWithin(timeout time.Duration) (free, size int64, err error) {
+	d, err := s.spaces.wait(timeout, func() (spaceReading, error) {
+		free, size, err := s.statfs(s.root)
+		return spaceReading{free, size}, err
+	})
+	return d.free, d.size, err
+}
 
 // reserve admits a write of size more bytes (negative: unknown) and holds them against
 // other writes until release. Bytes a write in progress has already stored are counted

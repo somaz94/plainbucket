@@ -99,9 +99,9 @@ type Store struct {
 	paused      atomic.Bool                              // see SetPaused
 	lastScrub   atomic.Pointer[ScrubResult]
 
-	probeMu   sync.Mutex
-	probing   *probe                // the read a Probe in progress waits for
+	probes    shared[int64]
 	probeRead func() (int64, error) // readRoot, replaced in tests
+	spaces    shared[spaceReading]
 
 	trashAfter atomic.Pointer[map[string]time.Duration] // swapped whole by SetTrash
 	trashMu    sync.Mutex                               // serializes restores, purges and the sweep's expiry

@@ -81,7 +81,7 @@ type storeStats interface {
 	AllBucketUsage() map[string]storage.Usage
 	BucketLimit(bucket string) storage.Limit
 	Removed() (expired, evicted int64)
-	DiskSpace() (free, size int64, err error)
+	DiskSpaceWithin(timeout time.Duration) (free, size int64, err error)
 	LastScrub() (storage.ScrubResult, bool)
 	MinFree() int64
 }
@@ -201,7 +201,7 @@ func (m *metrics) write(w http.ResponseWriter, s scrape) {
 	metric("gauge", "plainbucket_writes_in_flight", "Requests other than GET and HEAD being served, including those started before read-only mode.", s.writes)
 
 	metric("gauge", "plainbucket_min_free_bytes", "Free bytes writes must leave (min-free-space); 0 when off.", st.MinFree())
-	if free, size, err := st.DiskSpace(); err == nil {
+	if free, size, err := st.DiskSpaceWithin(storageTimeout); err == nil {
 		metric("gauge", "plainbucket_filesystem_free_bytes", "Bytes left for the server on the filesystem holding the root.", free)
 		metric("gauge", "plainbucket_filesystem_size_bytes", "Size of the filesystem holding the root.", size)
 	}

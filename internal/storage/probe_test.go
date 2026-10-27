@@ -77,3 +77,33 @@ func TestProbeHungRoot(t *testing.T) {
 		t.Errorf("after the root answers: %v", err)
 	}
 }
+
+func TestDiskSpaceWithinHungMount(t *testing.T) {
+	s := newStore(t)
+	release, started := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	var once sync.Once
+	s.statfs = func(string) (int64, int64, error) {
+		calls.Add(1)
+		once.Do(func() { close(started) })
+		<-release
+		return 10, 20, nil
+	}
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			if _, _, err := s.DiskSpaceWithin(10 * time.Millisecond); !errors.Is(err, ErrProbeTimeout) {
+				t.Errorf("hung statfs: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	<-started
+	if n := calls.Load(); n != 1 {
+		t.Errorf("%d statfs calls on a hung mount, want 1", n)
+	}
+	close(release)
+	if free, size, err := s.DiskSpaceWithin(time.Second); err != nil || free != 10 || size != 20 {
+		t.Errorf("after the mount answers: %d %d %v", free, size, err)
+	}
+}

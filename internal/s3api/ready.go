@@ -9,8 +9,9 @@ import (
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-// readyTimeout bounds the storage probe, below the chart's readiness probe timeout.
-const readyTimeout = 2 * time.Second
+// storageTimeout bounds what /readyz, /metrics and the console wait for the storage, below
+// the chart's readiness probe timeout.
+const storageTimeout = 2 * time.Second
 
 type readiness struct {
 	Ready    bool `json:"ready"`
@@ -23,7 +24,7 @@ type readiness struct {
 // runs a single pod, so leaving the Service would cut those off too.
 func (h *Handler) serveReady(w http.ResponseWriter) {
 	res, status := readiness{Ready: true, ReadOnly: h.readOnly.Load()}, http.StatusOK
-	free, err := h.store.Probe(readyTimeout)
+	free, err := h.store.Probe(storageTimeout)
 	h.rootMoved.Store(errors.Is(err, storage.ErrRootMoved))
 	if err != nil {
 		res.Ready, status = false, http.StatusServiceUnavailable

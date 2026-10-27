@@ -6,10 +6,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"sync"
 	"time"
 )
 
-// ErrProbeTimeout reports a root that did not answer in time, such as a hung network mount.
+// ErrProbeTimeout reports a root or filesystem query that did not answer in time, such as a
+// hung network mount.
 var ErrProbeTimeout = errors.New("the storage root did not answer in time")
 
 // ErrRootMoved reports that the root's path no longer leads to the directory the store
@@ -17,39 +19,54 @@ var ErrProbeTimeout = errors.New("the storage root did not answer in time")
 // that is restarting, follows the path again.
 var ErrRootMoved = errors.New("the storage root was removed, replaced or unmounted")
 
-type probe struct {
+// shared runs one call at a time and lets each caller wait for it at most a timeout, so a
+// hung mount holds one goroutine, not one per caller.
+type shared[T any] struct {
+	mu   sync.Mutex
+	call *sharedCall[T]
+}
+
+type sharedCall[T any] struct {
 	done chan struct{}
-	free int64
+	val  T
 	err  error
+}
+
+func (g *shared[T]) wait(timeout time.Duration, fn func() (T, error)) (T, error) {
+	g.mu.Lock()
+	c := g.call
+	if c == nil {
+		c = &sharedCall[T]{done: make(chan struct{})}
+		g.call = c
+		go func() {
+			c.val, c.err = fn()
+			g.mu.Lock()
+			g.call = nil
+			g.mu.Unlock()
+			close(c.done)
+		}()
+	}
+	g.mu.Unlock()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case <-c.done:
+		return c.val, c.err
+	case <-t.C:
+		var zero T
+		return zero, ErrProbeTimeout
+	}
 }
 
 // Probe reads the root directory, checks that its path still leads there and measures
 // the free space, failing when any of it fails or takes longer than timeout. free is -1
-// where the platform cannot measure it. Calls made while a probe is pending wait for it,
-// so a hung mount holds one goroutine, not one per call.
+// where the platform cannot measure it or on timeout; concurrent calls share one probe.
 func (s *Store) Probe(timeout time.Duration) (free int64, err error) {
-	s.probeMu.Lock()
-	p := s.probing
-	if p == nil {
-		p = &probe{done: make(chan struct{})}
-		s.probing = p
-		go func() {
-			p.free, p.err = s.probeRead()
-			s.probeMu.Lock()
-			s.probing = nil
-			s.probeMu.Unlock()
-			close(p.done)
-		}()
+	free, err = s.probes.wait(timeout, s.probeRead)
+	if errors.Is(err, ErrProbeTimeout) {
+		return -1, err
 	}
-	s.probeMu.Unlock()
-	t := time.NewTimer(timeout)
-	defer t.Stop()
-	select {
-	case <-p.done:
-		return p.free, p.err
-	case <-t.C:
-		return -1, ErrProbeTimeout
-	}
+	return free, err
 }
 
 func (s *Store) readRoot() (int64, error) {
