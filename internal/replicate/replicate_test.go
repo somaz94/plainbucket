@@ -210,7 +210,12 @@ func TestChanges(t *testing.T) {
 	e.put("k", "v1", storage.PutOptions{})
 	e.r.Changed("src", "k")
 	e.r.Changed("other", "k") // another bucket: no rule
-	e.waitFor("the copy", func() bool { body, _, ok := e.target("k"); return ok && body == "v1" })
+	// Both rules counted, since the copied count below is shared and an object shows on the
+	// target before its rule counts it.
+	e.waitFor("the copies", func() bool { copied, _, _, _, _ := e.r.Stats(); return copied == 2 })
+	if body, _, ok := e.target("k"); !ok || body != "v1" {
+		t.Fatalf("target: %q %v", body, ok)
+	}
 
 	// Retagging sends only the tags.
 	if err := e.src.SetTags("src", "k", []storage.Tag{{Key: "x", Value: "y"}}); err != nil {
