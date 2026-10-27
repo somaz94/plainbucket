@@ -121,21 +121,31 @@ type Notifier struct {
 	mu      sync.RWMutex
 	workers map[string]*worker
 	closed  bool
-	routes  map[string][]*worker // by bucket
+	routes  map[string][]route                 // by bucket
+	secrets map[string]*atomic.Pointer[[]byte] // by bucket and targetKey
 
 	lastSeq               atomic.Int64
 	sent, failed, dropped atomic.Int64
 }
 
 type worker struct {
-	t     Target
-	queue chan delivery
-	stop  chan struct{}
+	t       Target
+	queue   chan delivery
+	stop    chan struct{} // closed by SetTargets and Close: deliver what is queued, then end
+	retired chan struct{} // closed by SetTargets only: retries stop, each held event is tried once
 }
 
 type delivery struct {
-	name string
-	body []byte
+	name   string
+	body   []byte
+	secret *atomic.Pointer[[]byte] // the route's, read per attempt
+}
+
+// route is one bucket's target. Buckets may share a worker with different secrets, so the
+// secret travels with each event, in a cell a reload updates in place.
+type route struct {
+	w      *worker
+	secret *atomic.Pointer[[]byte]
 }
 
 // New returns a Notifier without targets.
@@ -151,7 +161,8 @@ func New(region string, log *slog.Logger) *Notifier {
 }
 
 // SetTargets replaces the targets, by bucket; it is safe while events are published.
-// A target that stays keeps its queue; one that goes delivers what it holds, then stops.
+// A target that stays, secret aside, keeps its queue; one that goes tries each event it
+// holds once, then stops.
 func (n *Notifier) SetTargets(targets map[string][]Target) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -159,7 +170,8 @@ func (n *Notifier) SetTargets(targets map[string][]Target) {
 		return
 	}
 	next := map[string]*worker{}
-	routes := map[string][]*worker{}
+	routes := map[string][]route{}
+	secrets := map[string]*atomic.Pointer[[]byte]{}
 	for bucket, ts := range targets {
 		for _, t := range ts {
 			k := targetKey(t)
@@ -170,25 +182,47 @@ func (n *Notifier) SetTargets(targets map[string][]Target) {
 				}
 				next[k] = w
 			}
-			routes[bucket] = append(routes[bucket], w)
+			sk := bucket + "\x00" + k
+			cell := n.secrets[sk]
+			if cell == nil {
+				cell = new(atomic.Pointer[[]byte])
+			}
+			secret := t.Secret
+			cell.Store(&secret)
+			secrets[sk] = cell
+			routes[bucket] = append(routes[bucket], route{w: w, secret: cell})
 		}
 	}
 	for k, w := range n.workers {
 		if next[k] == nil {
+			close(w.retired)
 			close(w.stop)
 		}
 	}
 	n.workers = next
 	n.routes = routes
+	n.secrets = secrets
 }
 
+func isClosed(c chan struct{}) bool {
+	select {
+	case <-c:
+		return true
+	default:
+		return false
+	}
+}
+
+// targetKey identifies a target's worker; the secret is left out, so rotating it keeps the queue.
 func targetKey(t Target) string {
+	t.Secret = nil
 	raw, _ := json.Marshal(t)
 	return string(raw)
 }
 
 func (n *Notifier) start(t Target) *worker {
-	w := &worker{t: t, queue: make(chan delivery, queueSize), stop: make(chan struct{})}
+	t.Secret = nil // each event carries its route's
+	w := &worker{t: t, queue: make(chan delivery, queueSize), stop: make(chan struct{}), retired: make(chan struct{})}
 	n.wg.Go(func() { n.run(w) })
 	return w
 }
@@ -197,12 +231,12 @@ func (n *Notifier) run(w *worker) {
 	for {
 		select {
 		case d := <-w.queue:
-			n.deliver(w.t, d)
+			n.deliver(w, d)
 		case <-w.stop:
 			for {
 				select {
 				case d := <-w.queue:
-					n.deliver(w.t, d)
+					n.deliver(w, d)
 				default:
 					return
 				}
@@ -216,12 +250,13 @@ func (n *Notifier) run(w *worker) {
 func (n *Notifier) Publish(e Event) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	ws := n.routes[e.Bucket]
-	if len(ws) == 0 {
+	rs := n.routes[e.Bucket]
+	if len(rs) == 0 {
 		return
 	}
 	seq := n.sequencer(e.Time)
-	for _, w := range ws {
+	for _, r := range rs {
+		w := r.w
 		if !w.t.wants(e) {
 			continue
 		}
@@ -230,7 +265,7 @@ func (n *Notifier) Publish(e Event) {
 			continue
 		}
 		select {
-		case w.queue <- delivery{name: e.Name, body: body}:
+		case w.queue <- delivery{name: e.Name, body: body, secret: r.secret}:
 		default:
 			n.dropped.Add(1)
 			n.log.Warn("event notification dropped: queue full", "target", w.t.ID, "url", redactURL(w.t.URL), "event", e.Name, "bucket", e.Bucket, "key", e.Key)
@@ -283,13 +318,14 @@ func (p permanent) Error() string {
 	return "status " + strconv.Itoa(p.status)
 }
 
-func (n *Notifier) deliver(t Target, d delivery) {
+func (n *Notifier) deliver(w *worker, d delivery) {
+	t := w.t
 	for attempt := 0; ; attempt++ {
 		if n.ctx.Err() != nil {
 			n.dropped.Add(1) // Close gave up; it reports the count once
 			return
 		}
-		err := n.post(t, d)
+		err := n.post(t, *d.secret.Load(), d)
 		if err == nil {
 			n.sent.Add(1)
 			return
@@ -299,23 +335,28 @@ func (n *Notifier) deliver(t Target, d delivery) {
 			return
 		}
 		var p permanent
-		if errors.As(err, &p) || attempt >= len(n.backoff) {
+		last := errors.As(err, &p) || attempt >= len(n.backoff) || isClosed(w.retired)
+		if !last {
+			wait := n.backoff[attempt]
+			if r := (retryable{}); errors.As(err, &r) && r.after > wait {
+				wait = r.after
+			}
+			select {
+			case <-time.After(wait):
+			case <-n.ctx.Done():
+			case <-w.retired:
+				last = true // tried already, so a removed target gets no more attempts
+			}
+		}
+		if last {
 			n.failed.Add(1)
 			n.log.Warn("event notification failed", "target", t.ID, "url", redactURL(t.URL), "event", d.name, "attempts", attempt+1, "err", err)
 			return
 		}
-		wait := n.backoff[attempt]
-		if r := (retryable{}); errors.As(err, &r) && r.after > wait {
-			wait = r.after
-		}
-		select {
-		case <-time.After(wait):
-		case <-n.ctx.Done():
-		}
 	}
 }
 
-func (n *Notifier) post(t Target, d delivery) error {
+func (n *Notifier) post(t Target, secret []byte, d delivery) error {
 	ctx, cancel := context.WithTimeout(n.ctx, attemptTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.URL, bytes.NewReader(d.body))
@@ -325,11 +366,11 @@ func (n *Notifier) post(t Target, d delivery) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "plainbucket/"+version.Version)
 	req.Header.Set(HeaderEvent, d.name)
-	if len(t.Secret) > 0 {
+	if len(secret) > 0 {
 		// Taken per attempt, so a receiver may refuse old timestamps without refusing retries.
 		ts := strconv.FormatInt(n.now().Unix(), 10)
 		req.Header.Set(HeaderTimestamp, ts)
-		req.Header.Set(HeaderSignature, Sign(t.Secret, ts, d.body))
+		req.Header.Set(HeaderSignature, Sign(secret, ts, d.body))
 	}
 	resp, err := n.client.Do(req)
 	if err != nil {

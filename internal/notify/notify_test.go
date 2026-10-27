@@ -420,3 +420,82 @@ func TestDeliveryWaitsForRetryAfter(t *testing.T) {
 		t.Errorf("retried after %v, before the receiver's Retry-After", gap)
 	}
 }
+
+func TestRotatedSecretKeepsTheWorker(t *testing.T) {
+	release := make(chan struct{})
+	var first sync.Once
+	rc := newReceiver(t, func(int) int {
+		first.Do(func() { <-release })
+		return http.StatusNoContent
+	})
+	n := newNotifier(t)
+	old := Target{ID: "hook", URL: rc.URL, Secret: []byte("old")}
+	n.SetTargets(map[string][]Target{"bkt": {old}})
+	w := n.workers[targetKey(old)]
+	n.Publish(Event{Name: ObjectCreatedPut, Bucket: "bkt", Key: "a", Time: time.Now()})
+	n.Publish(Event{Name: ObjectCreatedPut, Bucket: "bkt", Key: "b", Time: time.Now()})
+	eventually(t, "the first delivery", func() bool { return rc.count() == 1 })
+	rotated := old
+	rotated.Secret = []byte("new")
+	n.SetTargets(map[string][]Target{"bkt": {rotated}})
+	if n.workers[targetKey(rotated)] != w || isClosed(w.stop) {
+		t.Fatal("a rotated secret replaced the worker")
+	}
+	close(release)
+	eventually(t, "both deliveries", func() bool { return rc.count() == 2 })
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	r, body := rc.got[1], rc.bodies[1]
+	if r.Header.Get(HeaderSignature) != Sign([]byte("new"), r.Header.Get(HeaderTimestamp), body) {
+		t.Error("the queued event was not signed with the rotated secret")
+	}
+}
+
+// Buckets sharing a webhook with their own secrets share its worker but not their keys.
+func TestSharedWebhookSignsPerBucket(t *testing.T) {
+	rc := newReceiver(t, nil)
+	n := newNotifier(t)
+	n.SetTargets(map[string][]Target{
+		"one": {{ID: "hook", URL: rc.URL, Secret: []byte("key-one")}},
+		"two": {{ID: "hook", URL: rc.URL, Secret: []byte("key-two")}},
+	})
+	if len(n.workers) != 1 {
+		t.Errorf("%d workers for one webhook", len(n.workers))
+	}
+	n.Publish(Event{Name: ObjectCreatedPut, Bucket: "one", Key: "k", Time: time.Now()})
+	n.Publish(Event{Name: ObjectCreatedPut, Bucket: "two", Key: "k", Time: time.Now()})
+	eventually(t, "both deliveries", func() bool { return rc.count() == 2 })
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	for i, r := range rc.got {
+		var msg message
+		if err := json.Unmarshal(rc.bodies[i], &msg); err != nil || len(msg.Records) != 1 {
+			t.Fatalf("body %s: %v", rc.bodies[i], err)
+		}
+		key := []byte("key-" + msg.Records[0].S3.Bucket.Name)
+		if r.Header.Get(HeaderSignature) != Sign(key, r.Header.Get(HeaderTimestamp), rc.bodies[i]) {
+			t.Errorf("%s: not signed with its bucket's secret", msg.Records[0].S3.Bucket.Name)
+		}
+	}
+}
+
+// A target a reload removes gets one attempt per event it still holds, not the retries.
+func TestRemovedTargetTriesOnce(t *testing.T) {
+	release := make(chan struct{})
+	var first sync.Once
+	rc := newReceiver(t, func(int) int {
+		first.Do(func() { <-release })
+		return http.StatusServiceUnavailable
+	})
+	n := newNotifier(t)
+	n.SetTargets(map[string][]Target{"bkt": {{URL: rc.URL}}})
+	n.Publish(Event{Name: ObjectCreatedPut, Bucket: "bkt", Key: "a", Time: time.Now()})
+	n.Publish(Event{Name: ObjectCreatedPut, Bucket: "bkt", Key: "b", Time: time.Now()})
+	eventually(t, "the first attempt", func() bool { return rc.count() == 1 })
+	n.SetTargets(nil)
+	close(release)
+	eventually(t, "both failures", func() bool { _, failed, _, _ := n.Stats(); return failed == 2 })
+	if rc.count() != 2 {
+		t.Errorf("%d attempts for two events of a removed target, want 2", rc.count())
+	}
+}
