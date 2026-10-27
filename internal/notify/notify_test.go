@@ -117,7 +117,8 @@ func TestDeliverySignedRecord(t *testing.T) {
 		Principal: "AKID", SourceIP: "192.0.2.7", RequestID: "REQ1", Time: now})
 	n.Publish(Event{Name: ObjectRemovedDelete, Bucket: "bkt", Key: "gone", Time: now})
 	n.Publish(Event{Name: ObjectCreatedPut, Bucket: "other", Key: "k", Time: now})
-	eventually(t, "two deliveries", func() bool { return rc.count() == 2 })
+	// Counted once the answer is read, which is after the receiver records the request.
+	eventually(t, "two deliveries", func() bool { sent, _, _, _ := n.Stats(); return rc.count() == 2 && sent == 2 })
 
 	r, body := rc.got[0], rc.bodies[0]
 	ts := r.Header.Get(HeaderTimestamp)
