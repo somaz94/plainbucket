@@ -7,7 +7,7 @@ revisionHistoryLimit: 3
 image:
   repository: somaz940/plainbucket
   pullPolicy: IfNotPresent
-  tag: "v0.7.0"
+  tag: "v0.8.0"
 
 imagePullSecrets: []
 
