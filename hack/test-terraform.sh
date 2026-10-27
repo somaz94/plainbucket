@@ -24,7 +24,7 @@ esac
 
 ZIP="${ROOT_DIR}/bin/terraform_${TF_VERSION}_${os}_${arch}.zip"
 fetch_pinned "${ZIP}" "${want}" \
-    "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_${os}_${arch}.zip" 0644 terraform --retry 3
+    "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_${os}_${arch}.zip" 0644 terraform
 unzip -q -o "${ZIP}" terraform -d "${WORK}/bin"
 TF="${WORK}/bin/terraform"
 

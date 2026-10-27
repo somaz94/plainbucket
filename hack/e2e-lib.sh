@@ -74,7 +74,8 @@ fetch_pinned() {
     tmp="${WORK}/${file##*/}"
     echo "downloading ${url}"
     # Explicit exit: set -e is off when the caller tests this function.
-    curl -fsSL "$@" -o "${tmp}" "${url}" || exit
+    curl -fsSL --retry 3 "$@" -o "${tmp}" "${url}" || exit
     [ "$(sha256 "${tmp}")" = "${want}" ] || { echo "${label} checksum mismatch" >&2; exit 1; }
+    mkdir -p "${file%/*}"
     install -m "${mode}" "${tmp}" "${file}"
 }
