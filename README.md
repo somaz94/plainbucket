@@ -19,7 +19,7 @@ plainbucket is a single binary with no runtime dependencies beyond the Go standa
 - **AWS Signature Version 4**: `Authorization` header, presigned URLs and presigned POST forms for uploads straight from a browser, every payload mode the AWS SDKs send, including aws-chunked streaming with trailing checksums.
 - **Checksums**: CRC32, CRC32C, CRC64NVME, SHA-1 and SHA-256 are verified on upload and returned on request. An upload that declares none gets a CRC64NVME, as on S3.
 - **Plain files**: objects are files, metadata lives in a separate system directory, and files changed outside the server are detected and re-hashed. See [docs/layout.md](docs/layout.md).
-- **Tested with real clients**: the official AWS SDK for Go v2, the aws cli, rclone, the `gitlab-runner` cache helper and a subset of the ceph/s3-tests conformance suite run against the server in CI. See [docs/gitlab-runner.md](docs/gitlab-runner.md) for using it as a runner cache.
+- **Tested with real clients**: the official AWS SDK for Go v2, the aws cli, rclone, the `gitlab-runner` cache helper, Terraform's s3 backend and a subset of the ceph/s3-tests conformance suite run against the server in CI. See [docs/gitlab-runner.md](docs/gitlab-runner.md) for using it as a runner cache.
 - **Operations**: Prometheus metrics per S3 operation, a free-space floor that refuses writes before the disk fills, a read-only mode for maintenance, periodic integrity checks that re-read the data against its recorded checksums, an access log, configuration and certificate reloads without a restart, `/healthz` and `/readyz` endpoints with a `healthcheck` command for the shell-less image, an offline `fsck`, an `inventory` of every object with its ETag and checksums, and protection against uploads that stall.
 
 <br/>
@@ -112,6 +112,7 @@ make test-compat   # AWS SDK for Go v2 suite (separate module under compat/)
 make test-awscli   # aws cli end-to-end script
 make test-rclone   # rclone end-to-end script
 make test-runner   # gitlab-runner cache end-to-end script (downloads a pinned gitlab-runner)
+make test-terraform # terraform s3 backend end-to-end script (downloads a pinned terraform)
 make test-console  # web console end-to-end script (needs node)
 make test-s3tests  # ceph/s3-tests subset (needs python3; pinned and cached in bin/)
 make test-helm     # Helm chart lint, renders and schema checks

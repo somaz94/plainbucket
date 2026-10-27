@@ -105,6 +105,10 @@ test-rclone: build ## Run the rclone end-to-end script against bin/plainbucket
 test-runner: build ## Run the GitLab Runner cache end-to-end script (downloads a pinned gitlab-runner)
 	@bash hack/test-gitlab-runner.sh
 
+.PHONY: test-terraform
+test-terraform: build ## Run the Terraform s3 backend end-to-end script (downloads a pinned terraform)
+	@bash hack/test-terraform.sh
+
 .PHONY: test-console
 test-console: build ## Run the web console end-to-end script (needs node)
 	@bash hack/test-console.sh
@@ -122,7 +126,7 @@ test-helm: ## Lint and template-test the Helm chart
 	@bash hack/test-helm.sh
 
 .PHONY: test-all
-test-all: test cover-check test-compat test-awscli test-rclone test-runner test-console test-s3tests test-helm ## Run every test suite
+test-all: test cover-check test-compat test-awscli test-rclone test-runner test-terraform test-console test-s3tests test-helm ## Run every test suite
 
 .PHONY: cover
 cover: test ## Generate HTML coverage report

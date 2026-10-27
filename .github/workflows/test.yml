@@ -89,6 +89,16 @@ jobs:
       - name: GitLab Runner cache end-to-end
         run: make test-runner
 
+      # The script pins the terraform version and checksum; the cache only saves the download.
+      - name: Cache terraform
+        uses: actions/cache@v6
+        with:
+          path: bin/terraform_*.zip
+          key: terraform-${{ runner.os }}-${{ hashFiles('hack/test-terraform.sh') }}
+
+      - name: Terraform s3 backend end-to-end
+        run: make test-terraform
+
       # node is preinstalled on GitHub-hosted Ubuntu runners.
       - name: Web console end-to-end
         run: make test-console

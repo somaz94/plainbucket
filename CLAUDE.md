@@ -23,7 +23,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - `internal/server/` - listener lifecycle, the hourly janitor, and configuration reloads on `SIGHUP` or a changed config, credentials, certificate or webhook secret file.
 - `compat/` - separate Go module running the AWS SDK for Go v2 against the handler.
 - `helm/plainbucket/` - Helm chart; `hack/test-helm.sh` lints it, renders it and checks the fail guards and schema. Published by `.github/workflows/helm-release.yml` on tags.
-- `hack/test-awscli.sh`, `hack/test-rclone.sh`, `hack/test-gitlab-runner.sh`, `hack/test-console.sh` (with `hack/test-console.mjs`) - client end-to-end scripts against `bin/plainbucket`; `hack/e2e-lib.sh` starts the server for them. The runner script downloads the official binary at the version and SHA-256 pinned in it and caches it in `bin/`; `compat/cmd/presign` makes its presigned URLs.
+- `hack/test-awscli.sh`, `hack/test-rclone.sh`, `hack/test-gitlab-runner.sh`, `hack/test-terraform.sh`, `hack/test-console.sh` (with `hack/test-console.mjs`) - client end-to-end scripts against `bin/plainbucket`; `hack/e2e-lib.sh` starts the server for them. The runner and terraform scripts download the official release at the version and SHA-256 pinned in them and cache it in `bin/`; `compat/cmd/presign` makes its presigned URLs.
 - `hack/test-s3tests.sh` - ceph/s3-tests subset at a pinned commit with frozen `hack/s3tests-requirements.txt`, kept in `bin/`; the run must keep every test in `hack/s3tests-pass.txt` passing.
 
 <br/>
@@ -64,6 +64,7 @@ make test-compat   # AWS SDK for Go v2 (compat/ module)
 make test-awscli   # aws cli end-to-end
 make test-rclone   # rclone end-to-end
 make test-runner   # gitlab-runner cache helper end-to-end
+make test-terraform # terraform s3 backend with its lock file, end-to-end
 make test-console  # console files and its JS signer against the server (node)
 make test-s3tests  # ceph/s3-tests subset against hack/s3tests-pass.txt
 make s3tests-update # rewrite the pass list from a run
@@ -72,7 +73,7 @@ make test-all      # all of the above
 make lint
 ```
 
-CI (`.github/workflows/test.yml`) runs `test`, `cover-check`, `test-compat`, `test-awscli`, `test-rclone`, `test-runner`, `test-console` and `test-helm`, and `test-s3tests` as a separate job.
+CI (`.github/workflows/test.yml`) runs `test`, `cover-check`, `test-compat`, `test-awscli`, `test-rclone`, `test-runner`, `test-terraform`, `test-console` and `test-helm`, and `test-s3tests` as a separate job.
 
 <br/>
 

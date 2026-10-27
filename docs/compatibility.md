@@ -6,6 +6,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 - the aws cli (`hack/test-awscli.sh`);
 - rclone, including `check` by hash, `sync` with deletion, server-side copy and move, and directory markers (`hack/test-rclone.sh`);
 - the official `gitlab-runner` binary's cache helper, with presigned URLs and with Go Cloud URLs (`hack/test-gitlab-runner.sh`, see [gitlab-runner.md](gitlab-runner.md)). Older runners send `HEAD` on the URL presigned for `GET`; that is accepted for them, though S3 itself would refuse it, and `compat/` replays that flow.
+- the official `terraform` binary's s3 backend, keeping state and locking it with a lock file (`use_lockfile`), including a lock held elsewhere, `force-unlock` and workspaces (`hack/test-terraform.sh`);
 - a subset of [ceph/s3-tests](#ceph-s3-tests), the conformance suite other S3 servers run, for error codes and edge cases the clients above never exercise.
 
 <br/>
