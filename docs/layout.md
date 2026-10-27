@@ -35,7 +35,7 @@ When a file was changed, or added, without the server:
 
 A zero-byte object whose key ends in `/` (`photos/2026/`) is a directory marker, as the S3 console creates for folders. plainbucket creates the directory and records the marker in the system directory, so it is listed and kept even after objects below it come and go. A non-empty body for such a key is rejected.
 
-A directory that exists without a marker, because it was made outside the server, is listed as a marker only while it is empty.
+A directory without a marker, whether made outside the server or created for the objects below it, is listed and read as a marker only while it is empty. Once it holds anything, `GET` and `HEAD` of `<dir>/` answer `NoSuchKey`, as on S3.
 
 <br/>
 

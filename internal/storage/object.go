@@ -115,6 +115,17 @@ func (s *Store) putMarker(bucket, key string, cond Conditions, tags []Tag) (Obje
 	return info, nil
 }
 
+// emptyDir reports whether the directory at p, relative to the root, holds nothing.
+func (s *Store) emptyDir(p string) bool {
+	d, err := s.r.Open(p)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = d.Close() }()
+	_, err = d.Readdirnames(1)
+	return errors.Is(err, io.EOF)
+}
+
 func markerInfo(key string, mod time.Time) ObjectInfo {
 	return ObjectInfo{Key: key, ModTime: mod, ETag: emptyETag, ContentType: DirContentType, IsDir: true}
 }
@@ -147,12 +158,18 @@ func (s *Store) open(bucket, key string, persist bool) (*os.File, ObjectInfo, er
 	}
 	p := s.rel(s.dataPath(bucket, key))
 	if isDirKey(key) {
-		fi, err := s.r.Stat(p)
+		// Lstat: the listing skips a symlink to a directory, so a read must too.
+		fi, err := s.r.Lstat(p)
 		if err != nil || !fi.IsDir() {
 			return nil, ObjectInfo{}, ErrNoSuchKey
 		}
+		m, ok := s.readSidecar(bucket, key)
+		// As listed: a directory made without a marker is one only while it is empty.
+		if !(ok && m.Dir) && !s.emptyDir(p) {
+			return nil, ObjectInfo{}, ErrNoSuchKey
+		}
 		info := markerInfo(key, fi.ModTime())
-		if m, ok := s.readSidecar(bucket, key); ok {
+		if ok {
 			info.Tags = m.Tags
 		}
 		return nil, info, nil

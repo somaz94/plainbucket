@@ -243,6 +243,53 @@ func TestDirMarkers(t *testing.T) {
 	}
 }
 
+// A "<dir>/" key exists exactly when the listing shows it: an explicit marker, or a
+// directory made outside the server while it is empty.
+func TestDirKeyMatchesListing(t *testing.T) {
+	s := newStore(t)
+	put(t, s, "implicit/obj", "x")
+	if err := os.Mkdir(filepath.Join(s.Root(), "bkt", "outside"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutObject("bkt", "explicit/", strings.NewReader(""), 0, PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	put(t, s, "explicit/obj", "x")
+	check := func(want map[string]bool) {
+		t.Helper()
+		res, err := s.List("bkt", ListParams{MaxKeys: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		listed := map[string]bool{}
+		for _, o := range res.Objects {
+			listed[o.Key] = true
+		}
+		for key, ok := range want {
+			_, err := s.HeadObject("bkt", key)
+			if (err == nil) != ok || listed[key] != ok {
+				t.Errorf("%s: head %v, listed %v, want %v", key, err, listed[key], ok)
+			}
+		}
+	}
+	if err := os.Mkdir(filepath.Join(s.Root(), "bkt", "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("empty", filepath.Join(s.Root(), "bkt", "link")); err != nil {
+		t.Fatal(err)
+	}
+	check(map[string]bool{"implicit/": false, "outside/": true, "explicit/": true, "link/": false})
+	// A marker may be created over a directory that is not one yet.
+	if _, err := s.PutObject("bkt", "implicit/", strings.NewReader(""), 0, PutOptions{Cond: Conditions{IfNoneMatch: "*"}}); err != nil {
+		t.Errorf("marker over an implicit directory: %v", err)
+	}
+	check(map[string]bool{"implicit/": true})
+	if err := os.WriteFile(filepath.Join(s.Root(), "bkt", "outside", "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check(map[string]bool{"outside/": false})
+}
+
 func TestDeletePrunesAndIgnoresMissing(t *testing.T) {
 	s := newStore(t)
 	put(t, s, "a/b/c.txt", "x")
