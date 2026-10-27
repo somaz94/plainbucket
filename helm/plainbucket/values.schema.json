@@ -404,8 +404,19 @@
                   "required": [
                     "endpoint",
                     "bucket",
-                    "access-key",
                     "secret-key-file"
+                  ],
+                  "oneOf": [
+                    {
+                      "required": [
+                        "access-key"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "access-key-file"
+                      ]
+                    }
                   ],
                   "properties": {
                     "id": {
@@ -433,7 +444,15 @@
                       "type": "string",
                       "minLength": 1
                     },
+                    "access-key-file": {
+                      "type": "string",
+                      "pattern": "^/"
+                    },
                     "secret-key-file": {
+                      "type": "string",
+                      "pattern": "^/"
+                    },
+                    "session-token-file": {
                       "type": "string",
                       "pattern": "^/"
                     },

@@ -61,10 +61,18 @@ func TestValidationMessages(t *testing.T) {
 		{"replicate bad bucket", rep(`endpoint: "https://h", bucket: B, access-key: a, secret-key-file: ` + secret),
 			`buckets.uploads.replicate[0].bucket: "B" is not a valid bucket name`},
 		{"replicate no key", rep(`endpoint: "https://h", bucket: b-1, secret-key-file: ` + secret),
-			"buckets.uploads.replicate[0]: access-key and secret-key-file are required"},
+			"buckets.uploads.replicate[0]: access-key (or access-key-file) and secret-key-file are required"},
 		{"replicate missing secret", rep(target + missing),
 			"buckets.uploads.replicate[0].secret-key-file: open " + missing + ": no such file or directory"},
 		{"replicate empty secret", rep(target + empty), "buckets.uploads.replicate[0].secret-key-file: " + empty + " is empty"},
+		{"replicate missing token", rep(target + secret + ", session-token-file: " + missing),
+			"buckets.uploads.replicate[0].session-token-file: open " + missing + ": no such file or directory"},
+		{"replicate empty token", rep(target + secret + ", session-token-file: " + empty),
+			"buckets.uploads.replicate[0].session-token-file: " + empty + " is empty"},
+		{"replicate both access keys", rep(target + secret + ", access-key-file: " + secret),
+			"buckets.uploads.replicate[0]: access-key and access-key-file are exclusive"},
+		{"replicate missing access key file", rep(`endpoint: "https://h", bucket: b-1, secret-key-file: ` + secret + ", access-key-file: " + missing),
+			"buckets.uploads.replicate[0].access-key-file: open " + missing + ": no such file or directory"},
 		{"replicate overlapping", "buckets: {uploads: {replicate: [{prefix: a/, " + target + secret + "}]}, videos: {replicate: [{" + target + secret + "}]}}\n",
 			"buckets.uploads.replicate[0] and buckets.videos.replicate[0] write overlapping keys of https://h/b-1"},
 		{"headers empty set", "buckets: {www: {headers: [{prefix: a/}]}}\n", "buckets.www.headers[0].set must name at least one header"},
@@ -105,5 +113,23 @@ func TestValidationMessages(t *testing.T) {
 				t.Errorf("error = %v\nwant    %s", err, want)
 			}
 		})
+	}
+}
+
+func TestReplicateSessionToken(t *testing.T) {
+	setRequired(t)
+	dir := t.TempDir()
+	path, secret, token := filepath.Join(dir, "c.yaml"), filepath.Join(dir, "secret"), filepath.Join(dir, "token")
+	_ = os.WriteFile(secret, []byte("k3y\n"), 0o600)
+	_ = os.WriteFile(token, []byte(" t0ken\n"), 0o600)
+	key := filepath.Join(dir, "key")
+	_ = os.WriteFile(key, []byte("ASIAKEY\n"), 0o600)
+	_ = os.WriteFile(path, []byte("buckets: {uploads: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key-file: "+key+", secret-key-file: "+secret+", session-token-file: "+token+"}]}}\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := cfg.Buckets["uploads"].Replicate[0]; r.AccessKey != "ASIAKEY" || r.SessionToken != "t0ken" {
+		t.Errorf("access key %q, session token %q", r.AccessKey, r.SessionToken)
 	}
 }

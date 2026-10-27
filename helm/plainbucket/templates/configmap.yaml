@@ -7,9 +7,11 @@
 {{- end }}
 {{- end }}
 {{- range $i, $r := $b.replicate }}
-{{- $f := toString (index $r "secret-key-file") }}
+{{- range $field := list "access-key-file" "secret-key-file" "session-token-file" }}
+{{- $f := toString (index $r $field) }}
 {{- if and (hasPrefix "/etc/plainbucket/replicate/" $f) (not $.Values.config.replicateSecret) }}
-{{- fail (printf "config.buckets.%s.replicate[%d].secret-key-file %s needs config.replicateSecret: the server would not start without the file" $name $i $f) }}
+{{- fail (printf "config.buckets.%s.replicate[%d].%s %s needs config.replicateSecret: the server would not start without the file" $name $i $field $f) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -110,9 +110,16 @@ type Replicate struct {
 	Prefix        string `yaml:"prefix"`
 	VirtualHosted bool   `yaml:"virtual-hosted"`
 	AccessKey     string `yaml:"access-key"`
+	// AccessKeyFile holds the access key instead, for temporary credentials refreshed in
+	// place; validation reads it into AccessKey.
+	AccessKeyFile string `yaml:"access-key-file"`
 	// SecretKeyFile holds the secret key (e.g. a mounted Secret); validation reads it into SecretKey.
 	SecretKeyFile string `yaml:"secret-key-file"`
 	SecretKey     string `yaml:"-"`
+	// SessionTokenFile, optional, holds the session token of temporary credentials;
+	// validation reads it into SessionToken.
+	SessionTokenFile string `yaml:"session-token-file"`
+	SessionToken     string `yaml:"-"`
 	// Delete removes target keys whose source key is gone.
 	Delete bool `yaml:"delete"`
 }

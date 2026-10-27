@@ -45,3 +45,14 @@ func TestSignAgreesWithTestSigner(t *testing.T) {
 		}
 	}
 }
+
+func TestSignSessionToken(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "http://pb.test/bkt/k", nil)
+	Signer{AccessKey: "AK", SecretKey: "SK", Region: "us-east-1", SessionToken: "tok"}.Sign(r, UnsignedPayload, docNow)
+	if r.Header.Get("X-Amz-Security-Token") != "tok" || !strings.Contains(r.Header.Get("Authorization"), "x-amz-security-token") {
+		t.Errorf("token not sent signed: %v", r.Header)
+	}
+	if _, e := Verify(r, func(k string) (string, bool) { return "SK", k == "AK" }, docNow); e != nil {
+		t.Errorf("Verify: %v", e)
+	}
+}

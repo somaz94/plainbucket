@@ -100,7 +100,7 @@ func (r *reloader) snapshot() map[string]fileStamp {
 			files = append(files, n.SecretFile)
 		}
 		for _, rp := range b.Replicate {
-			files = append(files, rp.SecretKeyFile)
+			files = append(files, rp.AccessKeyFile, rp.SecretKeyFile, rp.SessionTokenFile)
 		}
 	}
 	for _, f := range files {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/somaz94/plainbucket/internal/s3api"
 	"github.com/somaz94/plainbucket/internal/s3client"
+	"github.com/somaz94/plainbucket/internal/session"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
@@ -584,6 +585,28 @@ func TestEncodedLiteralSettles(t *testing.T) {
 	if n := writes.Load(); n != settled {
 		t.Errorf("%d writes for an unchanged object whose metadata is an encoded word", n-settled)
 	}
+}
+
+// Temporary credentials of the target work with their session token, and a new token
+// alone keeps the worker and compares at once.
+func TestTemporaryTargetCredentials(t *testing.T) {
+	e := newEnv(t)
+	e.put("k", "v", storage.PutOptions{})
+	creds := session.Issue("SK", session.Claims{Parent: "AK", Expires: time.Now().Add(time.Hour)})
+	temp := func(token string) Rule {
+		return e.rule(func(r *Rule) { r.AccessKey, r.SecretKey, r.SessionToken = creds.AccessKey, creds.SecretKey, token })
+	}
+	e.r.SetRules([]Rule{temp("")})
+	e.waitFor("the refusal", func() bool { return strings.Contains(e.logs.String(), "InvalidAccessKeyId") })
+	if _, _, ok := e.target("k"); ok {
+		t.Fatal("copied without the session token")
+	}
+	w := e.worker(temp(""))
+	e.r.SetRules([]Rule{temp(creds.Token)})
+	if e.worker(temp(creds.Token)) != w {
+		t.Error("a new session token replaced the worker")
+	}
+	e.waitFor("the copy", func() bool { _, _, ok := e.target("k"); return ok })
 }
 
 // A client's own plainbucket-etag metadata does not replace the recorded source ETag.

@@ -18,7 +18,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - `internal/storage/` - the filesystem store: key mapping, sidecar metadata, atomic commit, S3-order listing walker, multipart, janitor. Knows nothing about HTTP.
 - `internal/s3api/` - HTTP router and handlers, access keys with bucket scopes and read-only, public-bucket anonymous reads, virtual-hosted routing, XML documents, payload verification and upload progress deadline, storage error to S3 error mapping, Prometheus metrics.
 - `internal/s3err/` - S3 error type and XML rendering.
-- `internal/s3client/` - stdlib S3 client for replication (single and multipart uploads, HEAD, DELETE, tagging, ListObjectsV2), signed by `sigv4.Signer`.
+- `internal/s3client/` - stdlib S3 client for replication (single and multipart uploads, HEAD, DELETE, tagging, ListObjectsV2), signed by `sigv4.Signer`, with a session token for temporary credentials.
 - `internal/replicate/` - per-bucket replication rules: one goroutine per rule follows the changes `s3api` reports and periodically compares both listings; `SetRules` keeps unchanged workers on reload.
 - `internal/notify/` - bucket event webhooks: S3 event JSON, HMAC signature, a bounded queue and retries per target, swapped whole by `SetTargets` on reload.
 - `internal/console/` - the embedded web console (`static/`: vanilla JS, its own SigV4 signer in `sigv4.js` and stored-ZIP writer in `zip.js`); `s3api` routes `/_console/` to it and serves the signed usage and trash APIs.

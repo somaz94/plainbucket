@@ -40,14 +40,15 @@ type Rule struct {
 	TargetBucket       string
 	AccessKey          string
 	SecretKey          string
+	SessionToken       string // of temporary credentials; empty for a long-term key
 	// Delete removes target keys whose source key is gone; otherwise they are kept.
 	Delete bool
 }
 
-// identity is the rule without its credentials: a reload that only rotates the key keeps
-// the worker, its queue and its connections.
+// identity is the rule without its credentials: a reload that only rotates them, such as
+// a refreshed session token, keeps the worker, its queue and its connections.
 func (r Rule) identity() Rule {
-	r.AccessKey, r.SecretKey = "", ""
+	r.AccessKey, r.SecretKey, r.SessionToken = "", "", ""
 	return r
 }
 
@@ -150,7 +151,11 @@ func (r *Replicator) SetRules(rules []Rule) {
 	}
 	for id, rule := range next {
 		if w, ok := r.workers[id]; ok {
-			w.signer.Store(signerOf(rule))
+			// New credentials compare at once: what failed with the old ones is not retried.
+			if s := signerOf(rule); *w.signer.Load() != *s {
+				w.signer.Store(s)
+				signal(w.kick)
+			}
 			continue
 		}
 		r.workers[id] = r.start(rule, last[rule.Bucket+"/"+rule.ID])
@@ -160,7 +165,7 @@ func (r *Replicator) SetRules(rules []Rule) {
 }
 
 func signerOf(rule Rule) *sigv4.Signer {
-	return &sigv4.Signer{AccessKey: rule.AccessKey, SecretKey: rule.SecretKey, Region: rule.Region}
+	return &sigv4.Signer{AccessKey: rule.AccessKey, SecretKey: rule.SecretKey, Region: rule.Region, SessionToken: rule.SessionToken}
 }
 
 func (r *Replicator) start(rule Rule, last int64) *worker {

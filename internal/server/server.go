@@ -286,7 +286,7 @@ func replicateRules(cfg *config.Config) []replicate.Rule {
 	for name, b := range cfg.Buckets {
 		for _, r := range b.Replicate {
 			out = append(out, replicate.Rule{ID: r.ID, Bucket: name, Prefix: r.Prefix, Endpoint: r.Endpoint, Region: r.Region,
-				VirtualHosted: r.VirtualHosted, TargetBucket: r.Bucket, AccessKey: r.AccessKey, SecretKey: r.SecretKey, Delete: r.Delete})
+				VirtualHosted: r.VirtualHosted, TargetBucket: r.Bucket, AccessKey: r.AccessKey, SecretKey: r.SecretKey, SessionToken: r.SessionToken, Delete: r.Delete})
 		}
 	}
 	return out

@@ -183,6 +183,9 @@ has "secret-key-file: /etc/plainbucket/replicate/key" "replication in the config
 has "secretName: pb-replica" "replication secret volume"
 has "mountPath: /etc/plainbucket/replicate" "replication secret mounted as a directory"
 grep -A1 -F "name: PLAINBUCKET_REPLICATE_INTERVAL" <<<"${OUT}" | grep -qF 'value: "30m"' || fail "replicateInterval env"
+printf 'config:\n  replicateSecret: pb-replica\n  buckets:\n    uploads:\n      replicate:\n        - {endpoint: "https://s3.example.com", bucket: backup, access-key-file: /etc/plainbucket/replicate/id, secret-key-file: /etc/plainbucket/replicate/key, session-token-file: /etc/plainbucket/replicate/token}\n' >"${TMP_VALUES}"
+render "${KEY[@]}" -f "${TMP_VALUES}"
+has "session-token-file: /etc/plainbucket/replicate/token" "temporary replication credentials in the config file"
 render "${KEY[@]}" --show-only templates/deployment.yaml
 lacks "/etc/plainbucket/notify" "no webhook secret by default"
 lacks "/etc/plainbucket/replicate" "no replication secret by default"
@@ -286,6 +289,13 @@ expect_fail "needs config.replicateSecret" "${KEY[@]}" --set "config.buckets.upl
     --set "config.buckets.uploads.replicate[0].secret-key-file=/etc/plainbucket/replicate/key"
 expect_fail "secret-key-file" "${KEY[@]}" --set "config.buckets.uploads.replicate[0].endpoint=https://s3.example.com" \
     --set "config.buckets.uploads.replicate[0].bucket=backup" --set "config.buckets.uploads.replicate[0].access-key=AKX"
+expect_fail "session-token-file /etc/plainbucket/replicate/token needs config.replicateSecret" "${KEY[@]}" \
+    --set "config.buckets.uploads.replicate[0].endpoint=https://s3.example.com" --set "config.buckets.uploads.replicate[0].bucket=backup" \
+    --set "config.buckets.uploads.replicate[0].access-key=AKX" --set "config.buckets.uploads.replicate[0].secret-key-file=/k" \
+    --set "config.buckets.uploads.replicate[0].session-token-file=/etc/plainbucket/replicate/token"
+expect_fail "oneOf" "${KEY[@]}" --set "config.buckets.uploads.replicate[0].endpoint=https://s3.example.com" \
+    --set "config.buckets.uploads.replicate[0].bucket=backup" --set "config.buckets.uploads.replicate[0].access-key=AKX" \
+    --set "config.buckets.uploads.replicate[0].access-key-file=/k" --set "config.buckets.uploads.replicate[0].secret-key-file=/k"
 expect_fail "endpoint" "${KEY[@]}" --set "config.buckets.uploads.replicate[0].endpoint=https://s3.example.com/base" \
     --set "config.buckets.uploads.replicate[0].bucket=backup" --set "config.buckets.uploads.replicate[0].access-key=AKX" \
     --set "config.buckets.uploads.replicate[0].secret-key-file=/k"

@@ -54,8 +54,17 @@ func validateReplicate(where string, rules []Replicate) error {
 		if !storage.ValidBucketName(r.Bucket) {
 			return fmt.Errorf("%s.bucket: %q is not a valid bucket name", at, r.Bucket)
 		}
+		if r.AccessKeyFile != "" {
+			if r.AccessKey != "" {
+				return fmt.Errorf("%s: access-key and access-key-file are exclusive", at)
+			}
+			var err error
+			if r.AccessKey, err = readKeyFile(at, "access-key-file", r.AccessKeyFile); err != nil {
+				return err
+			}
+		}
 		if r.AccessKey == "" || r.SecretKeyFile == "" {
-			return fmt.Errorf("%s: access-key and secret-key-file are required", at)
+			return fmt.Errorf("%s: access-key (or access-key-file) and secret-key-file are required", at)
 		}
 		raw, err := os.ReadFile(r.SecretKeyFile)
 		if err != nil {
@@ -64,6 +73,24 @@ func validateReplicate(where string, rules []Replicate) error {
 		if r.SecretKey = strings.TrimRight(string(raw), "\r\n"); r.SecretKey == "" {
 			return fmt.Errorf("%s.secret-key-file: %s is empty", at, r.SecretKeyFile)
 		}
+		if r.SessionTokenFile != "" {
+			if r.SessionToken, err = readKeyFile(at, "session-token-file", r.SessionTokenFile); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// readKeyFile reads a credential file; surrounding space, such as echo's newline, is not part of it.
+func readKeyFile(at, field, path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%s.%s: %w", at, field, err)
+	}
+	v := strings.TrimSpace(string(raw))
+	if v == "" {
+		return "", fmt.Errorf("%s.%s: %s is empty", at, field, path)
+	}
+	return v, nil
 }

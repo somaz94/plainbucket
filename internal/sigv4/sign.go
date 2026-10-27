@@ -11,13 +11,15 @@ import (
 type Signer struct {
 	AccessKey, SecretKey, Region string
 	Service                      string // empty: s3
+	SessionToken                 string // of temporary credentials
 }
 
 // signedAlways are signed when present besides host and every x-amz-* header.
 var signedAlways = []string{"content-md5", "content-type", "range"}
 
 // Sign sets X-Amz-Date, X-Amz-Content-Sha256 (payload, the hex SHA-256 of the body or
-// UnsignedPayload) and the Authorization header of r. It rewrites r.URL's path and query
+// UnsignedPayload), X-Amz-Security-Token when SessionToken is set, and the Authorization
+// header of r. It rewrites r.URL's path and query
 // in the encoding it signs, so what is sent is what was signed.
 func (s Signer) Sign(r *http.Request, payload string, now time.Time) {
 	service := s.Service
@@ -27,6 +29,9 @@ func (s Signer) Sign(r *http.Request, payload string, now time.Time) {
 	amzDate := now.UTC().Format(amzDateLayout)
 	r.Header.Set("X-Amz-Date", amzDate)
 	r.Header.Set("X-Amz-Content-Sha256", payload)
+	if s.SessionToken != "" {
+		r.Header.Set("X-Amz-Security-Token", s.SessionToken)
+	}
 	path := uriEncode(r.URL.Path, false)
 	r.URL.RawPath = path
 

@@ -75,8 +75,9 @@ config:
   # buckets.<name>.notify[].secret-file at /etc/plainbucket/notify/<key>. A notify url
   # lands in the ConfigMap, so use one that carries no token.
   notifySecret: ""
-  # Secret mounted at /etc/plainbucket/replicate for replication targets' secret keys:
-  # point buckets.<name>.replicate[].secret-key-file at /etc/plainbucket/replicate/<key>.
+  # Secret mounted at /etc/plainbucket/replicate for replication targets' credential files:
+  # point buckets.<name>.replicate[].secret-key-file (and, for temporary credentials,
+  # access-key-file and session-token-file) at /etc/plainbucket/replicate/<key>.
   replicateSecret: ""
   # Domains for virtual-hosted-style requests (<bucket>.<domain>); needs wildcard DNS.
   domains: []

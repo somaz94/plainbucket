@@ -249,12 +249,18 @@ buckets:
         virtual-hosted: true      # bucket.endpoint instead of endpoint/bucket
         access-key: backup-writer
         secret-key-file: /etc/plainbucket/replicate/backup
+        # temporary credentials instead: access-key-file plus session-token-file
+        # access-key-file: /etc/plainbucket/replicate/backup-id
+        # session-token-file: /etc/plainbucket/replicate/backup-token
         prefix: reports/          # only these keys; empty means all
         delete: false             # the default: the copy keeps what the source deletes
 ```
 
 - `endpoint` is the scheme and host only. The target bucket must exist; the server does not create it.
 - `secret-key-file` holds the secret key; a trailing newline is not part of it. The key is never written inline, and a reload re-reads the file.
+- `access-key-file` holds the access key instead of `access-key` (the two are exclusive), for temporary credentials whose key changes with every refresh.
+- `session-token-file`, optional, holds the session token of temporary credentials (AWS STS, or another plainbucket's `AssumeRole`), sent as `X-Amz-Security-Token`. Surrounding space in either file is not part of the value.
+- The credential files are watched like `secret-key-file`: whatever refreshes them rewrites them, and the rule takes the new set over without dropping its queue and compares the listings at once, so a copy refused during the change is not left for an hour. Swap the files together where possible, as a Kubernetes Secret update does; a set written one file at a time is read again once the last file lands.
 - `id` names the rule in logs and metrics, `replicate-<n>` by default. `region` defaults to `us-east-1`.
 - Two rules may not write overlapping keys of one target bucket (the same target with prefixes where one starts the other): each would undo the other.
 - Each rule follows the bucket's writes, deletes, tag changes, trash restores and expiry as they happen, from a queue in memory that holds a thousand keys, each once however often it changes. It also compares the two listings, by size and ETag, when it starts and every `replicate-interval`, and copies what differs, which catches up after a full queue, a failed request, a restart, and on objects that were there before the rule. Each rule works on one key at a time, so changes and comparisons never race.

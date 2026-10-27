@@ -22,6 +22,7 @@ import (
 	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/replicate"
 	"github.com/somaz94/plainbucket/internal/s3api"
+	"github.com/somaz94/plainbucket/internal/session"
 	"github.com/somaz94/plainbucket/internal/sigv4/sigv4test"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
@@ -335,4 +336,35 @@ func TestReplicationThroughTheServer(t *testing.T) {
 	// A rule added by a reload copies what is already there with its first comparison.
 	writeFile(t, file, base+"buckets: {src: {replicate: ["+rule("a", "copy")+", "+rule("b", "copy-2")+"]}}\n")
 	eventually(t, "the second copy", func() bool { return has("copy-2", "k") })
+}
+
+// A replication target's credential files are watched, so a refreshed token is taken over.
+func TestReloadReadsReplicationToken(t *testing.T) {
+	dir := t.TempDir()
+	dst, err := storage.New(filepath.Join(dir, "target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dst.Close() }()
+	_ = dst.CreateBucket("copy")
+	target := httptest.NewServer(s3api.New(s3api.Options{Store: dst, Region: "us-east-1", Credentials: []s3api.Credential{{AccessKey: "tk", SecretKey: "ts"}}}))
+	defer target.Close()
+	creds := session.Issue("ts", session.Claims{Parent: "tk", Expires: time.Now().Add(time.Hour)})
+	keyFile, secretFile, tokenFile, file := filepath.Join(dir, "key"), filepath.Join(dir, "secret"), filepath.Join(dir, "token"), filepath.Join(dir, "config.yaml")
+	writeFile(t, keyFile, creds.AccessKey)
+	writeFile(t, secretFile, creds.SecretKey)
+	writeFile(t, tokenFile, "not-the-token")
+	writeFile(t, file, "root: "+filepath.Join(dir, "data")+"\naccess-key: ak\nsecret-key: sk\nbuckets: {src: {replicate: [{endpoint: \""+target.URL+
+		"\", bucket: copy, access-key-file: "+keyFile+", secret-key-file: "+secretFile+", session-token-file: "+tokenFile+"}]}}\n")
+	logs := &syncBuffer{}
+	url, _ := startReloading(t, file, logs)
+	has := func(key string) bool { _, err := dst.HeadObject("copy", key); return err == nil }
+
+	eventually(t, "the server", func() bool { return doAs(t, http.MethodPut, url+"/src", "ak", "sk", "") == http.StatusOK })
+	doAs(t, http.MethodPut, url+"/src/before", "ak", "sk", "data")
+	eventually(t, "the refused copy", func() bool { return strings.Contains(logs.String(), "replication failed") })
+	writeFile(t, tokenFile, creds.Token)
+	eventually(t, "the reload", func() bool { return strings.Contains(logs.String(), "configuration reloaded") })
+	doAs(t, http.MethodPut, url+"/src/after", "ak", "sk", "data")
+	eventually(t, "the copy with the new token", func() bool { return has("after") })
 }
