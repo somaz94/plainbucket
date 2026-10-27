@@ -3,6 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -198,5 +202,81 @@ func TestFsckLockError(t *testing.T) {
 	reset(t, "fsck")
 	if err := Execute(); err == nil || !strings.Contains(err.Error(), "locking") {
 		t.Errorf("unlockable root: %v", err)
+	}
+}
+
+func TestInventoryCommand(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PLAINBUCKET_ACCESS_KEY", "")
+	t.Setenv("PLAINBUCKET_ROOT", root)
+	store, err := storage.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.CreateBucket("bkt")
+	for _, k := range []string{`=1+2,"q" x`, "dir/b"} {
+		if _, err := store.PutObject("bkt", k, strings.NewReader("abc"), 3, storage.PutOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = store.Close()
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	t.Cleanup(func() { rootCmd.SetOut(nil); inventoryFormat, inventoryBucket, inventoryPrefix = "csv", "", "" })
+
+	reset(t, "inventory")
+	if err := Execute(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(&out).ReadAll()
+	if err != nil || len(rows) != 3 || strings.Join(rows[0], ",") != "bucket,key,size,last_modified,etag,checksum,content_type,metadata" ||
+		rows[1][1] != "%3D1%2B2%2C%22q%22%20x" || rows[1][2] != "3" || rows[1][4] != "900150983cd24fb0d6963f7d28e17f72" ||
+		rows[1][7] != "recorded" || rows[2][1] != "dir/b" {
+		t.Errorf("csv: %v %q", err, rows)
+	}
+
+	out.Reset()
+	reset(t, "inventory", "--format", "jsonl", "--bucket", "bkt")
+	var keys []string
+	if err := Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for d := json.NewDecoder(&out); ; {
+		var e storage.InventoryEntry
+		if err := d.Decode(&e); err != nil {
+			if !errors.Is(err, io.EOF) {
+				t.Error(err)
+			}
+			break
+		}
+		keys = append(keys, e.Key)
+	}
+	if strings.Join(keys, " ") != "%3D1%2B2%2C%22q%22%20x dir/b" {
+		t.Errorf("jsonl keys: %q", keys)
+	}
+
+	out.Reset()
+	reset(t, "inventory", "--format", "jsonl", "--prefix", "dir/")
+	if err := Execute(); err != nil || strings.Count(out.String(), "\n") != 1 || !strings.Contains(out.String(), `"key":"dir/b"`) {
+		t.Errorf("prefix: %v %s", err, out.String())
+	}
+
+	reset(t, "inventory", "--format", "xml")
+	if err := Execute(); err == nil || !strings.Contains(err.Error(), "--format") {
+		t.Errorf("bad format: %v", err)
+	}
+	inventoryFormat, inventoryPrefix = "csv", ""
+	reset(t, "inventory", "--bucket", "nope")
+	if err := Execute(); !errors.Is(err, storage.ErrNoSuchBucket) {
+		t.Errorf("missing bucket: %v", err)
+	}
+	inventoryBucket = ""
+	t.Setenv("PLAINBUCKET_ROOT", filepath.Join(root, "absent"))
+	reset(t, "inventory")
+	if err := Execute(); err == nil {
+		t.Error("inventory of a missing root")
+	}
+	if _, err := os.Stat(filepath.Join(root, "absent")); err == nil {
+		t.Error("inventory created the root")
 	}
 }

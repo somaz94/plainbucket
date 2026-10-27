@@ -171,9 +171,7 @@ func New(root string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{root: abs, now: time.Now, MinPartSize: 5 << 20, buckets: map[string]*sync.RWMutex{},
-		bucketUsage: map[string]Usage{}, kick: make(chan struct{}, 1), statfs: diskSpace}
-	s.probeRead = s.readRoot
+	s := storeAt(abs)
 	for _, d := range []string{"meta", "tmp", "uploads", "buckets", "trash"} {
 		if err := os.MkdirAll(s.sys(d), sysDirPerm); err != nil {
 			return nil, err
@@ -184,6 +182,27 @@ func New(root string) (*Store, error) {
 	}
 	s.loadScrub()
 	return s, nil
+}
+
+// OpenReadOnly opens an existing root for reading without creating anything in it, so it
+// works on a copy or a read-only volume. Only reads may be called on the result.
+func OpenReadOnly(root string) (*Store, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	s := storeAt(abs)
+	if s.r, err = os.OpenRoot(abs); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func storeAt(abs string) *Store {
+	s := &Store{root: abs, now: time.Now, MinPartSize: 5 << 20, buckets: map[string]*sync.RWMutex{},
+		bucketUsage: map[string]Usage{}, kick: make(chan struct{}, 1), statfs: diskSpace}
+	s.probeRead = s.readRoot
+	return s
 }
 
 // Close releases the root directory handle.

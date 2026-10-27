@@ -31,7 +31,7 @@ type ListResult struct {
 type listEntry struct {
 	key    string
 	fi     os.FileInfo
-	marker bool // an empty directory, listed as the key "<dir>/"
+	marker bool // a directory listed as "<dir>/": empty, a marker object, or a delimiter rollup
 }
 
 // List returns keys in S3 order: ascending by the UTF-8 bytes of the whole key.
@@ -69,23 +69,31 @@ func (s *Store) List(bucket string, p ListParams) (ListResult, error) {
 		return true
 	}
 
+	if err := s.walkKeys(bucket, p, yield); err != nil {
+		return ListResult{}, err
+	}
+	return res, nil
+}
+
+// walkKeys passes the entries of bucket under p.Prefix after p.After to yield in S3
+// order, until yield returns false. With p.Delimiter a rolled-up directory comes once, as
+// a marker entry.
+func (s *Store) walkKeys(bucket string, p ListParams, yield func(listEntry) bool) error {
 	startKP := p.Prefix[:strings.LastIndex(p.Prefix, "/")+1]
 	if startKP != "" && checkKey(startKP) != nil {
-		return res, nil // no stored key has an empty, "." or ".." segment
+		return nil // no stored key has an empty, "." or ".." segment
 	}
 	w := walker{s: s, bucket: bucket, p: p, yield: yield}
 	start, err := w.open(dirRef{path: s.rel(s.bucketPath(bucket))}, filepath.FromSlash(strings.TrimSuffix(startKP, "/")), 0)
 	if err != nil {
 		if gone(err) {
-			return res, nil
+			return nil
 		}
-		return ListResult{}, err
+		return err
 	}
 	defer start.close()
-	if _, err := w.walk(start, startKP); err != nil {
-		return ListResult{}, err
-	}
-	return res, nil
+	_, err = w.walk(start, startKP)
+	return err
 }
 
 // gone reports an error that means there is nothing to list, not a failure to list.

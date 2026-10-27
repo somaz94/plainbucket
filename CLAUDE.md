@@ -10,7 +10,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 
 ## Architecture
 
-- `cmd/`, `cmd/cli/` - Cobra entry point; the root command serves, plus `healthcheck` (Docker HEALTHCHECK, no access key needed) and `fsck` (offline check and repair; `--verify` re-reads the data, as the server's periodic scrub does).
+- `cmd/`, `cmd/cli/` - Cobra entry point; the root command serves, plus `healthcheck` (Docker HEALTHCHECK, no access key needed), `fsck` (offline check and repair; `--verify` re-reads the data, as the server's periodic scrub does) and `inventory` (CSV / JSON Lines of every object; read-only, so it runs beside the server without the root lock).
 - `internal/config/` - env (`PLAINBUCKET_*`) > YAML > defaults, `KnownFields`, malformed typed values are errors.
 - `internal/sigv4/` - SigV4 header and presigned verification (service `s3`, and `sts` for AssumeRole and GetCallerIdentity), aws-chunked decoder with chunk and trailer signatures. `sigv4test/` is an independent signer for tests.
 - `internal/session/` - stateless temporary credentials: the session token carries its claims signed with the issuing key's secret, from which the temporary key and secret derive.
