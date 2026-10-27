@@ -32,7 +32,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 | Listing | `ListObjectsV2` and `ListObjects` with `prefix`, `delimiter`, `max-keys`, `start-after`, `continuation-token` / `marker`, `fetch-owner`, `encoding-type=url`; `ListObjectVersions`, which lists every object as its only version, `null`, as S3 does for an unversioned bucket |
 | Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectAttributes`, `GetObjectTagging`, `PutObjectTagging`, `DeleteObjectTagging` |
 | Browser upload | `PostObject` (an HTML form signed with a Signature Version 4 POST policy, as `PresignPostObject` in the SDKs produces) |
-| STS | `AssumeRole` at `POST /` on the S3 endpoint (point the SDK's STS client there), with `DurationSeconds` and a session `Policy`; see [Temporary Credentials](configuration.md#temporary-credentials) |
+| STS | At `POST /` on the S3 endpoint (point the SDK's STS client there): `AssumeRole`, with `DurationSeconds` and a session `Policy`, and `GetCallerIdentity`, for long-term and temporary keys; see [Temporary Credentials](configuration.md#temporary-credentials) |
 | Multipart | `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy` (with `x-amz-copy-source-range`; a range outside the source is `400 InvalidArgument`, as on S3), `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` (with `prefix`, `delimiter` and `encoding-type=url`) |
 
 POST uploads:

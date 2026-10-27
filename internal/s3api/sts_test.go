@@ -18,7 +18,7 @@ import (
 	"github.com/somaz94/plainbucket/internal/sigv4/sigv4test"
 )
 
-// assume sends a signed AssumeRole request with the given form values.
+// assume sends a signed STS request with the given form values.
 func (x *harness) assume(ak, sk string, form url.Values, hdr map[string]string) *httptest.ResponseRecorder {
 	x.t.Helper()
 	return x.assumeBody(ak, sk, form.Encode(), hdr)
@@ -150,13 +150,57 @@ func TestAssumeRoleAndTemporaryKeys(t *testing.T) {
 	x.as(c.AccessKeyID, c.SecretAccessKey, func() { x.expectErr(http.MethodGet, "/aaa/k", nil, token, "InvalidToken") })
 }
 
+func TestGetCallerIdentity(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.AccessLog = true })
+	identity := func(rec *httptest.ResponseRecorder) callerIdentityResult {
+		t.Helper()
+		var res callerIdentityResponse
+		if rec.Code != http.StatusOK || xml.Unmarshal(rec.Body.Bytes(), &res) != nil {
+			t.Fatalf("get caller identity: %d %s", rec.Code, rec.Body.String())
+		}
+		return res.Result
+	}
+	form := url.Values{"Action": {"GetCallerIdentity"}, "Version": {"2011-06-15"}}
+	if got := identity(x.assume("AK", "SK", form, nil)); got != (callerIdentityResult{Arn: "arn:aws:iam::000000000000:user/AK", UserID: "AK", Account: "000000000000"}) {
+		t.Errorf("long-term key: %+v", got)
+	}
+	c := issued(t, x.assume("AK", "SK", roleForm(), nil))
+	got := identity(x.assume(c.AccessKeyID, c.SecretAccessKey, form, map[string]string{"X-Amz-Security-Token": c.SessionToken}))
+	if got != (callerIdentityResult{Arn: "arn:aws:sts::000000000000:assumed-role/plainbucket/job-1", UserID: c.AccessKeyID + ":job-1", Account: "000000000000"}) {
+		t.Errorf("temporary key: %+v", got)
+	}
+	if !strings.Contains(x.logs.String(), "operation=GetCallerIdentity") {
+		t.Errorf("access log lacks the operation:\n%s", x.logs.String())
+	}
+	// Each key signs only with its own token, or none; a refused request keeps its operation.
+	tok := map[string]string{"X-Amz-Security-Token": c.SessionToken}
+	x.logs.Reset()
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"altered token":            x.assume(c.AccessKeyID, c.SecretAccessKey, form, map[string]string{"X-Amz-Security-Token": c.SessionToken + "x"}),
+		"long-term key with token": x.assume("AK", "SK", form, tok),
+		"temporary key alone":      x.assume(c.AccessKeyID, c.SecretAccessKey, form, nil),
+	} {
+		want := map[bool]string{true: "InvalidClientTokenId", false: "InvalidAccessKeyId"}[name == "altered token"]
+		if stsCode(rec) != want {
+			t.Errorf("%s: %d %s, want %s", name, rec.Code, rec.Body.String(), want)
+		}
+	}
+	if n := strings.Count(x.logs.String(), "operation=GetCallerIdentity"); n != 3 {
+		t.Errorf("%d refused requests logged as GetCallerIdentity:\n%s", n, x.logs.String())
+	}
+	x.h.now = func() time.Time { return testNow.Add(2 * time.Hour) }
+	if rec := x.assume(c.AccessKeyID, c.SecretAccessKey, form, tok); stsCode(rec) != "ExpiredToken" {
+		t.Errorf("expired session: %s", rec.Body.String())
+	}
+}
+
 func TestAssumeRoleRefuses(t *testing.T) {
 	x := newHarness(t, nil)
 	for name, c := range map[string]struct {
 		form url.Values
 		code string
 	}{
-		"other action":     {url.Values{"Action": {"GetCallerIdentity"}}, "InvalidAction"},
+		"other action":     {url.Values{"Action": {"GetSessionToken"}}, "InvalidAction"},
 		"no session name":  {roleForm("RoleSessionName", ""), "ValidationError"},
 		"short duration":   {roleForm("DurationSeconds", "60"), "ValidationError"},
 		"long duration":    {roleForm("DurationSeconds", "86400"), "ValidationError"},

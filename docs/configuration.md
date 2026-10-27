@@ -104,6 +104,7 @@ aws sts assume-role --endpoint-url https://s3.example.com \
 - Nothing is stored: the session token carries what it grants, signed with the issuing key's secret. A session ends when it expires, or early when the issuing key is removed or its secret changes; when the key loses a bucket or becomes read-only, so do its sessions. A temporary key cannot issue another, its requests count against the issuing key's [rate limit](#rate-limits), and its access key starts with `ASIA`, as AWS's do.
 - Because nothing is stored, a single session cannot be revoked: changing the issuing key's secret ends all of its sessions, and changing the secret back revives those not yet expired.
 - The access log records a temporary key's requests with `issuer`, the issuing key, and `session`, the `RoleSessionName`.
+- `GetCallerIdentity` (`aws sts get-caller-identity`) names the signing key: `arn:aws:iam::000000000000:user/<access key>` for a long-term key, and for a temporary key the `assumed-role` ARN that `AssumeRole` returned.
 - STS requests go to the path-style endpoint: a host under one of the [virtual-hosted](#virtual-hosted-addressing) domains names a bucket, not the STS endpoint.
 
 <br/>

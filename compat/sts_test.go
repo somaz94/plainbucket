@@ -40,6 +40,9 @@ func TestAssumeRole(t *testing.T) {
 			t.Fatal(err)
 		}
 		c := out.Credentials
+		if *out.AssumedRoleUser.Arn != "arn:aws:sts::000000000000:assumed-role/plainbucket/compat" {
+			t.Errorf("assumed role %s", *out.AssumedRoleUser.Arn)
+		}
 		if !strings.HasPrefix(*c.AccessKeyId, "ASIA") || c.Expiration.Sub(time.Now()) > 15*time.Minute || c.Expiration.Sub(time.Now()) < 14*time.Minute {
 			t.Errorf("credentials: %s until %v", *c.AccessKeyId, c.Expiration)
 		}
@@ -92,6 +95,17 @@ func TestAssumeRole(t *testing.T) {
 		}, func(o *sts.Options) { o.BaseEndpoint = aws.String(e.url) })
 		if _, err := chained.AssumeRole(ctx, &sts.AssumeRoleInput{RoleArn: aws.String("arn:aws:iam::000000000000:role/ci"), RoleSessionName: aws.String("again")}); apiCode(err) != "AccessDenied" {
 			t.Errorf("chained AssumeRole: %v", err)
+		}
+
+		// Both keys can ask who they are.
+		for client, want := range map[*sts.Client]string{
+			stsClient: "arn:aws:iam::000000000000:user/" + accessKey,
+			chained:   "arn:aws:sts::000000000000:assumed-role/plainbucket/compat",
+		} {
+			id, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+			if err != nil || *id.Arn != want || *id.Account != "000000000000" {
+				t.Errorf("GetCallerIdentity: %v, want %s", err, want)
+			}
 		}
 	})
 }

@@ -23,7 +23,7 @@ type Credential struct {
 	SecretKey string
 	// Buckets limits the key to these buckets; empty allows every bucket.
 	Buckets []string
-	// ReadOnly allows only GET and HEAD, and AssumeRole for read-only sessions.
+	// ReadOnly allows only GET and HEAD, plus STS GetCallerIdentity and AssumeRole of read-only sessions.
 	ReadOnly bool
 	// RateLimit caps the key's requests and body bytes; zero does not limit.
 	RateLimit ratelimit.Limit
@@ -130,13 +130,9 @@ func (h *Handler) keyLimiter(req *request) *ratelimit.Limiter {
 // issuer's access narrowed by the token.
 func (h *Handler) verifySigned(req *request) error {
 	a := h.access.Load()
-	creds, temp := sigv4.Credentials(a.secret), (*Credential)(nil)
-	if token := cmp.Or(req.r.Header.Get("X-Amz-Security-Token"), req.q.Get("X-Amz-Security-Token")); token != "" {
-		var err error
-		if temp, err = h.sessionCredential(a, token); err != nil {
-			return err
-		}
-		creds = func(k string) (string, bool) { return temp.SecretKey, k == temp.AccessKey }
+	creds, temp, err := h.signingKeys(a, cmp.Or(req.r.Header.Get("X-Amz-Security-Token"), req.q.Get("X-Amz-Security-Token")))
+	if err != nil {
+		return err
 	}
 	auth, e := sigv4.Verify(req.r, creds, h.now())
 	if e != nil {
@@ -144,6 +140,19 @@ func (h *Handler) verifySigned(req *request) error {
 	}
 	req.auth, req.cred = auth, cmp.Or(temp, a.creds[auth.AccessKey])
 	return nil
+}
+
+// signingKeys returns the keys that may sign a request carrying token: the long-term
+// keys when it is empty, else the temporary key it derives, which is also returned.
+func (h *Handler) signingKeys(a *access, token string) (sigv4.Credentials, *Credential, error) {
+	if token == "" {
+		return a.secret, nil, nil
+	}
+	temp, err := h.sessionCredential(a, token)
+	if err != nil {
+		return nil, nil, err
+	}
+	return func(k string) (string, bool) { return temp.SecretKey, k == temp.AccessKey }, temp, nil
 }
 
 // sessionCredential returns the temporary key of a session token.

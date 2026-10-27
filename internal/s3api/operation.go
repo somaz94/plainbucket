@@ -28,7 +28,7 @@ func operation(r *http.Request, bucket, key string) string {
 		case http.MethodGet:
 			return "ListBuckets"
 		case http.MethodPost:
-			return "AssumeRole"
+			return "AssumeRole" // stsAction relabels GetCallerIdentity, named only in the body, via req.op
 		}
 	case isPostUpload(r, key, q):
 		return "PostObject"

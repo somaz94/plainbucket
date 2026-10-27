@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end check with the real aws cli: starts bin/plainbucket on a temporary root and
 # drives mb, cp (single, multipart, server-side), ls, sync, conditional put, public-read,
-# a static website with CORS, virtual-hosted requests (via curl --aws-sigv4), rm and rb.
+# a static website with CORS, virtual-hosted requests (via curl --aws-sigv4), STS
+# get-caller-identity and assume-role, rm and rb.
 #
 # Usage: hack/test-awscli.sh   (after `make build`; needs aws cli v2)
 set -euo pipefail
@@ -94,6 +95,15 @@ curl -fsS -o /dev/null -D "${WORK}/cors.h" -X OPTIONS -H "Origin: https://app.ex
     -H "Access-Control-Request-Method: GET" "${ENDPOINT}/e2e-site/index.html" &&
     tr -d '\r' <"${WORK}/cors.h" | grep -qixF "access-control-allow-origin: https://app.example.com" && ok "CORS preflight" || fail "CORS preflight"
 s3 s3 rb s3://e2e-site --force >/dev/null || fail "rb e2e-site"
+
+[ "$(s3 sts get-caller-identity --query Arn --output text)" = "arn:aws:iam::000000000000:user/${E2E_ACCESS_KEY}" ] &&
+    ok "get-caller-identity" || fail "get-caller-identity"
+creds="$(s3 sts assume-role --role-arn arn:aws:iam::000000000000:role/e2e --role-session-name e2e-cli \
+    --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)" || fail "assume-role"
+read -r tak tsk ttok <<<"${creds}"
+[ "$(AWS_ACCESS_KEY_ID="${tak}" AWS_SECRET_ACCESS_KEY="${tsk}" AWS_SESSION_TOKEN="${ttok}" s3 sts get-caller-identity --query Arn --output text)" = \
+    "arn:aws:sts::000000000000:assumed-role/plainbucket/e2e-cli" ] && ok "assume-role, then get-caller-identity as the session" ||
+    fail "get-caller-identity as the session"
 
 s3 s3 rm s3://e2e --recursive >/dev/null && ok "rm --recursive" || fail "rm --recursive"
 s3 s3 rb s3://e2e >/dev/null && ok "rb" || fail "rb"

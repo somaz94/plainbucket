@@ -2,6 +2,7 @@
 package s3api
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -144,9 +145,10 @@ type request struct {
 	id       string
 	auth     *sigv4.Auth
 	cred     *Credential
-	vhost    bool // the bucket came from the Host header
-	readOnly bool // the server-wide mode, read once per request
-	website  bool // an unsigned read of a website bucket
+	vhost    bool   // the bucket came from the Host header
+	readOnly bool   // the server-wide mode, read once per request
+	website  bool   // an unsigned read of a website bucket
+	op       string // the operation, when only the body names it
 	bucket   string
 	key      string
 	q        url.Values
@@ -236,6 +238,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// An anonymous website request for a folder is served its index document.
 		op = map[bool]string{true: "HeadObject", false: "GetObject"}[r.Method == http.MethodHead]
 	}
+	op = cmp.Or(req.op, op)
 	h.metrics.record(op, httpx.MetricMethod(r.Method), rec.Status, rec.Bytes, time.Since(start))
 	if h.opts.AccessLog {
 		accessKey := ""
@@ -280,7 +283,7 @@ func requestID() string {
 func (h *Handler) serve(req *request) error {
 	req.q = req.r.URL.Query()
 	if isSTS(req.r, req.bucket) {
-		h.assumeRole(req)
+		h.serveSTS(req)
 		return nil
 	}
 	if req.bucket != "" && isPostUpload(req.r, req.key, req.q) {

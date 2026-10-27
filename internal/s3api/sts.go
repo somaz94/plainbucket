@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"cmp"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -29,6 +30,9 @@ const (
 
 const stsNS = "https://sts.amazonaws.com/doc/2011-06-15/"
 
+// stsAccount is the account every ARN names: there are no AWS accounts here.
+const stsAccount = "000000000000"
+
 var sessionNameRe = regexp.MustCompile(`^[\w+=,.@-]{2,64}$`)
 
 // isSTS reports a request for the STS API, which AWS SDKs send as a form POST to /.
@@ -45,10 +49,9 @@ func (e *stsError) Error() string { return e.code + ": " + e.message }
 
 func stsFail(code, msg string) *stsError { return &stsError{http.StatusBadRequest, code, msg} }
 
-// assumeRole issues temporary credentials: the signing key's access, narrowed by the
-// request's Policy, for DurationSeconds. RoleArn names nothing here and is not checked.
-func (h *Handler) assumeRole(req *request) {
-	if err := h.issueSession(req); err != nil {
+// serveSTS answers an STS request in STS's XML, errors included.
+func (h *Handler) serveSTS(req *request) {
+	if err := h.stsAction(req); err != nil {
 		var e *stsError
 		if !errors.As(err, &e) {
 			s3e := toS3(err)
@@ -66,7 +69,7 @@ func (h *Handler) assumeRole(req *request) {
 	}
 }
 
-func (h *Handler) issueSession(req *request) error {
+func (h *Handler) stsAction(req *request) error {
 	if req.r.Header.Get("Authorization") == "" {
 		if err := h.throttle(req, h.anonLimiter(req), true); err != nil {
 			return err
@@ -80,24 +83,44 @@ func (h *Handler) issueSession(req *request) error {
 	if len(body) > maxSTSBody {
 		return stsFail("InvalidParameterValue", "The request body is too large.")
 	}
-	if req.r.Header.Get("X-Amz-Security-Token") != "" {
-		return &stsError{http.StatusForbidden, "AccessDenied", "Temporary credentials cannot assume a role."}
+	// Named before verifying, so a refused request is counted under the action it asked for.
+	form, formErr := url.ParseQuery(string(body))
+	if form.Get("Action") == "GetCallerIdentity" {
+		req.op = "GetCallerIdentity"
 	}
 	a := h.access.Load()
-	auth, e := sigv4.VerifySTS(req.r, body, a.secret, h.now())
+	creds, temp, err := h.signingKeys(a, req.r.Header.Get("X-Amz-Security-Token"))
+	if s3e := toS3(err); s3e != nil && s3e.Code == "InvalidToken" {
+		return &stsError{http.StatusForbidden, "InvalidClientTokenId", "The security token included in the request is invalid."}
+	} else if err != nil {
+		return err
+	}
+	auth, e := sigv4.VerifySTS(req.r, body, creds, h.now())
 	if e != nil {
 		return e
 	}
-	req.auth, req.cred = auth, a.creds[auth.AccessKey]
+	req.auth, req.cred = auth, cmp.Or(temp, a.creds[auth.AccessKey])
 	if err := h.throttle(req, h.keyLimiter(req), false); err != nil {
 		return err
 	}
-	form, err := url.ParseQuery(string(body))
-	if err != nil {
+	if formErr != nil {
 		return stsFail("InvalidParameterValue", "The request body is not form-encoded.")
 	}
-	if action := form.Get("Action"); action != "AssumeRole" {
+	switch action := form.Get("Action"); action {
+	case "AssumeRole":
+		return h.assumeRole(req, form)
+	case "GetCallerIdentity":
+		return h.callerIdentity(req)
+	default:
 		return stsFail("InvalidAction", "Could not find operation "+action+" for version "+form.Get("Version")+".")
+	}
+}
+
+// assumeRole issues temporary credentials: the signing key's access, narrowed by the
+// request's Policy, for DurationSeconds. RoleArn names nothing here and is not checked.
+func (h *Handler) assumeRole(req *request, form url.Values) error {
+	if req.cred.parent != "" {
+		return &stsError{http.StatusForbidden, "AccessDenied", "Temporary credentials cannot assume a role."}
 	}
 	name := form.Get("RoleSessionName")
 	if !sessionNameRe.MatchString(name) {
@@ -124,9 +147,23 @@ func (h *Handler) issueSession(req *request) error {
 	sc := session.Issue(req.cred.SecretKey, session.Claims{Parent: req.cred.AccessKey, Buckets: buckets, ReadOnly: readOnly, Name: name, Expires: expires})
 	writeXML(req.w, http.StatusOK, assumeRoleResponse{NS: stsNS, Result: assumeRoleResult{
 		Credentials: stsCredentials{AccessKeyID: sc.AccessKey, SecretAccessKey: sc.SecretKey, SessionToken: sc.Token, Expiration: isoTime(expires)},
-		User:        assumedRoleUser{ID: sc.AccessKey + ":" + name, Arn: "arn:aws:sts::000000000000:assumed-role/plainbucket/" + name},
+		User:        assumedRoleUser{ID: sc.AccessKey + ":" + name, Arn: assumedRoleArn(name)},
 	}, RequestID: req.id})
 	return nil
+}
+
+// callerIdentity reports a long-term key as an IAM user, a temporary one as the role AssumeRole named.
+func (h *Handler) callerIdentity(req *request) error {
+	res := callerIdentityResult{Account: stsAccount, UserID: req.cred.AccessKey, Arn: "arn:aws:iam::" + stsAccount + ":user/" + req.cred.AccessKey}
+	if req.cred.parent != "" {
+		res.UserID, res.Arn = req.cred.AccessKey+":"+req.cred.session, assumedRoleArn(req.cred.session)
+	}
+	writeXML(req.w, http.StatusOK, callerIdentityResponse{NS: stsNS, Result: res, RequestID: req.id})
+	return nil
+}
+
+func assumedRoleArn(session string) string {
+	return "arn:aws:sts::" + stsAccount + ":assumed-role/plainbucket/" + session
 }
 
 // parseSessionPolicy reads the subset of an IAM session policy that a bucket scope and a
@@ -268,6 +305,19 @@ type stsCredentials struct {
 type assumedRoleUser struct {
 	ID  string `xml:"AssumedRoleId"`
 	Arn string `xml:"Arn"`
+}
+
+type callerIdentityResponse struct {
+	XMLName   xml.Name             `xml:"GetCallerIdentityResponse"`
+	NS        string               `xml:"xmlns,attr"`
+	Result    callerIdentityResult `xml:"GetCallerIdentityResult"`
+	RequestID string               `xml:"ResponseMetadata>RequestId"`
+}
+
+type callerIdentityResult struct {
+	Arn     string `xml:"Arn"`
+	UserID  string `xml:"UserId"`
+	Account string `xml:"Account"`
 }
 
 type stsErrorResponse struct {
