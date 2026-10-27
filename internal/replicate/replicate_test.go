@@ -499,7 +499,8 @@ func TestClientETagMetaIgnored(t *testing.T) {
 	info := e.put("k", "v", storage.PutOptions{Metadata: storage.Metadata{UserMeta: map[string]string{ETagMeta: "forged"}}})
 	rule := e.rule()
 	e.r.SetRules([]Rule{rule})
-	e.waitFor("the copy", func() bool { _, _, ok := e.target("k"); return ok })
+	// The data file is renamed into place before its sidecar, so wait for the metadata too.
+	e.waitFor("the copy", func() bool { _, got, _ := e.target("k"); return got.UserMeta[ETagMeta] != "" })
 	if _, got, _ := e.target("k"); got.UserMeta[ETagMeta] != info.ETag {
 		t.Errorf("recorded ETag %q, want %q", got.UserMeta[ETagMeta], info.ETag)
 	}
