@@ -17,6 +17,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -306,6 +308,26 @@ func TestAccessLog(t *testing.T) {
 		if !strings.Contains(x.logs.String(), want) {
 			t.Errorf("access log lacks %q:\n%s", want, x.logs.String())
 		}
+	}
+}
+
+func TestAccessLogFieldOrder(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.AccessLog = true })
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	var line string
+	for l := range strings.SplitSeq(x.logs.String(), "\n") {
+		if strings.Contains(l, " msg=request ") {
+			line = l
+		}
+	}
+	var keys []string
+	for _, m := range regexp.MustCompile(`(?:^| )([a-z_]+)=`).FindAllStringSubmatch(line, -1) {
+		keys = append(keys, m[1])
+	}
+	want := []string{"time", "level", "msg", "operation", "method", "host", "path", "query", "bucket", "key",
+		"status", "bytes", "duration_ms", "remote", "access_key", "user_agent", "request_id"}
+	if !slices.Equal(keys, want) {
+		t.Errorf("access log keys = %v, want %v\n%s", keys, want, line)
 	}
 }
 
