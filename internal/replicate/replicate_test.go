@@ -525,3 +525,15 @@ func TestPermanent(t *testing.T) {
 		}
 	}
 }
+
+// A nil *Replicator in s3api.Options is a non-nil interface, so its methods must not panic.
+func TestNilReplicator(t *testing.T) {
+	var r *Replicator
+	r.Changed("src", "k")
+	if c, d, f, dr, q := r.Stats(); c != 0 || d != 0 || f != 0 || dr != 0 || q != 0 {
+		t.Errorf("stats of nil = %d %d %d %d %d", c, d, f, dr, q)
+	}
+	if last := r.LastCompared(); len(last) != 0 {
+		t.Errorf("LastCompared of nil = %v", last)
+	}
+}

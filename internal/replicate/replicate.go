@@ -183,6 +183,9 @@ func (w *worker) client() *s3client.Client {
 // already waiting is not queued twice, and a change that does not fit is left to the next
 // comparison, brought forward.
 func (r *Replicator) Changed(bucket, key string) {
+	if r == nil {
+		return
+	}
 	for _, w := range *r.list.Load() {
 		if w.rule.Bucket != bucket || !strings.HasPrefix(key, w.rule.Prefix) {
 			continue
@@ -231,6 +234,9 @@ func (w *worker) queued() int {
 // Stats returns the keys copied, target keys deleted, keys given up on after retries,
 // changes dropped from a full queue, and the keys queued now.
 func (r *Replicator) Stats() (copied, deleted, failed, dropped int64, queued int) {
+	if r == nil {
+		return
+	}
 	for _, w := range *r.list.Load() {
 		queued += w.queued()
 	}
@@ -241,6 +247,9 @@ func (r *Replicator) Stats() (copied, deleted, failed, dropped int64, queued int
 // by "<bucket>/<rule id>".
 func (r *Replicator) LastCompared() map[string]time.Time {
 	out := map[string]time.Time{}
+	if r == nil {
+		return out
+	}
 	for _, w := range *r.list.Load() {
 		if t := w.last.Load(); t > 0 {
 			out[w.rule.Bucket+"/"+w.rule.ID] = time.Unix(t, 0)
