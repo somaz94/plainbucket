@@ -1,8 +1,11 @@
 package s3api
 
 import (
+	"cmp"
 	"net/http"
 
+	"github.com/somaz94/plainbucket/internal/console"
+	"github.com/somaz94/plainbucket/internal/httpx"
 	"github.com/somaz94/plainbucket/internal/s3err"
 )
 
@@ -176,4 +179,34 @@ func (h *Handler) objectOp(req *request) error {
 		}
 	}
 	return s3err.MethodNotAllowed()
+}
+
+// dispatch serves req, the console's or the S3 API's, writes the error response when it
+// fails, and returns the operation name for the metrics and the access log.
+func (h *Handler) dispatch(req *request, rec *httpx.Recorder) string {
+	r, vhost := req.r, req.vhost
+	var err error
+	op := "Console"
+	if h.opts.Console && !vhost && isConsolePath(r.URL.Path) {
+		req.bucket, req.key = "", ""
+		err = h.serveConsole(req)
+	} else {
+		op = operation(r, req.bucket, req.key)
+		if h.opts.Console && !vhost {
+			// A page served from the console's origin could otherwise script a console window.
+			rec.Header().Set("Content-Security-Policy", console.ObjectSandbox)
+		}
+		var done bool
+		if done, err = h.applyCORS(req); !done {
+			err = h.serve(req)
+		}
+	}
+	if err != nil {
+		h.fail(req, err)
+	}
+	if req.website {
+		// An anonymous website request for a folder is served its index document.
+		op = map[bool]string{true: "HeadObject", false: "GetObject"}[r.Method == http.MethodHead]
+	}
+	return cmp.Or(req.op, op)
 }

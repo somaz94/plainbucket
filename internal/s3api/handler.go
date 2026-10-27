@@ -2,7 +2,6 @@
 package s3api
 
 import (
-	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
@@ -13,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/somaz94/plainbucket/internal/console"
 	"github.com/somaz94/plainbucket/internal/httpx"
 	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/ratelimit"
@@ -160,21 +158,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := requestID()
 	w.Header().Set("X-Amz-Request-Id", id)
 	w.Header().Set("Server", "plainbucket")
-	// An S3 request to a bucket named healthz, readyz or metrics is signed, so it never lands here.
-	// On a virtual host these paths are object keys (a public bucket serves them unsigned).
+	// On a virtual host /healthz, /readyz and /metrics are object keys (a public bucket serves them unsigned).
 	vbucket, vhost := h.vhostBucket(r.Host)
-	if !vhost && r.URL.RawQuery == "" && r.Header.Get("Authorization") == "" && r.Method == http.MethodGet {
-		switch {
-		case r.URL.Path == "/healthz":
-			h.serveHealth(w)
-			return
-		case r.URL.Path == "/readyz":
-			h.serveReady(w)
-			return
-		case r.URL.Path == "/metrics" && h.opts.Metrics:
-			h.serveMetrics(w)
-			return
-		}
+	if !vhost && h.serveProbe(w, r) {
+		return
 	}
 
 	rec := httpx.NewRecorder(w)
@@ -190,47 +177,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		req.bucket, req.key, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	}
-	var err error
-	op := "Console"
-	if h.opts.Console && !vhost && isConsolePath(r.URL.Path) {
-		req.bucket, req.key = "", ""
-		err = h.serveConsole(req)
-	} else {
-		op = operation(r, req.bucket, req.key)
-		if h.opts.Console && !vhost {
-			// A page served from the console's origin could otherwise script a console window.
-			rec.Header().Set("Content-Security-Policy", console.ObjectSandbox)
-		}
-		var done bool
-		if done, err = h.applyCORS(req); !done {
-			err = h.serve(req)
-		}
-	}
-	if err != nil {
-		h.fail(req, err)
-	}
-	if req.website {
-		// An anonymous website request for a folder is served its index document.
-		op = map[bool]string{true: "HeadObject", false: "GetObject"}[r.Method == http.MethodHead]
-	}
-	op = cmp.Or(req.op, op)
+	op := h.dispatch(req, rec)
 	h.metrics.record(op, httpx.MetricMethod(r.Method), rec.Status, rec.Bytes, time.Since(start))
 	if h.opts.AccessLog {
-		accessKey := ""
-		if req.cred != nil {
-			accessKey = req.cred.AccessKey
-		}
-		attrs := []slog.Attr{
-			slog.String("operation", op), slog.String("method", r.Method), slog.String("host", r.Host), slog.String("path", r.URL.Path),
-			slog.String("query", redactQuery(r.URL.RawQuery)), slog.String("bucket", req.bucket), slog.String("key", req.key),
-			slog.Int("status", rec.Status), slog.Int64("bytes", rec.Bytes),
-			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("remote", r.RemoteAddr),
-			slog.String("access_key", accessKey), slog.String("user_agent", r.UserAgent()), slog.String("request_id", id),
-		}
-		if req.cred != nil && req.cred.parent != "" {
-			attrs = append(attrs, slog.String("issuer", req.cred.parent), slog.String("session", req.cred.session))
-		}
-		h.log.LogAttrs(r.Context(), slog.LevelInfo, "request", attrs...)
+		h.logAccess(req, rec, op, start)
 	}
 }
 
@@ -277,19 +227,4 @@ func (req *request) url(key string) string {
 		path = "/" + sigv4.URIEncodePath(key)
 	}
 	return scheme + "://" + req.r.Host + path
-}
-
-// redactQuery hides the signature of a presigned URL, which would let anyone reading the
-// log replay the request until the URL expires.
-func redactQuery(raw string) string {
-	q, err := url.ParseQuery(raw)
-	if err != nil {
-		return ""
-	}
-	for _, k := range []string{"X-Amz-Signature", "X-Amz-Security-Token", "Signature"} {
-		if q.Has(k) {
-			q.Set(k, "REDACTED")
-		}
-	}
-	return q.Encode()
 }

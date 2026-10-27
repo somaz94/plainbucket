@@ -55,3 +55,22 @@ func (h *Handler) serveHealth(w http.ResponseWriter) {
 	}
 	_, _ = w.Write([]byte("ok"))
 }
+
+// serveProbe answers /healthz, /readyz and /metrics and reports whether it did. An S3
+// request to a bucket named healthz, readyz or metrics is signed, so it never lands here.
+func (h *Handler) serveProbe(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.RawQuery != "" || r.Header.Get("Authorization") != "" || r.Method != http.MethodGet {
+		return false
+	}
+	switch {
+	case r.URL.Path == "/healthz":
+		h.serveHealth(w)
+	case r.URL.Path == "/readyz":
+		h.serveReady(w)
+	case r.URL.Path == "/metrics" && h.opts.Metrics:
+		h.serveMetrics(w)
+	default:
+		return false
+	}
+	return true
+}
