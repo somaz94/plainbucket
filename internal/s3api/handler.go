@@ -166,12 +166,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rec := httpx.NewRecorder(w)
 	start := time.Now()
-	req := &request{w: rec, r: r, id: id, vhost: vhost, bucket: vbucket, readOnly: h.readOnly.Load()}
-	// Counted so an operator turning read-only on can see when the last write is done.
+	// Counted before the mode is read, so an operator who turns read-only on and then sees
+	// no writes in flight knows every later write is refused.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		h.writes.Add(1)
 		defer h.writes.Add(-1)
 	}
+	req := &request{w: rec, r: r, id: id, vhost: vhost, bucket: vbucket, readOnly: h.readOnly.Load()}
 	if vhost {
 		req.key = strings.TrimPrefix(r.URL.Path, "/")
 	} else {
