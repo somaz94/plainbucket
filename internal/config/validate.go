@@ -61,6 +61,12 @@ func (c *Config) validate() error {
 	if err := c.validateAccess(); err != nil {
 		return err
 	}
+	if err := c.validateBuckets(); err != nil {
+		return err
+	}
+	if err := c.validateDomains(); err != nil {
+		return err
+	}
 	if _, ok := tlsVersions[normalizeTLS(c.TLSMinVers)]; c.TLSMinVers != "" && !ok {
 		return fmt.Errorf("invalid PLAINBUCKET_TLS_MIN_VERS %q: must be TLS12 or TLS13", c.TLSMinVers)
 	}
@@ -93,12 +99,10 @@ func (c *Config) validateAccess() error {
 	if err := checkBuckets("PLAINBUCKET_PUBLIC_BUCKETS", c.PublicBuckets); err != nil {
 		return err
 	}
-	if err := errors.Join(c.RateLimit.check("rate-limit", c.BodyTimeout), c.AnonymousRateLimit.check("anonymous-rate-limit", c.BodyTimeout)); err != nil {
-		return err
-	}
-	if err := c.validateBuckets(); err != nil {
-		return err
-	}
+	return errors.Join(c.RateLimit.check("rate-limit", c.BodyTimeout), c.AnonymousRateLimit.check("anonymous-rate-limit", c.BodyTimeout))
+}
+
+func (c *Config) validateDomains() error {
 	for i, d := range c.Domains {
 		d = strings.ToLower(strings.TrimSpace(d))
 		if !domainRe.MatchString(d) {
