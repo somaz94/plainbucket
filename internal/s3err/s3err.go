@@ -162,6 +162,14 @@ func InsufficientStorage() *Error {
 	return newErr(http.StatusInsufficientStorage, "InsufficientStorage", "There is not enough free disk space to store the data.")
 }
 
+func InvalidToken() *Error {
+	return newErr(http.StatusBadRequest, "InvalidToken", "The provided token is malformed or otherwise invalid.")
+}
+
+func ExpiredToken() *Error {
+	return newErr(http.StatusBadRequest, "ExpiredToken", "The provided token has expired.")
+}
+
 func SlowDown() *Error {
 	return newErr(http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.")
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/somaz94/plainbucket/internal/s3err"
+	"github.com/somaz94/plainbucket/internal/sigv4/sigv4test"
 )
 
 const (
@@ -534,5 +535,34 @@ func TestVerifyQuery_HeadOnGetURL(t *testing.T) {
 	}
 	if _, e := Verify(httptest.NewRequest(http.MethodDelete, target, nil), docCreds, docNow); code(e) != "SignatureDoesNotMatch" {
 		t.Errorf("DELETE on a GET URL: %v", e)
+	}
+}
+
+func TestVerifySTS(t *testing.T) {
+	body := []byte("Action=AssumeRole&Version=2011-06-15&RoleArn=arn%3Aaws%3Aiam%3A%3A0%3Arole%2Fx&RoleSessionName=s")
+	sum := sha256.Sum256(body)
+	hash := hex.EncodeToString(sum[:])
+	signed := func(service string, b []byte) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "http://pb.test/", strings.NewReader(string(b)))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		sigv4test.Signer{AccessKey: docAK, SecretKey: docSK, Region: "us-east-1", Service: service}.Sign(r, hash, docNow)
+		return r
+	}
+	if a, e := VerifySTS(signed("sts", body), body, docCreds, docNow); e != nil || a.AccessKey != docAK {
+		t.Fatalf("sts: %v", e)
+	}
+	// Signed for S3, it is not an STS request; and an S3 verifier refuses an STS signature.
+	if _, e := VerifySTS(signed("s3", body), body, docCreds, docNow); code(e) != "AuthorizationHeaderMalformed" {
+		t.Errorf("s3-signed: %s", code(e))
+	}
+	if _, e := Verify(signed("sts", body), docCreds, docNow); code(e) != "AuthorizationHeaderMalformed" {
+		t.Errorf("sts signature on S3: %s", code(e))
+	}
+	// The body the signature covers is the body read.
+	if _, e := VerifySTS(signed("sts", body), []byte("Action=AssumeRole&DurationSeconds=43200"), docCreds, docNow); code(e) != "XAmzContentSHA256Mismatch" {
+		t.Errorf("other body: %s", code(e))
+	}
+	if _, e := VerifySTS(httptest.NewRequest(http.MethodPost, "/", nil), nil, docCreds, docNow); code(e) != "AccessDenied" {
+		t.Errorf("unsigned: %s", code(e))
 	}
 }

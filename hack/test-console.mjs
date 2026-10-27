@@ -1,7 +1,7 @@
 // Drives the console's signer, key handling, ZIP writer and upload links
 // (internal/console/static/{sigv4,keys,zip,uploadlink}.js) against a running server:
 // header-signed and presigned requests, multipart, keys XML cannot carry, folder archives,
-// upload links, the usage API and key scopes.
+// upload links, temporary keys from STS, the usage API and key scopes.
 // Run by hack/test-console.sh, which starts the server and sets the environment.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -251,6 +251,30 @@ if (page.headers.get("content-disposition") !== "attachment") fail("attachment o
 const linkDel = "<Delete>" + ["a.txt", "page.html"].map((n) => `<Object><Key>${keys.escapeXML(linkFolder + n)}</Key></Object>`).join("") + "</Delete>";
 await expectStatus("delete linked objects", await s3(admin, "POST", "console-link", "", { params: [["delete", ""]], body: linkDel }), 200);
 await expectStatus("delete link bucket", await s3(admin, "DELETE", "console-link"), 204);
+
+// A temporary key from STS AssumeRole, signed for service sts as the console does, then
+// used with its session token.
+await expectStatus("create sts bucket", await s3(admin, "PUT", "console-sts"), 200);
+await expectStatus("put for sts", await s3(admin, "PUT", "console-sts", "k", { body: "temp" }), 200);
+const stsBody = new URLSearchParams({
+  Action: "AssumeRole", Version: "2011-06-15", RoleArn: "arn:aws:iam::000000000000:role/console", RoleSessionName: "console-test",
+  DurationSeconds: "900", Policy: JSON.stringify({ Statement: [{ Effect: "Allow", Action: ["s3:Get*", "s3:List*"], Resource: ["arn:aws:s3:::console-sts/*"] }] }),
+}).toString();
+const stsRes = await fetch(endpoint.origin + "/", {
+  method: "POST", body: stsBody,
+  headers: sigv4.signHeaders(admin, { method: "POST", host, path: "/", service: "sts", payload: sigv4.hex(sigv4.sha256(stsBody)),
+    headers: { "content-type": "application/x-www-form-urlencoded" } }),
+});
+const stsXML = await (await expectStatus("assume role", stsRes, 200)).text();
+const field = (n) => stsXML.match(new RegExp(`<${n}>([^<]+)</${n}>`))?.[1];
+const temp = { accessKey: field("AccessKeyId"), secretKey: field("SecretAccessKey"), region: "us-east-1" };
+const tokenHeader = { "x-amz-security-token": field("SessionToken") };
+if (!temp.accessKey?.startsWith("ASIA") || !tokenHeader["x-amz-security-token"]) fail("assume role", stsXML);
+const tempRead = await (await expectStatus("read with a temporary key", await s3(temp, "GET", "console-sts", "k", { headers: tokenHeader }), 200)).text();
+if (tempRead !== "temp") fail("temporary read", tempRead);
+await expectStatus("temporary key is read-only", await s3(temp, "PUT", "console-sts", "new", { headers: tokenHeader, body: "x" }), 403);
+await expectStatus("delete sts object", await s3(admin, "DELETE", "console-sts", "k"), 204);
+await expectStatus("delete sts bucket", await s3(admin, "DELETE", "console-sts"), 204);
 
 // The trash API, signed with the query the console sends.
 const trashPath = "/_console/api/trash";

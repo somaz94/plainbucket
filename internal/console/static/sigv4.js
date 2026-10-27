@@ -1,4 +1,4 @@
-// AWS Signature Version 4 for S3, with SHA-256 and HMAC in plain JavaScript:
+// AWS Signature Version 4 for S3 and STS, with SHA-256 and HMAC in plain JavaScript:
 // crypto.subtle exists only in secure contexts, and the console also runs over plain HTTP.
 
 const K = new Uint32Array([
@@ -107,33 +107,34 @@ function amzDate(date) {
   return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
 }
 
-function signingKey(secretKey, day, region) {
+function signingKey(secretKey, day, region, service = "s3") {
   let k = hmacSHA256("AWS4" + secretKey, day);
   k = hmacSHA256(k, region);
-  k = hmacSHA256(k, "s3");
+  k = hmacSHA256(k, service);
   return hmacSHA256(k, "aws4_request");
 }
 
-function signature(cred, method, path, query, headers, signedHeaders, payload, stamp) {
+function signature(cred, method, path, query, headers, signedHeaders, payload, stamp, service = "s3") {
   const canonicalHeaders = signedHeaders.map((n) => n + ":" + String(headers[n]).trim() + "\n").join("");
   const canonical = [method, path, query, canonicalHeaders, signedHeaders.join(";"), payload].join("\n");
-  const scope = `${stamp.slice(0, 8)}/${cred.region}/s3/aws4_request`;
+  const scope = `${stamp.slice(0, 8)}/${cred.region}/${service}/aws4_request`;
   const toSign = ["AWS4-HMAC-SHA256", stamp, scope, hex(sha256(canonical))].join("\n");
-  return { scope, sig: hex(hmacSHA256(signingKey(cred.secretKey, stamp.slice(0, 8), cred.region), toSign)) };
+  return { scope, sig: hex(hmacSHA256(signingKey(cred.secretKey, stamp.slice(0, 8), cred.region, service), toSign)) };
 }
 
 // signHeaders returns the headers to send with a request: the given ones plus x-amz-date,
-// x-amz-content-sha256 (UNSIGNED-PAYLOAD) and Authorization. It signs host and every
-// x-amz-* header, as the server requires. path must already be encoded (encodePath).
-export function signHeaders(cred, { method, host, path, query = "", headers = {}, date = new Date() }) {
+// x-amz-content-sha256 (UNSIGNED-PAYLOAD unless payload, the body's hex SHA-256, is given)
+// and Authorization. It signs host and every x-amz-* header, as the server requires. path
+// must already be encoded (encodePath). service "sts" signs an STS request.
+export function signHeaders(cred, { method, host, path, query = "", headers = {}, date = new Date(), service = "s3", payload = "UNSIGNED-PAYLOAD" }) {
   const stamp = amzDate(date);
   const all = {};
   for (const [k, v] of Object.entries(headers)) all[k.toLowerCase()] = v;
   all["x-amz-date"] = stamp;
-  all["x-amz-content-sha256"] = "UNSIGNED-PAYLOAD";
+  all["x-amz-content-sha256"] = payload;
   const toSign = { ...all, host };
   const signed = Object.keys(toSign).filter((n) => n === "host" || n.startsWith("x-amz-")).sort();
-  const { scope, sig } = signature(cred, method, path, query, toSign, signed, "UNSIGNED-PAYLOAD", stamp);
+  const { scope, sig } = signature(cred, method, path, query, toSign, signed, payload, stamp, service);
   all.authorization = `AWS4-HMAC-SHA256 Credential=${cred.accessKey}/${scope}, SignedHeaders=${signed.join(";")}, Signature=${sig}`;
   return all;
 }

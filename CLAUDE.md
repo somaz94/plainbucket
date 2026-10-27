@@ -12,7 +12,8 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 
 - `cmd/`, `cmd/cli/` - Cobra entry point; the root command serves, plus `healthcheck` (Docker HEALTHCHECK, no access key needed) and `fsck` (offline check and repair; `--verify` re-reads the data, as the server's periodic scrub does).
 - `internal/config/` - env (`PLAINBUCKET_*`) > YAML > defaults, `KnownFields`, malformed typed values are errors.
-- `internal/sigv4/` - SigV4 header and presigned verification, aws-chunked decoder with chunk and trailer signatures. `sigv4test/` is an independent signer for tests.
+- `internal/sigv4/` - SigV4 header and presigned verification (service `s3`, and `sts` for AssumeRole), aws-chunked decoder with chunk and trailer signatures. `sigv4test/` is an independent signer for tests.
+- `internal/session/` - stateless temporary credentials: the session token carries its claims signed with the issuing key's secret, from which the temporary key and secret derive.
 - `internal/checksum/` - CRC32, CRC32C, CRC64NVME, SHA1, SHA256 on the standard library.
 - `internal/storage/` - the filesystem store: key mapping, sidecar metadata, atomic commit, S3-order listing walker, multipart, janitor. Knows nothing about HTTP.
 - `internal/s3api/` - HTTP router and handlers, access keys with bucket scopes and read-only, public-bucket anonymous reads, virtual-hosted routing, XML documents, payload verification and upload progress deadline, storage error to S3 error mapping, Prometheus metrics.
@@ -32,6 +33,8 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - The main module depends only on the standard library, Cobra and yaml.v3. Test-only SDK use goes in `compat/`, never in the main `go.mod`.
 - Objects are written to `.plainbucket/tmp`, verified, then renamed into place. Nothing writes into a bucket directory in place.
 - Every path built from a bucket name or key goes through the store's `os.Root`, so `..` and symlinks cannot leave the root. Do not reintroduce plain `os.Open` / `os.Rename` on data paths.
+- Temporary credentials are never stored: a session is valid only while its issuing key exists with the same secret, and gets that key's current access narrowed by its claims, never more. A session policy that a bucket list and a read-only flag cannot express exactly is refused, never widened.
+- A request verifies its signature and takes its access from one `access` snapshot (`access.secret`), so a reload between the two cannot pair an old secret with new access.
 - Every `x-amz-*` request header must be signed (`sigv4.requireSigned`); the GET-for-HEAD presign fallback exists only for the GitLab Runner cache.
 - A sidecar is trusted only while its recorded size and mtime match the data file; otherwise the object is treated as edited outside the server.
 - Listing order must equal S3 byte order of whole keys. `storage/list_test.go` checks the walker against a brute-force reference; keep it passing when touching `walk`.

@@ -60,7 +60,7 @@ func (a *Auth) Streaming() bool {
 // Verify authenticates r with either the Authorization header or a presigned query.
 func Verify(r *http.Request, creds Credentials, now time.Time) (*Auth, *s3err.Error) {
 	if h := r.Header.Get("Authorization"); h != "" {
-		return verifyHeader(r, h, creds, now)
+		return verifyHeader(r, h, creds, now, "s3", nil)
 	}
 	q := r.URL.Query()
 	switch {
@@ -80,9 +80,9 @@ func (c credential) scope() string {
 	return c.date + "/" + c.region + "/" + c.service + "/aws4_request"
 }
 
-func parseCredential(v string) (credential, bool) {
+func parseCredential(v, service string) (credential, bool) {
 	p := strings.Split(v, "/")
-	if len(p) != 5 || p[0] == "" || p[3] != "s3" || p[4] != "aws4_request" {
+	if len(p) != 5 || p[0] == "" || p[3] != service || p[4] != "aws4_request" {
 		return credential{}, false
 	}
 	return credential{p[0], p[1], p[2], p[3]}, true
@@ -96,7 +96,19 @@ func lookupSecret(creds Credentials, accessKey string) (string, *s3err.Error) {
 	return secret, nil
 }
 
-func verifyHeader(r *http.Request, header string, creds Credentials, now time.Time) (*Auth, *s3err.Error) {
+// VerifySTS authenticates an STS request, signed for service sts in the Authorization
+// header over body, its form-encoded parameters.
+func VerifySTS(r *http.Request, body []byte, creds Credentials, now time.Time) (*Auth, *s3err.Error) {
+	h := r.Header.Get("Authorization")
+	if h == "" {
+		return nil, s3err.AccessDenied("STS requests must be signed.")
+	}
+	return verifyHeader(r, h, creds, now, "sts", body)
+}
+
+// verifyHeader checks an Authorization header for service. For STS the payload hash is
+// computed from body, since STS clients need not send x-amz-content-sha256.
+func verifyHeader(r *http.Request, header string, creds Credentials, now time.Time, service string, body []byte) (*Auth, *s3err.Error) {
 	rest, ok := strings.CutPrefix(header, Algorithm+" ")
 	if !ok {
 		return nil, s3err.InvalidRequest("The authorization mechanism you have provided is not supported. Please use AWS4-HMAC-SHA256.")
@@ -106,7 +118,7 @@ func verifyHeader(r *http.Request, header string, creds Credentials, now time.Ti
 		k, v, _ := strings.Cut(strings.TrimSpace(part), "=")
 		fields[k] = v
 	}
-	cred, ok := parseCredential(fields["Credential"])
+	cred, ok := parseCredential(fields["Credential"], service)
 	signedHeaders, signature := fields["SignedHeaders"], fields["Signature"]
 	if !ok || signedHeaders == "" || signature == "" {
 		return nil, s3err.AuthHeaderMalformed("The authorization header is malformed.")
@@ -140,6 +152,14 @@ func verifyHeader(r *http.Request, header string, creds Credentials, now time.Ti
 	}
 
 	payload := r.Header.Get("X-Amz-Content-Sha256")
+	if service == "sts" {
+		sum := sha256.Sum256(body)
+		if computed := hex.EncodeToString(sum[:]); payload == "" || payload == computed {
+			payload = computed
+		} else {
+			return nil, s3err.ContentSHA256Mismatch()
+		}
+	}
 	switch {
 	case payload == "":
 		return nil, s3err.InvalidRequest("Missing required header for this request: x-amz-content-sha256.")
@@ -167,7 +187,7 @@ func verifyQuery(r *http.Request, q url.Values, creds Credentials, now time.Time
 	if q.Get("X-Amz-Algorithm") != Algorithm {
 		return nil, s3err.AuthQueryMalformed("X-Amz-Algorithm must be AWS4-HMAC-SHA256.")
 	}
-	cred, ok := parseCredential(q.Get("X-Amz-Credential"))
+	cred, ok := parseCredential(q.Get("X-Amz-Credential"), "s3")
 	if !ok {
 		return nil, s3err.AuthQueryMalformed("X-Amz-Credential is malformed.")
 	}

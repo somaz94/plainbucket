@@ -89,6 +89,25 @@ The region in a request's credential scope is not checked against `PLAINBUCKET_R
 
 <br/>
 
+## Temporary Credentials
+
+A key can issue temporary credentials, an access key, a secret key and a session token that expire on their own, for a CI job or a script that should not hold the key itself. They are issued through STS `AssumeRole`, which the AWS SDKs and the aws cli call when their STS endpoint is set to the server's (`aws sts assume-role --endpoint-url https://s3.example.com ...`), or from the web console.
+
+```bash
+aws sts assume-role --endpoint-url https://s3.example.com \
+  --role-arn arn:aws:iam::000000000000:role/ci --role-session-name build-42 --duration-seconds 3600 \
+  --policy '{"Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:ListBucket"],"Resource":["arn:aws:s3:::artifacts","arn:aws:s3:::artifacts/*"]}]}'
+```
+
+- A session has the access of the key that signed the request, narrowed and never widened. Its `Policy` can say only what a bucket list and a read-only flag express: `Allow` statements, without conditions, on whole buckets (`arn:aws:s3:::name`, `arn:aws:s3:::name/*`, or `*` for all), whose actions are either `s3:*` in every statement or only `s3:Get*` and `s3:List*` actions in every statement. A read-only session may use every `Get` and `List` operation on its buckets, so `s3:GetObject` alone also allows listing. A policy that says more, such as a key prefix, a single write action like `s3:PutObject`, or reading one bucket and writing another, is refused with `MalformedPolicyDocument` rather than granted more than it asks for; naming a bucket the key may not use is refused with `AccessDenied`. `RoleArn` names nothing here and is not checked.
+- `DurationSeconds` is 900 to 43200; the default is one hour.
+- Nothing is stored: the session token carries what it grants, signed with the issuing key's secret. A session ends when it expires, or early when the issuing key is removed or its secret changes; when the key loses a bucket or becomes read-only, so do its sessions. A temporary key cannot issue another, its requests count against the issuing key's [rate limit](#rate-limits), and its access key starts with `ASIA`, as AWS's do.
+- Because nothing is stored, a single session cannot be revoked: changing the issuing key's secret ends all of its sessions, and changing the secret back revives those not yet expired.
+- The access log records a temporary key's requests with `issuer`, the issuing key, and `session`, the `RoleSessionName`.
+- STS requests go to the path-style endpoint: a host under one of the [virtual-hosted](#virtual-hosted-addressing) domains names a bucket, not the STS endpoint.
+
+<br/>
+
 ## Rate Limits
 
 A rate limit keeps one client from taking the server's disk and network from the others. Each limit takes `requests` (per second), `burst` (requests allowed at once, by default `requests` rounded up) and `bytes` (request and response bodies per second, all of the client's requests together); a field left out does not limit.
@@ -277,6 +296,7 @@ With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse bucke
 - Uploads never replace an object silently: they are sent with `If-None-Match: *`, and a name that already exists is offered for overwriting or skipping.
 - A ZIP download stores the objects uncompressed, as files of the archive named by their keys below the folder, and switches to ZIP64 past 4 GiB or 65,535 entries. A `\` or `:` in a key becomes `_` in the archive, since Windows extractors would read it as a separator or a drive. Keys S3 allows side by side, such as `d` and `d/x`, extract as a file and a folder of the same name, which file systems refuse.
 - Objects come one at a time through signed reads, so the key's scope applies and an object changed during the download is archived as it was read. Where the browser lets a page write a file the user picks (Chromium-based browsers on HTTPS or `localhost`), each object is written there once fetched; elsewhere the browser assembles the whole archive before saving, which takes as much disk space or memory as the archive, and the console asks first above 2 GiB. A running download, like an upload, keeps the idle sign-out from closing it.
+- The Temporary key button on the bucket list issues [temporary credentials](#temporary-credentials) for some buckets, optionally read-only, for 15 minutes to 12 hours, and shows them with a line of shell to export them.
 - An upload link lets anyone without a key upload files and folders for up to seven days, each file up to the size chosen, into a new folder named after the date and a random suffix under the folder it was made from, so nothing already there is replaced; everyone holding the link shares that folder, files with the same name replace each other, and only the bucket's limits cap how many arrive. It is a browser POST upload whose policy, signed with the key in the page, travels in the URL fragment, which browsers do not send to the server; the page it opens asks for no key, shows the terms the signed policy states, and offers nothing but the upload. In a public or website bucket the policy requires `Content-Disposition: attachment`, so uploaded files download instead of running as pages on the bucket's host. A link stops working when it expires, or when the key that signed it is removed, loses access to the bucket or becomes read-only; nothing else withdraws it.
 - After 30 minutes without input the page signs out and forgets the key, unless an upload is still running.
 - Renaming or moving copies each object with `If-None-Match: *`, so nothing at the new name is overwritten, and deletes the originals only after every copy succeeded. It is not atomic: another client can see both names while a folder moves. Editing metadata copies the object onto itself, refused if it changed since the dialog opened.

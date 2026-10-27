@@ -9,7 +9,6 @@ import (
 	"github.com/somaz94/plainbucket/internal/console"
 	"github.com/somaz94/plainbucket/internal/notify"
 	"github.com/somaz94/plainbucket/internal/s3err"
-	"github.com/somaz94/plainbucket/internal/sigv4"
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
@@ -130,11 +129,9 @@ func (h *Handler) consoleAuth(req *request) error {
 	if anonymous(req.r, req.q) {
 		return s3err.AccessDenied("The console API needs a signed request.")
 	}
-	auth, e := sigv4.Verify(req.r, h.credentials, h.now())
-	if e != nil {
-		return e
+	if err := h.verifySigned(req); err != nil {
+		return err
 	}
-	req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
 	return h.throttle(req, h.keyLimiter(req), false)
 }
 

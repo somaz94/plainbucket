@@ -14,7 +14,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 
 - Path-style URLs (`http://host:9000/<bucket>/<key>`) always work. Configure SDKs with path-style addressing (`UsePathStyle` in Go, `addressing_style = path` in boto3 and the aws cli; the aws cli uses path style on its own for a custom endpoint).
 - Virtual-hosted-style URLs (`http://<bucket>.s3.example.com/<key>`) work for the domains listed in `PLAINBUCKET_DOMAINS` ([Virtual-Hosted Addressing](configuration.md#virtual-hosted-addressing)).
-- AWS Signature Version 4 in the `Authorization` header or as a presigned URL, up to seven days.
+- AWS Signature Version 4 in the `Authorization` header or as a presigned URL, up to seven days. Temporary credentials from `AssumeRole` sign the same way with their session token, `x-amz-security-token` in the header or `X-Amz-Security-Token` in a presigned URL; POST upload forms take only long-term keys.
 - A `PutObject` body may come with `Transfer-Encoding: chunked` and no `Content-Length`; parts and XML documents need a length. Size limits are checked once the body has arrived.
 - Payload modes: a hex SHA-256 of the body, `UNSIGNED-PAYLOAD`, and aws-chunked bodies `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER` and `STREAMING-UNSIGNED-PAYLOAD-TRAILER`. Chunk and trailer signatures are verified.
 - Every `x-amz-*` header in a request must be covered by its signature, as on S3. An unsigned one is refused with `403 AccessDenied`, so a presigned URL cannot be repurposed with extra headers such as `x-amz-copy-source`.
@@ -32,6 +32,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 | Listing | `ListObjectsV2` and `ListObjects` with `prefix`, `delimiter`, `max-keys`, `start-after`, `continuation-token` / `marker`, `fetch-owner`, `encoding-type=url`; `ListObjectVersions`, which lists every object as its only version, `null`, as S3 does for an unversioned bucket |
 | Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectAttributes`, `GetObjectTagging`, `PutObjectTagging`, `DeleteObjectTagging` |
 | Browser upload | `PostObject` (an HTML form signed with a Signature Version 4 POST policy, as `PresignPostObject` in the SDKs produces) |
+| STS | `AssumeRole` at `POST /` on the S3 endpoint (point the SDK's STS client there), with `DurationSeconds` and a session `Policy`; see [Temporary Credentials](configuration.md#temporary-credentials) |
 | Multipart | `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy` (with `x-amz-copy-source-range`; a range outside the source is `400 InvalidArgument`, as on S3), `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` (with `prefix`, `delimiter` and `encoding-type=url`) |
 
 POST uploads:

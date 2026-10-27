@@ -1,6 +1,8 @@
 package s3api
 
 import (
+	"cmp"
+	"errors"
 	"math"
 	"net"
 	"net/http"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/somaz94/plainbucket/internal/ratelimit"
 	"github.com/somaz94/plainbucket/internal/s3err"
+	"github.com/somaz94/plainbucket/internal/session"
+	"github.com/somaz94/plainbucket/internal/sigv4"
 )
 
 // Credential is one access key and what it may do.
@@ -19,22 +23,26 @@ type Credential struct {
 	SecretKey string
 	// Buckets limits the key to these buckets; empty allows every bucket.
 	Buckets []string
-	// ReadOnly allows only GET and HEAD.
+	// ReadOnly allows only GET and HEAD, and AssumeRole for read-only sessions.
 	ReadOnly bool
 	// RateLimit caps the key's requests and body bytes; zero does not limit.
 	RateLimit ratelimit.Limit
+
+	parent  string // the key that issued this temporary one
+	session string // its RoleSessionName
 }
 
 func (c *Credential) allows(bucket string) bool {
 	return len(c.Buckets) == 0 || slices.Contains(c.Buckets, bucket)
 }
 
-func (h *Handler) credentials(accessKey string) (string, bool) {
-	c, ok := h.access.Load().creds[accessKey]
-	if !ok {
-		return "", false
+// secret looks a long-term key up. A request verifies and authorizes against one
+// snapshot, so a reload between the two cannot pair an old secret with new access.
+func (a *access) secret(accessKey string) (string, bool) {
+	if c := a.creds[accessKey]; c != nil {
+		return c.SecretKey, true
 	}
-	return c.SecretKey, true
+	return "", false
 }
 
 // signatureParams mark a request as signed even when it carries no Authorization
@@ -111,9 +119,68 @@ func (h *Handler) throttle(req *request, lm *ratelimit.Limiter, anonymous bool) 
 	return nil
 }
 
-// keyLimiter returns the limiter of the key that signed req, nil when it has none.
+// keyLimiter returns the limiter of the key that signed req, nil when it has none. A
+// temporary key shares its issuer's.
 func (h *Handler) keyLimiter(req *request) *ratelimit.Limiter {
-	return h.access.Load().limiters[req.cred.AccessKey]
+	return h.access.Load().limiters[cmp.Or(req.cred.parent, req.cred.AccessKey)]
+}
+
+// verifySigned authenticates a signed request and sets req.auth and req.cred. A request
+// with a session token is signed with the temporary key the token derives, and gets its
+// issuer's access narrowed by the token.
+func (h *Handler) verifySigned(req *request) error {
+	a := h.access.Load()
+	creds, temp := sigv4.Credentials(a.secret), (*Credential)(nil)
+	if token := cmp.Or(req.r.Header.Get("X-Amz-Security-Token"), req.q.Get("X-Amz-Security-Token")); token != "" {
+		var err error
+		if temp, err = h.sessionCredential(a, token); err != nil {
+			return err
+		}
+		creds = func(k string) (string, bool) { return temp.SecretKey, k == temp.AccessKey }
+	}
+	auth, e := sigv4.Verify(req.r, creds, h.now())
+	if e != nil {
+		return e
+	}
+	req.auth, req.cred = auth, cmp.Or(temp, a.creds[auth.AccessKey])
+	return nil
+}
+
+// sessionCredential returns the temporary key of a session token.
+func (h *Handler) sessionCredential(a *access, token string) (*Credential, error) {
+	claims, sc, err := session.Parse(token, a.secret, h.now())
+	switch {
+	case errors.Is(err, session.ErrExpired):
+		return nil, s3err.ExpiredToken()
+	case err != nil:
+		return nil, s3err.InvalidToken()
+	}
+	p := a.creds[claims.Parent]
+	return &Credential{AccessKey: sc.AccessKey, SecretKey: sc.SecretKey, Buckets: narrow(p.Buckets, claims.Buckets),
+		ReadOnly: p.ReadOnly || claims.ReadOnly, RateLimit: p.RateLimit, parent: p.AccessKey, session: claims.Name}, nil
+}
+
+// noBucket is a bucket scope that allows none: no bucket has an empty name.
+var noBucket = []string{""}
+
+// narrow returns the buckets both scopes allow; an empty scope allows every bucket.
+func narrow(have, want []string) []string {
+	switch {
+	case len(want) == 0:
+		return have
+	case len(have) == 0:
+		return want
+	}
+	var both []string
+	for _, b := range want {
+		if slices.Contains(have, b) {
+			both = append(both, b)
+		}
+	}
+	if len(both) == 0 {
+		return noBucket
+	}
+	return both
 }
 
 // anonLimiter returns the limiter of an unsigned request's client address.

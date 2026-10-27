@@ -18,7 +18,7 @@ func VerifyPost(fields map[string]string, creds Credentials) (*Auth, *s3err.Erro
 	if fields["x-amz-algorithm"] != Algorithm {
 		return nil, s3err.InvalidArgument("x-amz-algorithm must be AWS4-HMAC-SHA256.")
 	}
-	cred, ok := parseCredential(fields["x-amz-credential"])
+	cred, ok := parseCredential(fields["x-amz-credential"], "s3")
 	if !ok {
 		return nil, s3err.InvalidArgument("x-amz-credential is malformed.")
 	}

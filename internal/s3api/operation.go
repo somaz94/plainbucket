@@ -5,7 +5,7 @@ import (
 	"net/url"
 )
 
-// operation names the S3 operation a request asks for, following the dispatch in serve,
+// operation names the S3 or STS operation a request asks for, following the dispatch in serve,
 // for the metrics and the access log. It does not depend on the request being authorized,
 // so a refused PutObject still counts as PutObject.
 func operation(r *http.Request, bucket, key string) string {
@@ -24,8 +24,11 @@ func operation(r *http.Request, bucket, key string) string {
 	}
 	switch {
 	case bucket == "":
-		if r.Method == http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
 			return "ListBuckets"
+		case http.MethodPost:
+			return "AssumeRole"
 		}
 	case isPostUpload(r, key, q):
 		return "PostObject"

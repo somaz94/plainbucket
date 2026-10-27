@@ -2,7 +2,7 @@
 // typed at login, except upload-link pages, which send the POST policy the link carries;
 // the key stays in memory only, so a reload signs out.
 import { canonicalKey, displayKey, encodeKey, escapeXML, keyBytes, keyText, xmlKey } from "./keys.js";
-import { encodePath, presign, queryString, signHeaders } from "./sigv4.js";
+import { encodePath, hex, presign, queryString, sha256, signHeaders } from "./sigv4.js";
 import { makeLink, maxLinkBytes, parseLink } from "./uploadlink.js";
 import { ZipBuilder, crc32, entryName } from "./zip.js";
 
@@ -178,7 +178,9 @@ function children(node, name) {
 }
 
 async function s3Error(status, text) {
-  const doc = xml(text || "<Error/>").documentElement;
+  let doc = xml(text || "<Error/>").documentElement;
+  // STS wraps its error in an ErrorResponse.
+  if (doc.localName === "ErrorResponse") doc = [...doc.children].find((c) => c.localName === "Error") ?? doc;
   return new S3Error(status, child(doc, "Code") || String(status), child(doc, "Message") || "Request failed.");
 }
 
@@ -1024,6 +1026,62 @@ setInterval(() => {
   notify("Signed out after 30 minutes without activity.", "status");
 }, 30 * 1000);
 
+// ---- Temporary keys
+
+const tempDurations = [["15 minutes", 900], ["1 hour", 3600], ["4 hours", 14400], ["12 hours", 43200]];
+
+// assumeRole asks the server's STS AssumeRole for a session of the signed-in key, narrowed
+// to buckets (none: every bucket the key may use) and to reads when readOnly.
+async function assumeRole({ buckets, readOnly, seconds }) {
+  const form = new URLSearchParams({
+    Action: "AssumeRole", Version: "2011-06-15", RoleArn: "arn:aws:iam::000000000000:role/console",
+    RoleSessionName: "console-" + Date.now().toString(36), DurationSeconds: String(seconds),
+  });
+  if (buckets.length || readOnly) {
+    form.set("Policy", JSON.stringify({ Version: "2012-10-17", Statement: [{
+      Effect: "Allow", Action: readOnly ? ["s3:Get*", "s3:List*"] : ["s3:*"],
+      Resource: buckets.length ? buckets.flatMap((b) => [`arn:aws:s3:::${b}`, `arn:aws:s3:::${b}/*`]) : ["*"],
+    }] }));
+  }
+  const body = form.toString();
+  const headers = signHeaders(cred, { method: "POST", host, path: "/", service: "sts", payload: hex(sha256(body)),
+    headers: { "content-type": "application/x-www-form-urlencoded" } });
+  const res = await fetch("/", { method: "POST", body, headers });
+  const text = await res.text();
+  if (!res.ok) throw await s3Error(res.status, text);
+  const c = xml(text).getElementsByTagNameNS("*", "Credentials")[0];
+  return { accessKey: child(c, "AccessKeyId"), secretKey: child(c, "SecretAccessKey"), token: child(c, "SessionToken"), expires: child(c, "Expiration") };
+}
+
+function tempKeyDialog(buckets) {
+  const boxes = buckets.map((b) => [b, el("input", { type: "checkbox" })]);
+  const readOnly = el("input", { type: "checkbox", checked: keyInfo.readOnly, disabled: keyInfo.readOnly });
+  const duration = el("select", {}, tempDurations.map(([label, sec]) => el("option", { value: sec, selected: sec === 3600 }, label)));
+  const out = el("div");
+  const create = action("Create", async () => {
+    try {
+      const k = await assumeRole({ buckets: boxes.filter(([, x]) => x.checked).map(([b]) => b), readOnly: readOnly.checked, seconds: Number(duration.value) });
+      const env = `export AWS_ENDPOINT_URL=${location.origin} AWS_ACCESS_KEY_ID=${k.accessKey} ` +
+        `AWS_SECRET_ACCESS_KEY=${k.secretKey} AWS_SESSION_TOKEN=${k.token}`;
+      out.replaceChildren(
+        el("p", { class: "muted" }, `Valid until ${new Date(k.expires).toLocaleString()}.`),
+        el("div", { class: "field" }, "Access key", copyField(k.accessKey)),
+        el("div", { class: "field" }, "Secret key", copyField(k.secretKey)),
+        el("div", { class: "field" }, "Session token", copyField(k.token)),
+        el("div", { class: "field" }, "Shell", copyField(env)));
+    } catch (err) {
+      out.replaceChildren(el("p", { class: "error" }, describe(err)));
+    }
+  });
+  dialog("Temporary key",
+    el("p", { class: "muted" }, "A key that expires on its own, for a CI job or a script, with at most this key's access. " +
+      "It stops working early if this key is removed or loses access."),
+    buckets.length ? el("div", { class: "field" }, "Buckets (none checked: all this key may use)",
+      el("div", { class: "row" }, boxes.map(([b, x]) => el("label", {}, x, " ", b)))) : null,
+    el("label", { class: "row" }, readOnly, " Read only"),
+    el("div", { class: "row" }, "Valid for", duration, create), out);
+}
+
 async function bucketsView() {
   const report = reporter();
   const name = el("input", { placeholder: "new-bucket-name", pattern: "[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", required: true });
@@ -1042,7 +1100,9 @@ async function bucketsView() {
   } }, name, create);
 
   const body = el("tbody");
-  const view = el("section", {}, el("h1", {}, "Buckets"), keyInfo.readOnly ? null : form,
+  const names = [];
+  const view = el("section", {}, el("h1", {}, "Buckets"),
+    el("div", { class: "row" }, keyInfo.readOnly ? null : form, button("Temporary key", () => tempKeyDialog(names))),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Created"), el("th"))), body));
   try {
     const res = await s3xml("GET", "");
@@ -1050,6 +1110,7 @@ async function bucketsView() {
     if (!buckets.length) body.append(el("tr", {}, el("td", { colspan: 3, class: "muted" }, "No buckets yet.")));
     for (const b of buckets) {
       const n = child(b, "Name");
+      names.push(n);
       body.append(el("tr", {},
         el("td", {}, el("a", { href: bucketHash(n, "") }, n)),
         el("td", {}, formatDate(child(b, "CreationDate"))),

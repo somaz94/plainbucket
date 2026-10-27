@@ -55,11 +55,12 @@ func (h *Handler) postObject(req *request) error {
 	if fields["x-amz-signature"] == "" && fields["policy"] == "" && fields["x-amz-credential"] == "" {
 		return s3err.AccessDenied("Anonymous POST uploads are not allowed.")
 	}
-	auth, e := sigv4.VerifyPost(fields, h.credentials)
+	a := h.access.Load()
+	auth, e := sigv4.VerifyPost(fields, a.secret)
 	if e != nil {
 		return e
 	}
-	req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
+	req.auth, req.cred = auth, a.creds[auth.AccessKey]
 	if err := req.authorize(); err != nil {
 		return err
 	}

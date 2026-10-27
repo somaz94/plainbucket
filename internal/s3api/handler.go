@@ -242,12 +242,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if req.cred != nil {
 			accessKey = req.cred.AccessKey
 		}
-		h.log.LogAttrs(r.Context(), slog.LevelInfo, "request",
+		attrs := []slog.Attr{
 			slog.String("operation", op), slog.String("method", r.Method), slog.String("host", r.Host), slog.String("path", r.URL.Path),
 			slog.String("query", redactQuery(r.URL.RawQuery)), slog.String("bucket", req.bucket), slog.String("key", req.key),
 			slog.Int("status", rec.Status), slog.Int64("bytes", rec.Bytes),
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()), slog.String("remote", r.RemoteAddr),
-			slog.String("access_key", accessKey), slog.String("user_agent", r.UserAgent()), slog.String("request_id", id))
+			slog.String("access_key", accessKey), slog.String("user_agent", r.UserAgent()), slog.String("request_id", id),
+		}
+		if req.cred != nil && req.cred.parent != "" {
+			attrs = append(attrs, slog.String("issuer", req.cred.parent), slog.String("session", req.cred.session))
+		}
+		h.log.LogAttrs(r.Context(), slog.LevelInfo, "request", attrs...)
 	}
 }
 
@@ -274,6 +279,10 @@ func requestID() string {
 
 func (h *Handler) serve(req *request) error {
 	req.q = req.r.URL.Query()
+	if isSTS(req.r, req.bucket) {
+		h.assumeRole(req)
+		return nil
+	}
 	if req.bucket != "" && isPostUpload(req.r, req.key, req.q) {
 		return h.postObject(req)
 	}
@@ -286,11 +295,9 @@ func (h *Handler) serve(req *request) error {
 			return err
 		}
 	} else {
-		auth, e := sigv4.Verify(req.r, h.credentials, h.now())
-		if e != nil {
-			return e
+		if err := h.verifySigned(req); err != nil {
+			return err
 		}
-		req.auth, req.cred = auth, h.access.Load().creds[auth.AccessKey]
 		if err := req.authorize(); err != nil {
 			return err
 		}
