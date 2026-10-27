@@ -49,7 +49,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 - Expiry and eviction go through `removeIfUnused`, which re-checks size, mtime and last use under the key lock, so a scan never deletes an object rewritten after it, nor one read after it unless a lifecycle `delete-after` expires it by write time. Last use is the later of the data file's mtime (write) and the sidecar's (read); reads move only the sidecar's, never the data file's.
 - A delete in a bucket with `trash-after` moves the file into `.plainbucket/trash` (`trashFile`); expiry and eviction never do. A restore goes through `account` and never replaces an object.
 - Event notifications never block or fail a request: `Notifier.Publish` drops on a full queue, and handlers publish only after the store committed the change. Deletes are published only when `DeleteObjectIf` reports an object removed; expiry and eviction reach the notifier through `Store.OnLimitRemove`.
-- Bucket usage changes go through `account` (writes, may refuse) or `adjust` (deletes and rollbacks, never refuse); both record into `measuring` while `MeasureUsage` walks, so its swap does not drop them.
+- Bucket usage changes go through `account` (writes, may refuse) or `adjust` (deletes and rollbacks, never refuse), and bucket creation and deletion through `resetUsage`; all record into `measuring` while `MeasureUsage` walks, so its swap neither drops a change nor revives a deleted bucket.
 - `hack/bump-version.sh` moves the Makefile image tag, Chart `version` / `appVersion` and `values.yaml` `image.tag` together.
 
 <br/>

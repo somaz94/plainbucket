@@ -236,15 +236,21 @@ func (s *Store) Usage() Usage {
 // walks the whole tree, so the janitor runs it rather than each metrics scrape; the
 // per-bucket figures also correct drift from files changed outside the server.
 func (s *Store) MeasureUsage(ctx context.Context) {
+	s.measureMu.Lock()
+	defer s.measureMu.Unlock()
 	var total Usage
 	per := map[string]Usage{}
+	// Recording starts before the listing, so a bucket created in between is not lost.
+	s.usageMu.Lock()
+	s.measuring, s.resets = map[string]Usage{}, map[string]bool{}
+	s.usageMu.Unlock()
 	buckets, err := s.ListBuckets()
 	if err != nil {
+		s.usageMu.Lock()
+		s.measuring, s.resets = nil, nil
+		s.usageMu.Unlock()
 		return
 	}
-	s.usageMu.Lock()
-	s.measuring = map[string]Usage{}
-	s.usageMu.Unlock()
 	for _, b := range buckets {
 		var u Usage
 		root := s.bucketPath(b.Name)
@@ -273,14 +279,23 @@ func (s *Store) MeasureUsage(ctx context.Context) {
 	}
 	s.usageMu.Lock()
 	defer s.usageMu.Unlock()
-	measuring := s.measuring
-	s.measuring = nil
+	measuring, resets := s.measuring, s.resets
+	s.measuring, s.resets = nil, nil
 	if ctx.Err() != nil {
 		return
 	}
 	// Changes made during the walk may or may not be in it; counting them again errs
-	// toward the limit, and the next measurement corrects it.
+	// toward the limit, and the next measurement corrects it. A bucket created or deleted
+	// meanwhile takes only what happened after that instead.
 	for b, d := range measuring {
+		if exists, ok := resets[b]; ok {
+			if exists {
+				per[b] = d
+			} else {
+				delete(per, b)
+			}
+			continue
+		}
 		u := per[b]
 		u.Objects += d.Objects
 		u.Bytes += d.Bytes

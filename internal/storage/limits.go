@@ -115,6 +115,20 @@ func (s *Store) adjust(bucket string, objects, bytes int64) {
 	s.addUsage(bucket, objects, bytes)
 }
 
+// resetUsage records that bucket was just created empty (exists) or deleted, so a running
+// measurement keeps only the changes made after it. The caller holds usageMu.
+func (s *Store) resetUsage(bucket string, exists bool) {
+	if exists {
+		s.bucketUsage[bucket] = Usage{}
+	} else {
+		delete(s.bucketUsage, bucket)
+	}
+	if s.measuring != nil {
+		s.measuring[bucket] = Usage{}
+		s.resets[bucket] = exists
+	}
+}
+
 // addUsage applies a change, and keeps it for replay if a measurement is running, whose
 // result would otherwise overwrite it. The caller holds usageMu.
 func (s *Store) addUsage(bucket string, objects, bytes int64) {

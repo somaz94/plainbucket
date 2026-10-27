@@ -53,6 +53,9 @@ func (s *Store) CreateBucket(name string) error {
 	if !ValidBucketName(name) {
 		return ErrInvalidBucketName
 	}
+	bl := s.bucketLock(name)
+	bl.Lock()
+	defer bl.Unlock()
 	if err := s.r.Mkdir(name, dirPerm); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return ErrBucketExists
@@ -61,6 +64,9 @@ func (s *Store) CreateBucket(name string) error {
 	}
 	raw, _ := json.Marshal(map[string]time.Time{"created": s.now().UTC()})
 	_ = s.writeFileAtomic(s.sys("buckets", name+".json"), raw)
+	s.usageMu.Lock()
+	s.resetUsage(name, true) // listed in the usage before its first write
+	s.usageMu.Unlock()
 	return nil
 }
 
@@ -84,7 +90,7 @@ func (s *Store) DeleteBucket(name string) error {
 	_ = os.RemoveAll(s.sys("meta", name))
 	_ = os.Remove(s.sys("buckets", name+".json"))
 	s.usageMu.Lock()
-	delete(s.bucketUsage, name)
+	s.resetUsage(name, false)
 	s.usageMu.Unlock()
 	ups, _ := os.ReadDir(s.sys("uploads"))
 	for _, e := range ups {

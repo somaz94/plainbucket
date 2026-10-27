@@ -140,6 +140,8 @@ type Store struct {
 	usageMu     sync.Mutex
 	bucketUsage map[string]Usage // tracked between janitor measurements
 	measuring   map[string]Usage // changes made while a measurement runs
+	resets      map[string]bool  // buckets created (true) or deleted (false) while it runs
+	measureMu   sync.Mutex       // one measurement at a time, so they cannot swap each other's changes
 	kick        chan struct{}    // wakes the janitor when an evicting bucket is over its limit
 	expired     atomic.Int64
 	evicted     atomic.Int64

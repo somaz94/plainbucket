@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -507,5 +508,54 @@ func TestLifecycleRuleTouchesMoreOften(t *testing.T) {
 	}
 	if fi, _ := os.Stat(s.metaPath("bkt", "other")); fi.ModTime().Equal(c.t) {
 		t.Error("read outside the rule recorded early")
+	}
+}
+
+// A bucket created or deleted while a measurement walks keeps only what happened after
+// that: it neither disappears, comes back, nor carries the deletes made before it.
+func TestMeasureUsageBucketChurn(t *testing.T) {
+	s := newStore(t)
+	for _, b := range []string{"gone", "old"} {
+		if err := s.CreateBucket(b); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range []string{"x", "y"} {
+			if _, err := s.PutObject(b, k, strings.NewReader("12"), 2, PutOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Store.now runs after each bucket's walk: the first call is after "bkt", before the others.
+	var fired atomic.Bool // not sync.Once: the deletes below call Store.now again
+	now := s.now
+	s.now = func() time.Time {
+		if fired.CompareAndSwap(false, true) {
+			for _, b := range []string{"gone", "old"} {
+				for _, k := range []string{"x", "y"} {
+					if err := s.DeleteObject(b, k); err != nil {
+						t.Error(err)
+					}
+				}
+				if err := s.DeleteBucket(b); err != nil {
+					t.Error(err)
+				}
+			}
+			for _, b := range []string{"gone", "late"} {
+				if err := s.CreateBucket(b); err != nil {
+					t.Error(err)
+				}
+			}
+		}
+		return now()
+	}
+	s.MeasureUsage(context.Background())
+	all := s.AllBucketUsage()
+	if _, ok := all["old"]; ok {
+		t.Errorf("a deleted bucket came back: %+v", all)
+	}
+	for _, b := range []string{"gone", "late"} {
+		if u, ok := all[b]; !ok || u.Objects != 0 || u.Bytes != 0 {
+			t.Errorf("%s = %+v, %v", b, u, ok)
+		}
 	}
 }
