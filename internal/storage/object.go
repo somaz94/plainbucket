@@ -133,7 +133,7 @@ func markerInfo(key string, mod time.Time) ObjectInfo {
 // GetObject opens bucket/key for reading and records the read as its last use. The
 // file is nil for a directory marker.
 func (s *Store) GetObject(bucket, key string) (*os.File, ObjectInfo, error) {
-	f, info, err := s.open(bucket, key, true)
+	f, info, err := s.open(bucket, key, true, false)
 	if f != nil {
 		s.touch(bucket, key)
 	}
@@ -144,12 +144,12 @@ func (s *Store) GetObject(bucket, key string) (*os.File, ObjectInfo, error) {
 // own copies, which must not keep an object from expiring.
 func (s *Store) ReadObject(bucket, key string) (*os.File, ObjectInfo, error) {
 	// Saving a rebuilt sidecar would move its mtime, which is the object's last use.
-	return s.open(bucket, key, false)
+	return s.open(bucket, key, false, false)
 }
 
-// open opens bucket/key. persist lets it save a rebuilt sidecar, which takes the key
-// lock, so callers already holding that lock pass false.
-func (s *Store) open(bucket, key string, persist bool) (*os.File, ObjectInfo, error) {
+// open opens bucket/key. persist lets it save a rebuilt sidecar. locked says the caller
+// holds the key lock, so open skips the recheck; such a caller must pass persist false.
+func (s *Store) open(bucket, key string, persist, locked bool) (*os.File, ObjectInfo, error) {
 	if err := s.requireBucket(bucket); err != nil {
 		return nil, ObjectInfo{}, err
 	}
@@ -180,6 +180,20 @@ func (s *Store) open(bucket, key string, persist bool) (*os.File, ObjectInfo, er
 		return nil, ObjectInfo{}, err
 	}
 	m, ok := s.readSidecar(bucket, key)
+	if (!ok || !m.matches(fi)) && !locked {
+		// Between a commit's two renames the new data has no matching sidecar yet; under the
+		// key lock the commit has finished, so look again before taking the file for edited.
+		_ = f.Close()
+		unlock := s.lock(bucket, key)
+		f, fi, err = s.openData(bucket, key)
+		if err == nil {
+			m, ok = s.readSidecar(bucket, key)
+		}
+		unlock()
+		if err != nil {
+			return nil, ObjectInfo{}, err
+		}
+	}
 	if !ok || !m.matches(fi) {
 		if m, err = s.refresh(bucket, key, f, fi, m, persist); err != nil {
 			_ = f.Close()
@@ -317,8 +331,7 @@ func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) (remov
 	unlock := s.lock(bucket, key)
 	defer unlock()
 	if cond.any() {
-		// persist=false: refreshing the sidecar would take the key lock held here.
-		f, info, err := s.open(bucket, key, false)
+		f, info, err := s.open(bucket, key, false, true)
 		if f != nil {
 			_ = f.Close()
 		}

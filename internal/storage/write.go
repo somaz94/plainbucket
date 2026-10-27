@@ -133,7 +133,7 @@ func (s *Store) checkConditions(bucket, key string, cond Conditions) error {
 	if cond.IfMatch == "" && cond.IfNoneMatch == "" {
 		return nil
 	}
-	f, info, err := s.open(bucket, key, false)
+	f, info, err := s.open(bucket, key, false, true)
 	if f != nil {
 		_ = f.Close()
 	}

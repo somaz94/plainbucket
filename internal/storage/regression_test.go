@@ -163,3 +163,49 @@ func TestDeleteBucketWaitsForWriters(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A read between a commit's data rename and its sidecar rename waits for the sidecar
+// instead of rebuilding one that pairs the new data with the old metadata. It uses
+// ReadObject, which saves nothing, so only the recheck takes the key lock.
+func TestReadBetweenCommitRenames(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.PutObject("bkt", "k", strings.NewReader("old"), 3, PutOptions{Metadata: Metadata{ContentType: "text/old"}}); err != nil {
+		t.Fatal(err)
+	}
+	orig := rename
+	t.Cleanup(func() { rename = orig })
+	between, release := make(chan struct{}), make(chan struct{})
+	rename = func(r *os.Root, src, dst string) error {
+		if strings.Contains(dst, filepath.Join(SysDir, "meta")) {
+			close(between)
+			<-release
+		}
+		return orig(r, src, dst)
+	}
+	put := make(chan error, 1)
+	go func() {
+		_, err := s.PutObject("bkt", "k", strings.NewReader("newer"), 5, PutOptions{Metadata: Metadata{ContentType: "text/new"}})
+		put <- err
+	}()
+	<-between
+	got := make(chan ObjectInfo, 1)
+	go func() {
+		f, info, err := s.ReadObject("bkt", "k")
+		if f != nil {
+			_ = f.Close()
+		}
+		if err != nil {
+			t.Error(err)
+		}
+		got <- info
+	}()
+	time.Sleep(20 * time.Millisecond) // let the read reach the key lock
+	close(release)
+	if err := <-put; err != nil {
+		t.Fatal(err)
+	}
+	rename = orig
+	if info := <-got; info.Size != 5 || info.ContentType != "text/new" {
+		t.Errorf("read during the commit: size %d, %q; want the new object", info.Size, info.ContentType)
+	}
+}
