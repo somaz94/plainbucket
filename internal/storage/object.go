@@ -92,13 +92,13 @@ func (s *Store) putMarker(bucket, key string, cond Conditions, tags []Tag) (Obje
 	if err := s.checkConditions(bucket, key, cond); err != nil {
 		return ObjectInfo{}, err
 	}
-	p := s.rel(s.dataPath(bucket, key))
-	if err := s.r.MkdirAll(p, dirPerm); err != nil {
-		if errors.Is(err, syscall.ENOTDIR) || errors.Is(err, os.ErrExist) {
-			return ObjectInfo{}, ErrConflict
-		}
+	dir := s.dataPath(bucket, key)
+	p := s.rel(dir)
+	top, err := s.mkdirParent(filepath.Join(dir, "x"), dirPerm)
+	if err != nil {
 		return ObjectInfo{}, err
 	}
+	s.syncUp(dir, top)
 	raw, err := json.Marshal(sidecar{Key: key, ETag: emptyETag, Dir: true, Metadata: Metadata{Tags: tags}})
 	if err != nil {
 		return ObjectInfo{}, err

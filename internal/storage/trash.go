@@ -78,7 +78,7 @@ func (s *Store) trashFile(bucket, key, p string, fi os.FileInfo, after time.Dura
 	}
 	out, err := json.Marshal(man)
 	if err == nil {
-		err = os.WriteFile(filepath.Join(dir, trashManifest), out, 0o600)
+		err = s.writeFileAtomic(filepath.Join(dir, trashManifest), out)
 	}
 	if err == nil {
 		err = rename(s.r, s.rel(p), s.rel(filepath.Join(dir, trashData)))

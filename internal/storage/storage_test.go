@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -483,5 +484,50 @@ func TestBucketTags(t *testing.T) {
 	}
 	if err := s.SetBucketTags("nope", nil); !errors.Is(err, ErrNoSuchBucket) {
 		t.Errorf("tagging a missing bucket: %v", err)
+	}
+}
+
+// A put syncs each directory it added an entry to, after the rename, and not the ones it
+// left unchanged.
+func TestPutSyncsDirectories(t *testing.T) {
+	s := newStore(t)
+	var synced []string
+	old := syncDir
+	syncDir = func(r *os.Root, dir string) {
+		if dir == "bkt/a" {
+			if _, err := os.Stat(filepath.Join(s.Root(), "bkt", "a", "b.txt")); err != nil {
+				t.Errorf("bkt/a synced before the object was in it: %v", err)
+			}
+		}
+		synced = append(synced, filepath.ToSlash(dir))
+		old(r, dir)
+	}
+	t.Cleanup(func() { syncDir = old })
+	put(t, s, "a/b.txt", "x")
+	meta, _ := filepath.Rel(s.Root(), filepath.Dir(s.metaPath("bkt", "a/b.txt")))
+	// bkt/a was created, so bkt gained an entry too.
+	for _, want := range []string{"bkt/a", "bkt", filepath.ToSlash(meta)} {
+		if !slices.Contains(synced, want) {
+			t.Errorf("synced %v, missing %s", synced, want)
+		}
+	}
+	synced = nil
+	put(t, s, "a/c.txt", "x")
+	if slices.Contains(synced, "bkt") {
+		t.Errorf("synced %v: bkt did not change", synced)
+	}
+	synced = nil
+	if _, err := s.PutObject("bkt", "m/n/", strings.NewReader(""), 0, PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(synced, "bkt/m") || !slices.Contains(synced, "bkt") {
+		t.Errorf("a new marker synced %v, want bkt and bkt/m", synced)
+	}
+	synced = nil
+	if err := s.CreateBucket("other"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(synced, ".") {
+		t.Errorf("a new bucket synced %v, want the root", synced)
 	}
 }

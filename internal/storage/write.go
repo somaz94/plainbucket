@@ -21,8 +21,8 @@ type Conditions struct {
 // digest; it returns the verified additional checksums to store with the object.
 type Verifier func(md5 []byte) (map[string]string, error)
 
-// receive streams exactly size bytes from body into a temporary file and returns its
-// path, MD5 and verified checksums. The caller removes the file.
+// receive streams body (exactly size bytes when size >= 0) into a temporary file and
+// returns its path, MD5 and verified checksums. The caller removes the file.
 func (s *Store) receive(body io.Reader, size int64, verify Verifier) (string, []byte, map[string]string, error) {
 	release, room, err := s.reserve(size)
 	if err != nil {
@@ -70,6 +70,18 @@ func (s *Store) receive(body io.Reader, size int64, verify Verifier) (string, []
 // after checking cond against the current object.
 func (s *Store) commit(bucket, key, tmp string, m sidecar, cond Conditions) (ObjectInfo, error) {
 	defer func() { _ = os.Remove(tmp) }()
+	// Staged before the locks: the sidecar depends only on tmp, and its sync is slow.
+	fi, err := os.Stat(tmp)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	m.Key, m.Size, m.MtimeNs = key, fi.Size(), fi.ModTime().UnixNano()
+	metaTmp, err := s.stageSidecar(m)
+	if err != nil {
+		return ObjectInfo{}, fmt.Errorf("writing metadata: %w", err)
+	}
+	defer func() { _ = os.Remove(metaTmp) }()
+
 	bl := s.bucketLock(bucket)
 	bl.RLock()
 	defer bl.RUnlock()
@@ -90,10 +102,6 @@ func (s *Store) commit(bucket, key, tmp string, m sidecar, cond Conditions) (Obj
 		oldObjects, oldBytes = 1, fi.Size()
 	}
 
-	fi, err := os.Stat(tmp)
-	if err != nil {
-		return ObjectInfo{}, err
-	}
 	over, err := s.account(bucket, 1-oldObjects, fi.Size()-oldBytes)
 	if err != nil {
 		return ObjectInfo{}, err
@@ -104,13 +112,6 @@ func (s *Store) commit(bucket, key, tmp string, m sidecar, cond Conditions) (Obj
 			s.adjust(bucket, oldObjects-1, oldBytes-fi.Size())
 		}
 	}()
-	m.Key, m.Size, m.MtimeNs = key, fi.Size(), fi.ModTime().UnixNano()
-	metaTmp, err := s.stageSidecar(m)
-	if err != nil {
-		return ObjectInfo{}, fmt.Errorf("writing metadata: %w", err)
-	}
-	defer func() { _ = os.Remove(metaTmp) }()
-
 	metaDst := s.metaPath(bucket, key)
 	if err := s.place(tmp, dst, dirPerm); err != nil {
 		return ObjectInfo{}, err
@@ -127,7 +128,7 @@ func (s *Store) commit(bucket, key, tmp string, m sidecar, cond Conditions) (Obj
 	return m.info(fi.ModTime()), nil
 }
 
-// checkConditions runs with the key lock held, so it must not persist a refreshed sidecar.
+// checkConditions runs with the key lock held.
 func (s *Store) checkConditions(bucket, key string, cond Conditions) error {
 	if cond.IfMatch == "" && cond.IfNoneMatch == "" {
 		return nil
@@ -160,6 +161,9 @@ func (s *Store) stageBytes(pattern string, raw []byte) (string, error) {
 		return "", err
 	}
 	_, err = tmp.Write(raw)
+	if err == nil {
+		err = tmp.Sync()
+	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -183,18 +187,34 @@ func (s *Store) writeFileAtomic(path string, raw []byte) error {
 	return nil
 }
 
-// rename is os.Root.Rename; tests replace it to fail a specific placement.
+// rename is os.Root.Rename; tests replace it to fail or hold a specific rename.
 var rename = func(r *os.Root, src, dst string) error { return r.Rename(src, dst) }
 
-// place renames src to dst (both absolute, under the root), creating dst's parent. It
-// retries when a concurrent delete prunes the freshly created parent.
+// syncDir flushes a directory, so a rename into it survives a power loss. Its error is
+// ignored: the file is in place by then, and some network filesystems refuse the call.
+var syncDir = func(r *os.Root, dir string) {
+	if d, err := r.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+}
+
+// place renames src to dst (both absolute, under the root), creating dst's parent, and
+// syncs every directory that gained an entry. It retries when a concurrent delete prunes
+// the freshly created parent.
 func (s *Store) place(src, dst string, perm os.FileMode) error {
 	var err error
 	for range 4 {
-		if err = s.mkdirParent(dst, perm); err != nil {
+		var top string
+		if top, err = s.mkdirParent(dst, perm); err != nil {
 			return err
 		}
-		if err = rename(s.r, s.rel(src), s.rel(dst)); !errors.Is(err, os.ErrNotExist) {
+		err = rename(s.r, s.rel(src), s.rel(dst))
+		if err == nil {
+			s.syncUp(filepath.Dir(dst), top)
+			return nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
 			if errors.Is(err, syscall.EISDIR) || errors.Is(err, syscall.EEXIST) || errors.Is(err, syscall.ENOTEMPTY) {
 				return ErrConflict
 			}
@@ -204,13 +224,36 @@ func (s *Store) place(src, dst string, perm os.FileMode) error {
 	return err
 }
 
+// syncUp syncs d and each parent of it up to and including top.
+func (s *Store) syncUp(d, top string) {
+	for ; ; d = filepath.Dir(d) {
+		syncDir(s.r, s.rel(d))
+		if d == top || len(d) <= len(s.root) {
+			return
+		}
+	}
+}
+
 // mkdirParent creates dst's parent, mapping "a path component is a file" to ErrConflict.
-func (s *Store) mkdirParent(dst string, perm os.FileMode) error {
+// It returns the deepest directory that existed before, which gained the first new entry.
+// Two writes creating the same directories at once may each see the other's as existing;
+// journaling filesystems commit those entries with the later directory sync anyway.
+func (s *Store) mkdirParent(dst string, perm os.FileMode) (string, error) {
+	top := filepath.Dir(dst)
+	if fi, err := s.r.Lstat(s.rel(top)); err == nil && fi.IsDir() {
+		return top, nil
+	}
+	for len(top) > len(s.root) {
+		if _, err := s.r.Lstat(s.rel(top)); !errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		top = filepath.Dir(top)
+	}
 	err := s.r.MkdirAll(s.rel(filepath.Dir(dst)), perm)
 	if err != nil && (errors.Is(err, syscall.ENOTDIR) || errors.Is(err, os.ErrExist)) {
-		return ErrConflict
+		return "", ErrConflict
 	}
-	return err
+	return top, err
 }
 
 // pruneEmptyParents removes now-empty directories from dir up to, not including, the
