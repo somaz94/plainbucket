@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"hash/crc32"
@@ -100,6 +101,50 @@ func (x *harness) expectErr(method, target string, body []byte, hdr map[string]s
 	rec := x.do(method, target, body, hdr)
 	if got := errCode(rec); got != code {
 		x.t.Errorf("%s %s: code %q (%d), want %s: %s", method, target, got, rec.Code, code, rec.Body.String())
+	}
+}
+
+func TestReadyz(t *testing.T) {
+	x := newHarness(t, nil)
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		x.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	ready := func(wantStatus int, want readiness) {
+		t.Helper()
+		rec := get("/readyz")
+		var got readiness
+		if rec.Code != wantStatus || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got != want {
+			t.Errorf("readyz: %d %s, want %d %+v", rec.Code, rec.Body.String(), wantStatus, want)
+		}
+	}
+	ready(http.StatusOK, readiness{Ready: true})
+	// Still ready, and still serving reads, while writes are refused.
+	x.h.SetReadOnly(true)
+	x.h.store.SetMinFree(1 << 62)
+	ready(http.StatusOK, readiness{Ready: true, ReadOnly: true, LowSpace: true})
+	x.h.SetReadOnly(false)
+	x.h.store.SetMinFree(0)
+
+	// A root moved away fails both, until it is back; the state change is logged once.
+	if err := os.Rename(x.root, x.root+"-gone"); err != nil {
+		t.Fatal(err)
+	}
+	ready(http.StatusServiceUnavailable, readiness{})
+	ready(http.StatusServiceUnavailable, readiness{})
+	if rec := get("/healthz"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("healthz with the root moved: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := os.Rename(x.root+"-gone", x.root); err != nil {
+		t.Fatal(err)
+	}
+	ready(http.StatusOK, readiness{Ready: true})
+	if rec := get("/healthz"); rec.Code != http.StatusOK {
+		t.Errorf("healthz with the root back: %d", rec.Code)
+	}
+	if n := strings.Count(x.logs.String(), "not ready"); n != 1 || !strings.Contains(x.logs.String(), "ready again") {
+		t.Errorf("readiness changes logged %d times:\n%s", n, x.logs.String())
 	}
 }
 

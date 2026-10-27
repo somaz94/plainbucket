@@ -42,6 +42,9 @@ ok "lint"
 render "${KEY[@]}"
 has "replicas: 1" "single replica"
 has "type: Recreate" "recreate strategy"
+has "path: /healthz" "liveness asks /healthz"
+has "path: /readyz" "readiness asks /readyz"
+has "timeoutSeconds: 3" "readiness timeout above the server's probe"
 has "name: pb-auth" "existing secret"
 has "claimName: t-plainbucket-data" "chart-created claim"
 has "helm.sh/resource-policy: keep" "claim kept on uninstall"
@@ -144,6 +147,8 @@ ok "storage modes"
 render "${KEY[@]}" --set probes.liveness.enabled=false --set resources=null --show-only templates/deployment.yaml
 lacks "livenessProbe" "liveness disabled"
 has "readinessProbe" "readiness kept"
+has "path: /readyz" "readiness asks /readyz"
+lacks "path: /healthz" "liveness path gone with liveness"
 lacks "resources:" "resources removed"
 ok "optional pod fields"
 
@@ -266,6 +271,7 @@ expect_fail "burst" "${KEY[@]}" --set-json 'config.anonymousRateLimit={"burst":1
 expect_fail "expire" "${KEY[@]}" --set "config.buckets.ci-cache.lifecycle[0].expire=1h"
 printf 'config:\n  buckets:\n    www:\n      headers:\n        - set: {Cache-Control: "a\\nb"}\n' >"${TMP_VALUES}"
 expect_fail "Cache-Control" "${KEY[@]}" -f "${TMP_VALUES}"
+expect_fail "timeoutSeconds" "${KEY[@]}" --set probes.readiness.timeoutSeconds=2
 expect_fail "allowed-methods" "${KEY[@]}" --set "config.buckets.www.cors.allowed-origins={*}" --set "config.buckets.www.cors.allowed-methods={PATCH}"
 ok "schema rejects invalid values"
 

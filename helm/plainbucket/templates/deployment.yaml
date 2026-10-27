@@ -151,7 +151,7 @@ spec:
           {{- if $p.enabled }}
           {{ $kind }}Probe:
             httpGet:
-              path: /healthz
+              path: {{ ternary "/readyz" "/healthz" (eq $kind "readiness") }}
               port: http
               {{- if $tls }}
               scheme: HTTPS

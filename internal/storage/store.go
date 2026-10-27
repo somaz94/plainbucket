@@ -147,6 +147,10 @@ type Store struct {
 	paused      atomic.Bool                              // see SetPaused
 	lastScrub   atomic.Pointer[ScrubResult]
 
+	probeMu   sync.Mutex
+	probing   *probe                // the read a Probe in progress waits for
+	probeRead func() (int64, error) // readRoot, replaced in tests
+
 	trashAfter atomic.Pointer[map[string]time.Duration] // swapped whole by SetTrash
 	trashMu    sync.Mutex                               // serializes restores, purges and the sweep's expiry
 
@@ -167,6 +171,7 @@ func New(root string) (*Store, error) {
 	}
 	s := &Store{root: abs, now: time.Now, MinPartSize: 5 << 20, buckets: map[string]*sync.RWMutex{},
 		bucketUsage: map[string]Usage{}, kick: make(chan struct{}, 1), statfs: diskSpace}
+	s.probeRead = s.readRoot
 	for _, d := range []string{"meta", "tmp", "uploads", "buckets", "trash"} {
 		if err := os.MkdirAll(s.sys(d), sysDirPerm); err != nil {
 			return nil, err

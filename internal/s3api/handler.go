@@ -67,6 +67,8 @@ type Handler struct {
 	access    atomic.Pointer[access] // swapped whole by SetAccess while serving
 	readOnly  atomic.Bool
 	writes    atomic.Int64                  // requests in flight that may write
+	unready   atomic.Bool                   // the last /readyz failed, so the next success is logged
+	rootMoved atomic.Bool                   // the last /readyz found storage.ErrRootMoved
 	anonymous atomic.Pointer[ratelimit.Set] // nil without an anonymous rate limit
 }
 
@@ -187,14 +189,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := requestID()
 	w.Header().Set("X-Amz-Request-Id", id)
 	w.Header().Set("Server", "plainbucket")
-	// An S3 request to a bucket named healthz or metrics is signed, so it never lands here.
+	// An S3 request to a bucket named healthz, readyz or metrics is signed, so it never lands here.
 	// On a virtual host these paths are object keys (a public bucket serves them unsigned).
 	vbucket, vhost := h.vhostBucket(r.Host)
 	if !vhost && r.URL.RawQuery == "" && r.Header.Get("Authorization") == "" && r.Method == http.MethodGet {
 		switch {
 		case r.URL.Path == "/healthz":
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			_, _ = w.Write([]byte("ok"))
+			h.serveHealth(w)
+			return
+		case r.URL.Path == "/readyz":
+			h.serveReady(w)
 			return
 		case r.URL.Path == "/metrics" && h.opts.Metrics:
 			h.metrics.serve(w, h.store, h.opts.Notifier, h.readOnly.Load(), h.writes.Load())

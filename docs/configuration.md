@@ -83,7 +83,7 @@ A key limited to some buckets can create and delete only those buckets and lists
 
 `PLAINBUCKET_CREDENTIALS_FILE` names a file holding only such a list (the entries without the `credentials:` line), so the keys can live in a Kubernetes Secret while the rest of the configuration stays in environment variables. Its keys are added to those from the other sources.
 
-Unsigned requests get `403 AccessDenied`, except object reads from a public bucket and `/healthz`, plus `/metrics` when enabled.
+Unsigned requests get `403 AccessDenied`, except object reads from a public bucket, `/healthz` and `/readyz` ([Health Checks](#health-checks)), plus `/metrics` when enabled.
 
 The region in a request's credential scope is not checked against `PLAINBUCKET_REGION`, so clients configured for any region work.
 
@@ -239,7 +239,7 @@ Delivery is best-effort. Each webhook has a queue in memory that holds a thousan
 
 Path-style requests (`http://s3.example.com/<bucket>/<key>`) always work. With `PLAINBUCKET_DOMAINS=s3.example.com`, a request whose `Host` is `<bucket>.s3.example.com` is also accepted: the first label names the bucket and the whole path is the key. Point a wildcard DNS record, and a wildcard certificate for HTTPS, at the server. When several domains match, the longest wins. A host that is the domain itself, or whose first label is not a valid bucket name, is served path-style.
 
-Use a domain dedicated to plainbucket: with `example.com` configured, `www.example.com` would name a bucket `www`. On the bucket hosts, `/healthz` and `/metrics` are object keys like any other.
+Use a domain dedicated to plainbucket: with `example.com` configured, `www.example.com` would name a bucket `www`. On the bucket hosts, `/healthz`, `/readyz` and `/metrics` are object keys like any other.
 
 <br/>
 
@@ -284,7 +284,7 @@ With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format w
 - `plainbucket_notifications_total{result}` for [event notifications](#event-notifications), `sent`, `failed` (given up after retries, or refused) and `dropped` (a full queue, or still queued at shutdown), and `plainbucket_notification_queue`, the events waiting.
 - For buckets with `expire-after` or `max-size`: `plainbucket_bucket_objects{bucket}` and `plainbucket_bucket_bytes{bucket}`, kept current between scans, `plainbucket_bucket_max_size_bytes{bucket,evict}` for those with `max-size`, and the counters `plainbucket_expired_objects_total` and `plainbucket_evicted_objects_total`.
 
-A bucket named `metrics` or `healthz` stays reachable: S3 requests are signed, and only unsigned `GET` requests are answered by these endpoints.
+A bucket named `metrics`, `healthz` or `readyz` stays reachable: S3 requests are signed, and only unsigned `GET` requests are answered by these endpoints.
 
 <br/>
 
@@ -325,9 +325,18 @@ Damaged objects are only reported. Nothing on the server can rebuild them, so re
 
 <br/>
 
+## Health Checks
+
+Two unsigned `GET` endpoints on the path-style host report the server's state:
+
+- `/readyz` reads the storage root, checks that its path still leads to the directory the server opened and queries the filesystem's free space, which reaches a network filesystem's server. It answers `503` when any of it fails or takes more than two seconds: a volume removed, replaced or unmounted, a failing disk, or a hung network filesystem. In [read-only mode](#read-only-mode) or below the [free-space minimum](#free-space) the server still serves reads, so it stays ready and reports them in its JSON body as `read_only` and `low_space`. The chart's readiness probe uses it, and the first failure and the recovery are logged.
+- `/healthz` answers `ok` while the process serves requests. It fails only after `/readyz` found the root's path leading to another directory, or to none: the server cannot follow the path again, and a restart reopens it. It never waits on the storage, so a hung filesystem does not restart the pod over and over. The chart's liveness probe and the image's `HEALTHCHECK` use it.
+
+<br/>
+
 ## Access Log
 
-With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in the format `PLAINBUCKET_LOG_FORMAT` selects, with `operation` (as in the metrics), `method`, `host`, `path`, `query`, `bucket`, `key`, `status`, `bytes` (sent), `duration_ms`, `remote`, `access_key` (empty for unsigned requests), `user_agent` and `request_id`, which is also the `x-amz-request-id` response header. The signature of a presigned URL is logged as `REDACTED`, so the log cannot be used to replay requests. `/healthz` and `/metrics` are not logged.
+With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in the format `PLAINBUCKET_LOG_FORMAT` selects, with `operation` (as in the metrics), `method`, `host`, `path`, `query`, `bucket`, `key`, `status`, `bytes` (sent), `duration_ms`, `remote`, `access_key` (empty for unsigned requests), `user_agent` and `request_id`, which is also the `x-amz-request-id` response header. The signature of a presigned URL is logged as `REDACTED`, so the log cannot be used to replay requests. `/healthz`, `/readyz` and `/metrics` are not logged.
 
 <br/>
 
