@@ -5,6 +5,12 @@ import (
 	"os"
 )
 
+// Tag is one object or bucket tag.
+type Tag struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 // SetTags replaces the tags of bucket/key; nil removes them. Only the sidecar changes,
 // and its modification time is kept: tagging an object does not count as using it.
 func (s *Store) SetTags(bucket, key string, tags []Tag) error {
