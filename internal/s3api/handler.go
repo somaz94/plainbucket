@@ -205,7 +205,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.serveReady(w)
 			return
 		case r.URL.Path == "/metrics" && h.opts.Metrics:
-			h.metrics.serve(w, h.store, h.opts.Notifier, h.opts.Replicator, h.readOnly.Load(), h.opts.BucketMetrics, h.writes.Load())
+			h.serveMetrics(w)
 			return
 		}
 	}
