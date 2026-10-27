@@ -347,7 +347,8 @@ func uriEncode(s string, encodeSlash bool) string {
 	return b.String()
 }
 
-// URIEncodePath escapes a key the way S3 does for encoding-type=url, keeping '/'.
+// URIEncodePath escapes a key for encoding-type=url, keeping '/'. S3 writes a space as
+// '+'; this writes %20, which path and query decoding both read back as a space.
 func URIEncodePath(s string) string {
 	if s == "" {
 		return ""
