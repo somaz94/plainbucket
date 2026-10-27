@@ -9,7 +9,7 @@ import (
 	"github.com/somaz94/plainbucket/internal/httpx"
 )
 
-// No body has two invalid buckets, so the reported error does not depend on map order.
+// Buckets and header names are checked in sorted order, so each body has one expected error.
 func TestValidationMessages(t *testing.T) {
 	setRequired(t)
 	dir := t.TempDir()
@@ -78,6 +78,10 @@ func TestValidationMessages(t *testing.T) {
 			`PLAINBUCKET_DOMAINS: "s3.example.com:9000" must be a host name without scheme or port, such as s3.example.com`},
 		{"buckets before domains", "domains: [\"s3.example.com:9000\"]\nbuckets: {cold: {expire-after: -1h}}\n",
 			"buckets.cold.expire-after must not be negative"},
+		{"first bad bucket by name", "buckets: {zeta: {expire-after: -1h}, mid: {trash-after: -1h}, delta: {evict: true}, beta: {max-size: -2}, alpha: {max-size: -1}}\n",
+			"buckets.alpha.max-size must not be negative"},
+		{"first bad header by name", "buckets: {www: {headers: [{set: {X-Custom: a, X-Other: b, Server: c, Link: d, Cache-Control: \"\"}}]}}\n",
+			"buckets.www.headers[0].set.Cache-Control must be printable ASCII, not blank, at most 4096 bytes"},
 		// Each row breaks two neighbouring checks; the earlier one must be reported.
 		{"rate limit before buckets", "rate-limit: {requests: .nan}\nbuckets: {cold: {expire-after: -1h}}\n",
 			"rate-limit: requests, burst and bytes must be finite and not negative"},

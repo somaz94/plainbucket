@@ -223,7 +223,18 @@ func decodeYAML(path string, dst any) error {
 	if err := dec.Decode(dst); err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	return nil
+	// Later documents would be ignored as silently, so only empty ones may follow.
+	for {
+		var extra any
+		if err := dec.Decode(&extra); errors.Is(err, io.EOF) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		if extra != nil {
+			return errors.New("only one YAML document is allowed")
+		}
+	}
 }
 
 // AllCredentials returns every access key: AccessKey first, with full access, then

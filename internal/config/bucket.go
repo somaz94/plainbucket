@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net/textproto"
 	"slices"
 	"strings"
@@ -22,8 +23,9 @@ func (c *Config) validateBuckets() error {
 		b.Public = true
 		c.Buckets[name] = b
 	}
-	for name, b := range c.Buckets {
-		if err := validateBucket(name, b); err != nil {
+	// In name order, so the error reported for several bad buckets is always the same one.
+	for _, name := range slices.Sorted(maps.Keys(c.Buckets)) {
+		if err := validateBucket(name, c.Buckets[name]); err != nil {
 			return err
 		}
 	}
@@ -135,7 +137,8 @@ func validateHeaders(where string, rules []HeaderRule) error {
 			return fmt.Errorf("%s.set must name at least one header", at)
 		}
 		set := make(map[string]string, len(r.Set))
-		for name, v := range r.Set {
+		for _, name := range slices.Sorted(maps.Keys(r.Set)) {
+			v := r.Set[name]
 			canon := textproto.CanonicalMIMEHeaderKey(name)
 			if !slices.Contains(httpx.RuleHeaders, canon) {
 				return fmt.Errorf("%s.set: %q may not be set; allowed: %s", at, name, strings.Join(httpx.RuleHeaders, ", "))

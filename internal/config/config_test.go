@@ -428,3 +428,16 @@ func TestRateLimitBounds(t *testing.T) {
 		t.Errorf("slow rate without a body timeout: %v", err)
 	}
 }
+
+func TestOneYAMLDocument(t *testing.T) {
+	setRequired(t)
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	_ = os.WriteFile(path, []byte("region: eu-west-1\n---\nregion: us-west-2\n"), 0o600)
+	if _, err := Load(path); err == nil || err.Error() != "loading config file: only one YAML document is allowed" {
+		t.Errorf("second document: %v", err)
+	}
+	_ = os.WriteFile(path, []byte("region: eu-west-1\n---\n"), 0o600)
+	if cfg, err := Load(path); err != nil || cfg.Region != "eu-west-1" {
+		t.Errorf("trailing empty document: %v", err)
+	}
+}
