@@ -28,7 +28,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 | Area | Operations |
 |---|---|
 | Service | `ListBuckets`, paginated with `max-buckets` and `continuation-token`, filtered by `prefix` and `bucket-region` |
-| Bucket | `CreateBucket`, `HeadBucket`, `DeleteBucket` (must be empty), `GetBucketLocation`, `GetBucketVersioning` (always unversioned) |
+| Bucket | `CreateBucket`, `HeadBucket`, `DeleteBucket` (must be empty), `GetBucketLocation`, `GetBucketVersioning` (always unversioned), `GetBucketTagging`, `PutBucketTagging` and `DeleteBucketTagging` (up to 50 tags, stored with the bucket and removed with it) |
 | Listing | `ListObjectsV2` and `ListObjects` with `prefix`, `delimiter`, `max-keys`, `start-after`, `continuation-token` / `marker`, `fetch-owner`, `encoding-type=url`; `ListObjectVersions`, which lists every object as its only version, `null`, as S3 does for an unversioned bucket |
 | Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectAttributes`, `GetObjectTagging`, `PutObjectTagging`, `DeleteObjectTagging` |
 | Browser upload | `PostObject` (an HTML form signed with a Signature Version 4 POST policy, as `PresignPostObject` in the SDKs produces) |
@@ -58,7 +58,7 @@ Object details:
 
 ## Not Implemented
 
-These return `501 NotImplemented`: ACLs and policies (public reads are configured instead), versioning other than reading its status and listing the `null` versions, object lock and retention, bucket tags, lifecycle, replication, the CORS, website and notification APIs (all three are configured per bucket instead, see [Buckets](configuration.md#buckets); webhooks receive S3-format events, see [Event Notifications](configuration.md#event-notifications)), encryption settings, and `SelectObjectContent`.
+These return `501 NotImplemented`: ACLs and policies (public reads are configured instead), versioning other than reading its status and listing the `null` versions, object lock and retention, lifecycle, replication, the CORS, website and notification APIs (all three are configured per bucket instead, see [Buckets](configuration.md#buckets); webhooks receive S3-format events, see [Event Notifications](configuration.md#event-notifications)), encryption settings, and `SelectObjectContent`.
 
 Storage classes are not modeled; every object reports `STANDARD`.
 

@@ -13,7 +13,7 @@ func operation(r *http.Request, bucket, key string) string {
 	if r.Method == http.MethodOptions {
 		return "Preflight"
 	}
-	probe := &request{r: r, key: key}
+	probe := &request{r: r, bucket: bucket, key: key}
 	for k := range q {
 		if unsupported[k] && !readableSubresource(k, probe) {
 			return "NotImplemented"
@@ -46,6 +46,8 @@ func bucketOperation(method string, q url.Values) string {
 		switch {
 		case q.Has("location"):
 			return "GetBucketLocation"
+		case q.Has("tagging"):
+			return "GetBucketTagging"
 		case q.Has("versioning"):
 			return "GetBucketVersioning"
 		case q.Has("uploads"):
@@ -63,8 +65,14 @@ func bucketOperation(method string, q url.Values) string {
 		if q.Has("versioning") {
 			return "NotImplemented"
 		}
+		if q.Has("tagging") {
+			return "PutBucketTagging"
+		}
 		return "CreateBucket"
 	case http.MethodDelete:
+		if q.Has("tagging") {
+			return "DeleteBucketTagging"
+		}
 		return "DeleteBucket"
 	case http.MethodPost:
 		if q.Has("delete") {

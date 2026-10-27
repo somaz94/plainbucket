@@ -36,16 +36,65 @@ func (s *Store) ListBuckets() ([]BucketInfo, error) {
 	return out, nil
 }
 
-// bucketCreated reads the creation time recorded by CreateBucket. A directory created
-// outside the server falls back to its mtime.
+// bucketRecord is what the server keeps about a bucket under SysDir/buckets.
+type bucketRecord struct {
+	Created time.Time `json:"created"`
+	Tags    []Tag     `json:"tags,omitempty"`
+}
+
+func (s *Store) readBucketRecord(name string) (bucketRecord, bool) {
+	var rec bucketRecord
+	raw, err := os.ReadFile(s.sys("buckets", name+".json"))
+	return rec, err == nil && json.Unmarshal(raw, &rec) == nil
+}
+
+// bucketCreated reads the recorded creation time. A directory created outside the
+// server falls back to its mtime, which SetBucketTags then freezes into the record.
 func (s *Store) bucketCreated(name string, fi os.FileInfo) time.Time {
-	var rec struct {
-		Created time.Time `json:"created"`
-	}
-	if raw, err := os.ReadFile(s.sys("buckets", name+".json")); err == nil && json.Unmarshal(raw, &rec) == nil {
+	if rec, ok := s.readBucketRecord(name); ok {
 		return rec.Created
 	}
 	return fi.ModTime()
+}
+
+// BucketTags returns the tags of bucket, nil when it has none.
+func (s *Store) BucketTags(bucket string) ([]Tag, error) {
+	if err := s.requireBucket(bucket); err != nil {
+		return nil, err
+	}
+	rec, _ := s.readBucketRecord(bucket)
+	return rec.Tags, nil
+}
+
+// SetBucketTags replaces the tags of bucket; nil removes them.
+func (s *Store) SetBucketTags(bucket string, tags []Tag) error {
+	// Shared, not exclusive: a pending Lock behind a long RLock holder (SetTags hashing an
+	// edited object) would block every commit in the bucket. recordMu serializes updates.
+	bl := s.bucketLock(bucket)
+	bl.RLock()
+	defer bl.RUnlock()
+	s.recordMu.Lock()
+	defer s.recordMu.Unlock()
+	if err := s.requireBucket(bucket); err != nil {
+		return err
+	}
+	rec, ok := s.readBucketRecord(bucket)
+	if !ok {
+		if len(tags) == 0 {
+			return nil // nothing to store; writing would freeze the creation time
+		}
+		fi, err := s.r.Stat(bucket)
+		if err != nil {
+			return err
+		}
+		rec.Created = fi.ModTime().UTC()
+	}
+	rec.Tags = tags
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return s.writeFileAtomic(s.sys("buckets", bucket+".json"), raw)
 }
 
 // CreateBucket creates the bucket directory.
@@ -62,7 +111,7 @@ func (s *Store) CreateBucket(name string) error {
 		}
 		return err
 	}
-	raw, _ := json.Marshal(map[string]time.Time{"created": s.now().UTC()})
+	raw, _ := json.Marshal(bucketRecord{Created: s.now().UTC()})
 	_ = s.writeFileAtomic(s.sys("buckets", name+".json"), raw)
 	s.usageMu.Lock()
 	s.resetUsage(name, true) // listed in the usage before its first write

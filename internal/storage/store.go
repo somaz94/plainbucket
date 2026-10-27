@@ -79,7 +79,7 @@ type ObjectInfo struct {
 	IsDir        bool // a directory marker key ending in /
 }
 
-// Tag is one object tag.
+// Tag is one object or bucket tag.
 type Tag struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -133,6 +133,7 @@ type Store struct {
 	locks       [64]sync.Mutex // per key
 	uploadLocks [64]sync.Mutex // per multipart upload
 	bucketMu    sync.Mutex
+	recordMu    sync.Mutex               // serializes changes to bucket records
 	buckets     map[string]*sync.RWMutex // writers hold RLock, bucket deletion holds Lock
 	hashes      flight
 

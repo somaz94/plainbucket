@@ -15,7 +15,7 @@ plainbucket keeps the data a client uploads as ordinary files and everything els
 
 ## The System Directory
 
-`<root>/.plainbucket` holds the metadata of each object, staging files, unfinished multipart uploads, the [trash](configuration.md#trash), bucket creation times, the result of the last [integrity check](configuration.md#integrity-checks) (`scrub.json`), and a `lock` file the running server holds so that a second server or `plainbucket fsck` cannot work on the same root at once. Bucket names cannot start with a dot, so it can never collide with a bucket. Publish the root with a server that hides dot files, or not at all.
+`<root>/.plainbucket` holds the metadata of each object, staging files, unfinished multipart uploads, the [trash](configuration.md#trash), bucket creation times and tags, the result of the last [integrity check](configuration.md#integrity-checks) (`scrub.json`), and a `lock` file the running server holds so that a second server or `plainbucket fsck` cannot work on the same root at once. Bucket names cannot start with a dot, so it can never collide with a bucket. Publish the root with a server that hides dot files, or not at all.
 
 <br/>
 

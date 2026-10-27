@@ -400,3 +400,41 @@ func TestPlaceRetriesAndConflicts(t *testing.T) {
 		t.Error("rename failure ignored")
 	}
 }
+
+func TestBucketTags(t *testing.T) {
+	s := newStore(t)
+	if tags, err := s.BucketTags("bkt"); err != nil || tags != nil {
+		t.Errorf("untagged: %v %v", tags, err)
+	}
+	// A bucket made outside the server keeps its directory's time as its creation time.
+	outside := filepath.Join(s.root, "outside")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	_ = os.Chtimes(outside, old, old)
+	if err := s.SetBucketTags("outside", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(s.sys("buckets", "outside.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("removing no tags wrote a record: %v", err)
+	}
+	if err := s.SetBucketTags("outside", []Tag{{Key: "a", Value: "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	buckets, _ := s.ListBuckets()
+	for _, b := range buckets {
+		if b.Name == "outside" && !b.Created.Equal(old) {
+			t.Errorf("created %v, want %v", b.Created, old)
+		}
+	}
+	if tags, err := s.BucketTags("outside"); err != nil || len(tags) != 1 || tags[0].Key != "a" {
+		t.Errorf("tags: %v %v", tags, err)
+	}
+	if _, err := s.BucketTags("nope"); !errors.Is(err, ErrNoSuchBucket) {
+		t.Errorf("missing bucket: %v", err)
+	}
+	if err := s.SetBucketTags("nope", nil); !errors.Is(err, ErrNoSuchBucket) {
+		t.Errorf("tagging a missing bucket: %v", err)
+	}
+}

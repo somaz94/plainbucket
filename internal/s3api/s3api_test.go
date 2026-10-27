@@ -220,8 +220,7 @@ func TestUnsupportedRequests(t *testing.T) {
 	x.mustDo(http.MethodPut, "/bkt/k", []byte("x"), nil, http.StatusOK)
 	for _, c := range []struct{ method, target string }{
 		{http.MethodGet, "/bkt?acl"},
-		{http.MethodGet, "/bkt?tagging"},
-		{http.MethodPut, "/bkt?tagging"},
+		{http.MethodGet, "/?tagging"},
 		{http.MethodGet, "/bkt/k?versionId=abc"},
 		{http.MethodPut, "/bkt/k?attributes"},
 		{http.MethodGet, "/bkt?attributes"},

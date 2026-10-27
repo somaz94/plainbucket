@@ -63,6 +63,10 @@ func InvalidTag(msg string) *Error {
 	return newErr(http.StatusBadRequest, "InvalidTag", msg)
 }
 
+func NoSuchTagSet() *Error {
+	return newErr(http.StatusNotFound, "NoSuchTagSet", "The TagSet does not exist")
+}
+
 func MalformedXML() *Error {
 	return newErr(http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.")
 }

@@ -58,3 +58,29 @@ func TestObjectTagging(t *testing.T) {
 		}
 	})
 }
+
+func TestBucketTagging(t *testing.T) {
+	forEachTransport(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		mustCreateBucket(t, e, "btags")
+		bkt := aws.String("btags")
+		if _, err := e.client.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: bkt}); apiCode(err) != "NoSuchTagSet" {
+			t.Errorf("untagged: %v", err)
+		}
+		if _, err := e.client.PutBucketTagging(ctx, &s3.PutBucketTaggingInput{Bucket: bkt, Tagging: &types.Tagging{TagSet: []types.Tag{
+			{Key: aws.String("team"), Value: aws.String("ci")}, {Key: aws.String("env"), Value: aws.String("dev")},
+		}}}); err != nil {
+			t.Fatal(err)
+		}
+		out, err := e.client.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: bkt})
+		if err != nil || len(out.TagSet) != 2 || *out.TagSet[0].Key != "env" || *out.TagSet[1].Value != "ci" {
+			t.Errorf("tags: %v %+v", err, out)
+		}
+		if _, err := e.client.DeleteBucketTagging(ctx, &s3.DeleteBucketTaggingInput{Bucket: bkt}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.client.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{Bucket: bkt}); apiCode(err) != "NoSuchTagSet" {
+			t.Errorf("after delete: %v", err)
+		}
+	})
+}

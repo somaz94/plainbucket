@@ -14,15 +14,23 @@ import (
 	"github.com/somaz94/plainbucket/internal/storage"
 )
 
-// S3's limits on object tags; key and value lengths are in characters.
+// S3's limits on tags; key and value lengths are in characters.
 const (
 	maxTags        = 10
+	maxBucketTags  = 50
 	maxTagKeyLen   = 128
 	maxTagValueLen = 256
 )
 
-// sortedTags checks tags and sorts them by key, the order they are returned in.
+// sortedTags checks object tags and sorts them by key, the order they are returned in.
 func sortedTags(tags []storage.Tag) ([]storage.Tag, error) {
+	return sortedTagsMax(tags, maxTags, fmt.Sprintf("Object tags cannot be greater than %d.", maxTags))
+}
+
+func sortedTagsMax(tags []storage.Tag, limit int, tooMany string) ([]storage.Tag, error) {
+	if len(tags) > limit {
+		return nil, s3err.InvalidTag(tooMany)
+	}
 	if err := checkTags(tags); err != nil {
 		return nil, err
 	}
@@ -31,9 +39,6 @@ func sortedTags(tags []storage.Tag) ([]storage.Tag, error) {
 }
 
 func checkTags(tags []storage.Tag) error {
-	if len(tags) > maxTags {
-		return s3err.InvalidTag(fmt.Sprintf("Object tags cannot be greater than %d.", maxTags))
-	}
 	seen := map[string]bool{}
 	for _, t := range tags {
 		switch {
@@ -79,8 +84,16 @@ func writeMetadata(h http.Header) (storage.Metadata, error) {
 	return md, err
 }
 
-// parseTagging reads a Tagging document, as PutObjectTagging and POST uploads send it.
+// parseTagging reads a Tagging document of object tags, as PutObjectTagging and POST uploads send it.
 func parseTagging(body []byte) ([]storage.Tag, error) {
+	tags, err := parseTagSet(body)
+	if err != nil {
+		return nil, err
+	}
+	return sortedTags(tags)
+}
+
+func parseTagSet(body []byte) ([]storage.Tag, error) {
 	var doc struct {
 		XMLName xml.Name `xml:"Tagging"`
 		TagSet  *struct {
@@ -94,7 +107,7 @@ func parseTagging(body []byte) ([]storage.Tag, error) {
 	for i, t := range doc.TagSet.Tags {
 		tags[i] = storage.Tag{Key: t.Key, Value: t.Value}
 	}
-	return sortedTags(tags)
+	return tags, nil
 }
 
 func setTagCount(hdr http.Header, tags []storage.Tag) {
@@ -134,6 +147,49 @@ func (h *Handler) putObjectTagging(req *request) error {
 
 func (h *Handler) deleteObjectTagging(req *request) error {
 	if err := h.store.SetTags(req.bucket, req.key, nil); err != nil {
+		return err
+	}
+	req.w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (h *Handler) getBucketTagging(req *request) error {
+	tags, err := h.store.BucketTags(req.bucket)
+	if err != nil {
+		return err
+	}
+	if len(tags) == 0 {
+		return s3err.NoSuchTagSet()
+	}
+	res := tagging{NS: s3NS}
+	for _, t := range tags {
+		res.TagSet.Tags = append(res.TagSet.Tags, xmlTag(t))
+	}
+	writeXML(req.w, http.StatusOK, res)
+	return nil
+}
+
+func (h *Handler) putBucketTagging(req *request) error {
+	body, err := readXMLBody(req, h.opts.BodyTimeout, true)
+	if err != nil {
+		return err
+	}
+	tags, err := parseTagSet(body)
+	if err != nil {
+		return err
+	}
+	if tags, err = sortedTagsMax(tags, maxBucketTags, fmt.Sprintf("Bucket tag count cannot be greater than %d.", maxBucketTags)); err != nil {
+		return err
+	}
+	if err := h.store.SetBucketTags(req.bucket, tags); err != nil {
+		return err
+	}
+	req.w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (h *Handler) deleteBucketTagging(req *request) error {
+	if err := h.store.SetBucketTags(req.bucket, nil); err != nil {
 		return err
 	}
 	req.w.WriteHeader(http.StatusNoContent)

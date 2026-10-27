@@ -171,13 +171,13 @@ var unsupported = map[string]bool{
 }
 
 // readableSubresource reports the requests for an otherwise unsupported subresource
-// that are answered: an object's tags, its attributes, and a bucket's versions, which
-// are its objects as the "null" version. Bucket tags stay unsupported.
+// that are answered: object and bucket tags, an object's attributes, and a bucket's
+// versions, which are its objects as the "null" version.
 func readableSubresource(k string, req *request) bool {
 	m := req.r.Method
 	switch k {
 	case "tagging":
-		return req.key != "" && (m == http.MethodGet || m == http.MethodPut || m == http.MethodDelete)
+		return req.bucket != "" && (m == http.MethodGet || m == http.MethodPut || m == http.MethodDelete)
 	case "attributes":
 		return req.key != "" && m == http.MethodGet
 	case "versions":
@@ -345,6 +345,8 @@ func (h *Handler) bucketOp(req *request) error {
 		switch {
 		case q.Has("location"):
 			return h.getBucketLocation(req)
+		case q.Has("tagging"):
+			return h.getBucketTagging(req)
 		case q.Has("versioning"):
 			return h.getBucketVersioning(req)
 		case q.Has("uploads"):
@@ -364,8 +366,14 @@ func (h *Handler) bucketOp(req *request) error {
 		if q.Has("versioning") {
 			return s3err.NotImplemented()
 		}
+		if q.Has("tagging") {
+			return h.putBucketTagging(req)
+		}
 		return h.createBucket(req)
 	case http.MethodDelete:
+		if q.Has("tagging") {
+			return h.deleteBucketTagging(req)
+		}
 		return h.deleteBucket(req)
 	case http.MethodPost:
 		if q.Has("delete") {

@@ -12,6 +12,7 @@ func TestOperation(t *testing.T) {
 		method, target, copySource, want string
 	}{
 		{http.MethodGet, "/", "", "ListBuckets"},
+		{http.MethodGet, "/?tagging", "", "NotImplemented"},
 		{http.MethodPut, "/", "", "Unknown"},
 		{http.MethodOptions, "/b/k", "", "Preflight"},
 		{http.MethodGet, "/b?location", "", "GetBucketLocation"},
@@ -37,7 +38,9 @@ func TestOperation(t *testing.T) {
 		{http.MethodGet, "/b/k?versionId=v1", "", "NotImplemented"},
 		{http.MethodPut, "/b/k?tagging", "", "PutObjectTagging"},
 		{http.MethodDelete, "/b/k?tagging", "", "DeleteObjectTagging"},
-		{http.MethodPut, "/b?tagging", "", "NotImplemented"},
+		{http.MethodGet, "/b?tagging", "", "GetBucketTagging"},
+		{http.MethodPut, "/b?tagging", "", "PutBucketTagging"},
+		{http.MethodDelete, "/b?tagging", "", "DeleteBucketTagging"},
 		{http.MethodPut, "/b/k?versioning", "", "NotImplemented"},
 		{http.MethodPut, "/b/k", "", "PutObject"},
 		{http.MethodPut, "/b/k", "/src/k", "CopyObject"},

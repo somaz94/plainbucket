@@ -164,12 +164,23 @@ func (s *Store) sweep(ctx context.Context, uploadExpiry time.Duration, act func(
 
 	if ents, err := os.ReadDir(s.sys("buckets")); err == nil {
 		for _, e := range ents {
-			if name, ok := strings.CutSuffix(e.Name(), ".json"); ok && s.requireBucket(name) != nil {
-				rm(LeftoverRecord, s.sys("buckets", e.Name()))
+			if name, ok := strings.CutSuffix(e.Name(), ".json"); ok {
+				s.sweepGoneRecord(name, rm)
 			}
 		}
 	}
 	return removed
+}
+
+// sweepGoneRecord removes the record of a bucket that no longer exists, under the bucket
+// lock, so a bucket recreated and tagged meanwhile keeps its record.
+func (s *Store) sweepGoneRecord(bucket string, rm func(kind, path string)) {
+	bl := s.bucketLock(bucket)
+	bl.Lock()
+	defer bl.Unlock()
+	if s.requireBucket(bucket) != nil {
+		rm(LeftoverRecord, s.sys("buckets", bucket+".json"))
+	}
 }
 
 // sweepGoneBucket acts on the metadata of a bucket that no longer exists, holding the

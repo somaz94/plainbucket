@@ -102,7 +102,6 @@ func TestObjectTagging(t *testing.T) {
 		x.expectErr(http.MethodGet, "/bkt/k?tagging", nil, nil, "AccessDenied")
 		x.expectErr(http.MethodPut, "/bkt/k?tagging", tagDoc("a", "1"), nil, "AccessDenied")
 	})
-	x.expectErr(http.MethodDelete, "/bkt?tagging", nil, nil, "NotImplemented")
 	for _, m := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
 		if rec := x.anon(m, "/bkt/k?tagging"); rec.Code != http.StatusForbidden {
 			t.Errorf("anonymous %s: %d", m, rec.Code)
@@ -160,4 +159,67 @@ func TestPostObjectTagging(t *testing.T) {
 	if rec := x.post("/bkt", postForm{fields: fields, file: "x"}); errCode(rec) != "InvalidTag" {
 		t.Errorf("bad post tags: %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestBucketTagging(t *testing.T) {
+	x := newHarness(t, func(o *Options) {
+		o.PublicBuckets = []string{"bkt"}
+		o.Domains = []string{"s3.test"}
+		o.Credentials = append(o.Credentials, Credential{AccessKey: "reader", SecretKey: "reader-secret", ReadOnly: true},
+			Credential{AccessKey: "scoped", SecretKey: "scoped-secret", Buckets: []string{"other"}})
+	})
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/k", []byte("x"), nil, http.StatusOK)
+	x.expectErr(http.MethodGet, "/bkt?tagging", nil, nil, "NoSuchTagSet")
+
+	x.mustDo(http.MethodPut, "/bkt?tagging", tagDoc("team", "ci", "env", "dev"), nil, http.StatusNoContent)
+	if got := x.tagsOf("/bkt"); got != "env=dev&team=ci" {
+		t.Errorf("bucket tags: %s", got)
+	}
+	// Tagging a bucket neither creates nor changes it.
+	if rec := x.mustDo(http.MethodGet, "/bkt?list-type=2", nil, nil, http.StatusOK); !strings.Contains(rec.Body.String(), "<Key>k</Key>") {
+		t.Errorf("listing after tagging: %s", rec.Body.String())
+	}
+	x.expectErr(http.MethodPut, "/nope?tagging", tagDoc("a", "1"), nil, "NoSuchBucket")
+
+	many := make([]string, 0, 2*(maxBucketTags+1))
+	for i := range maxBucketTags + 1 {
+		many = append(many, fmt.Sprintf("k%d", i), "v")
+	}
+	x.mustDo(http.MethodPut, "/bkt?tagging", tagDoc(many[:2*maxBucketTags]...), nil, http.StatusNoContent)
+	x.expectErr(http.MethodPut, "/bkt?tagging", tagDoc(many...), nil, "InvalidTag")
+	x.expectErr(http.MethodPut, "/bkt?tagging", tagDoc("aws:x", "1"), nil, "InvalidTag")
+	x.expectErr(http.MethodPut, "/bkt?tagging", []byte("<Tagging/>"), nil, "MalformedXML")
+
+	x.as("reader", "reader-secret", func() {
+		if got := x.tagsOf("/bkt"); !strings.HasPrefix(got, "k0=v") {
+			t.Errorf("reader sees %s", got)
+		}
+		x.expectErr(http.MethodPut, "/bkt?tagging", tagDoc("a", "1"), nil, "AccessDenied")
+		x.expectErr(http.MethodDelete, "/bkt?tagging", nil, nil, "AccessDenied")
+	})
+	x.as("scoped", "scoped-secret", func() { x.expectErr(http.MethodGet, "/bkt?tagging", nil, nil, "AccessDenied") })
+	if rec := x.anon(http.MethodGet, "/bkt?tagging"); rec.Code != http.StatusForbidden {
+		t.Errorf("anonymous read of bucket tags: %d", rec.Code)
+	}
+	if rec := x.doHost("bkt.s3.test", http.MethodGet, "/?tagging", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<Key>k0</Key>") {
+		t.Errorf("virtual-hosted: %d %s", rec.Code, rec.Body.String())
+	}
+	x.h.SetReadOnly(true)
+	x.expectErr(http.MethodPut, "/bkt?tagging", tagDoc("a", "1"), nil, "ServiceUnavailable")
+	x.h.SetReadOnly(false)
+	// An empty TagSet removes them, as AWS does.
+	x.mustDo(http.MethodPut, "/bkt?tagging", []byte("<Tagging><TagSet></TagSet></Tagging>"), nil, http.StatusNoContent)
+	x.expectErr(http.MethodGet, "/bkt?tagging", nil, nil, "NoSuchTagSet")
+	x.mustDo(http.MethodPut, "/bkt?tagging", tagDoc("a", "1"), nil, http.StatusNoContent)
+
+	x.mustDo(http.MethodDelete, "/bkt?tagging", nil, nil, http.StatusNoContent)
+	x.expectErr(http.MethodGet, "/bkt?tagging", nil, nil, "NoSuchTagSet")
+
+	// A bucket's tags go with it.
+	x.mustDo(http.MethodPut, "/bkt?tagging", tagDoc("a", "1"), nil, http.StatusNoContent)
+	x.mustDo(http.MethodDelete, "/bkt/k", nil, nil, http.StatusNoContent)
+	x.mustDo(http.MethodDelete, "/bkt", nil, nil, http.StatusNoContent)
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.expectErr(http.MethodGet, "/bkt?tagging", nil, nil, "NoSuchTagSet")
 }
