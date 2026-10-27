@@ -149,6 +149,8 @@ func (e *env) worker(rule Rule) *worker {
 func (e *env) compareNow(rule Rule) {
 	e.t.Helper()
 	w := e.worker(rule)
+	// The comparison SetRules started reads r.now, so replace it only once that one is done.
+	e.waitFor("the first comparison", func() bool { return w.last.Load() > 0 })
 	before := w.last.Load()
 	e.r.now = func() time.Time { return time.Unix(before+1, 0) }
 	w.kick <- struct{}{}
