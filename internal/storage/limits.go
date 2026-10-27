@@ -175,6 +175,9 @@ func (s *Store) AllBucketUsage() map[string]Usage {
 // BucketLimit returns the limits set for bucket.
 func (s *Store) BucketLimit(bucket string) Limit { return s.limitsNow()[bucket] }
 
+// Limits returns a copy of every bucket's limits, all from one SetLimits.
+func (s *Store) Limits() map[string]Limit { return maps.Clone(s.limitsNow()) }
+
 // Removed returns how many objects expiry and eviction have deleted since startup.
 func (s *Store) Removed() (expired, evicted int64) { return s.expired.Load(), s.evicted.Load() }
 

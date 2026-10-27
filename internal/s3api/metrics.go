@@ -77,9 +77,8 @@ func (m *metrics) record(op, method string, status int, sent int64, d time.Durat
 // storeStats is what the metrics read from the store.
 type storeStats interface {
 	Usage() storage.Usage
-	BucketUsage() map[string]storage.Usage
 	AllBucketUsage() map[string]storage.Usage
-	BucketLimit(bucket string) storage.Limit
+	Limits() map[string]storage.Limit
 	Removed() (expired, evicted int64)
 	DiskSpaceWithin(timeout time.Duration) (free, size int64, err error)
 	LastScrub() (storage.ScrubResult, bool)
@@ -206,11 +205,16 @@ func (m *metrics) write(w http.ResponseWriter, s scrape) {
 		metric("gauge", "plainbucket_filesystem_size_bytes", "Size of the filesystem holding the root.", size)
 	}
 
+	// One read of each, so a reload or walk mid-scrape cannot change a value between its uses.
+	u, limits, all := st.Usage(), st.Limits(), st.AllBucketUsage()
 	// Buckets with limits are listed even before they exist; every bucket only once a
 	// walk has measured it, since before that only the changes since startup are known.
-	per := st.BucketUsage()
-	if s.allBuckets && !st.Usage().At.IsZero() {
-		maps.Copy(per, st.AllBucketUsage())
+	per := map[string]storage.Usage{}
+	for name := range limits {
+		per[name] = all[name]
+	}
+	if s.allBuckets && !u.At.IsZero() {
+		maps.Copy(per, all)
 	}
 	if len(per) > 0 {
 		names := slices.Sorted(maps.Keys(per))
@@ -227,7 +231,7 @@ func (m *metrics) write(w http.ResponseWriter, s scrape) {
 		fmt.Fprintln(w, "# HELP plainbucket_bucket_max_size_bytes A bucket's max-size; evict tells whether reaching it evicts or refuses.")
 		fmt.Fprintln(w, "# TYPE plainbucket_bucket_max_size_bytes gauge")
 		for _, n := range names {
-			if l := st.BucketLimit(n); l.MaxSize > 0 {
+			if l := limits[n]; l.MaxSize > 0 {
 				fmt.Fprintf(w, "plainbucket_bucket_max_size_bytes{bucket=%q,evict=\"%t\"} %d\n", n, l.Evict, l.MaxSize)
 			}
 		}
@@ -242,7 +246,6 @@ func (m *metrics) write(w http.ResponseWriter, s scrape) {
 		metric("gauge", "plainbucket_scrub_timestamp_seconds", "Unix time the last scrub finished.", sc.Finished.Unix())
 	}
 
-	u := st.Usage()
 	if u.At.IsZero() {
 		return
 	}

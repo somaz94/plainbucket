@@ -92,7 +92,7 @@ func (h *Handler) consoleUsage(req *request) error {
 	if err != nil {
 		return err
 	}
-	usage := h.store.AllBucketUsage()
+	usage, limits := h.store.AllBucketUsage(), h.store.Limits()
 	res := consoleUsageResponse{ReadOnly: req.cred.ReadOnly || req.readOnly, Maintenance: req.readOnly, Buckets: []consoleBucket{}}
 	// The total sums the tracked per-bucket figures rather than the last walk, so it
 	// matches the rows; it is dated by that walk.
@@ -101,7 +101,7 @@ func (h *Handler) consoleUsage(req *request) error {
 		if !req.cred.allows(b.Name) {
 			continue
 		}
-		u, l, p := usage[b.Name], h.store.BucketLimit(b.Name), h.policy(b.Name)
+		u, l, p := usage[b.Name], limits[b.Name], h.policy(b.Name)
 		item := consoleBucket{Name: b.Name, Objects: u.Objects, Bytes: u.Bytes, MeasuredAt: u.At,
 			MaxSize: l.MaxSize, Evict: l.Evict, Lifecycle: len(l.Rules), Public: p.Public, Website: p.Website != nil, CORS: p.CORS != nil}
 		if l.ExpireAfter > 0 {
