@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.7.0](https://github.com/somaz94/plainbucket/compare/v0.6.1...v0.7.0) (2026-10-27)
+
+### Features
+
+- temporary credentials through STS AssumeRole and the console ([027d07b](https://github.com/somaz94/plainbucket/commit/027d07b2fc0130f2b1133ee4b47148d16e7a6e2c))
+- console upload links that need no key ([ca17bed](https://github.com/somaz94/plainbucket/commit/ca17beda8de7e9c0e34147ac0afc4237cb949022))
+- per-key and per-address rate limits for requests and bandwidth ([b32d4bc](https://github.com/somaz94/plainbucket/commit/b32d4bc3f75db0172ea5cf83c25ceb3d957e5847))
+- per-prefix lifecycle rules expiring by last use or write time ([deecaa5](https://github.com/somaz94/plainbucket/commit/deecaa5063dd03d2c19f8deb2ca5c9469fd6bd76))
+- integrity checks that re-read object data against its recorded digests ([81441ac](https://github.com/somaz94/plainbucket/commit/81441acca54400ab462567e35d8528b418e0578f))
+- per-bucket default response headers by key prefix and suffix ([bee6fd8](https://github.com/somaz94/plainbucket/commit/bee6fd8109f299922e31c17b5d50ac9c77fd115a))
+- server-wide read-only mode for maintenance ([a40cb3d](https://github.com/somaz94/plainbucket/commit/a40cb3d761855aa3a52964cc6480fa5437d137fc))
+
+### Performance Improvements
+
+- stat only the entries a listing reaches ([9c43d15](https://github.com/somaz94/plainbucket/commit/9c43d156e983a178c1203d361c0a82ec0f94915d))
+
+### Tests
+
+- match the header schema error by header name ([1f3611b](https://github.com/somaz94/plainbucket/commit/1f3611bb9e6fb51ed238772bbfcdfb6b82e59dc4))
+
+### Chores
+
+- bump version to v0.7.0 ([9ab7b07](https://github.com/somaz94/plainbucket/commit/9ab7b072fc081013d0fc6b563443f8cb3b625285))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.6.1](https://github.com/somaz94/plainbucket/compare/v0.6.0...v0.6.1) (2026-10-26)
 
 ### Features
