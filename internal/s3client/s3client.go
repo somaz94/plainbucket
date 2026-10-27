@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -344,10 +345,21 @@ func (c *Client) HeadObject(ctx context.Context, bucket, key string) (Object, er
 	}
 	for k, vs := range resp.Header {
 		if name, ok := strings.CutPrefix(strings.ToLower(k), "x-amz-meta-"); ok && len(vs) > 0 {
-			o.Meta.UserMeta[name] = vs[0]
+			o.Meta.UserMeta[name] = DecodeMeta(vs[0])
 		}
 	}
 	return o, nil
+}
+
+var metaDecoder mime.WordDecoder
+
+// DecodeMeta undoes the RFC 2047 encoding AWS S3 returns non-ASCII metadata values in; a
+// value that does not decode passes unchanged.
+func DecodeMeta(v string) string {
+	if d, err := metaDecoder.DecodeHeader(v); err == nil {
+		return d
+	}
+	return v
 }
 
 // ListObjects passes every object of bucket under prefix to fn in key order.

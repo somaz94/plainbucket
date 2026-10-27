@@ -291,3 +291,24 @@ func TestStubResponses(t *testing.T) {
 		t.Error("an unknown size accepted")
 	}
 }
+
+func TestHeadDecodesEncodedMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Amz-Meta-B", "=?UTF-8?B?7ZWc6riA?=")
+		w.Header().Set("X-Amz-Meta-Q", "=?UTF-8?Q?caf=C3=A9?=")
+		w.Header().Set("X-Amz-Meta-Raw", "plain value")
+		w.Header().Set("X-Amz-Meta-Bad", "=?x-unknown?B?AAAA?=")
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c := &Client{Endpoint: u, Signer: sigv4.Signer{AccessKey: "AK", SecretKey: "SK", Region: "us-east-1"}, HTTP: srv.Client()}
+	o, err := c.HeadObject(context.Background(), "b", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{"b": "한글", "q": "café", "raw": "plain value", "bad": "=?x-unknown?B?AAAA?="} {
+		if got := o.Meta.UserMeta[k]; got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+}

@@ -449,7 +449,9 @@ func same(info storage.ObjectInfo, meta s3client.Meta, tgt s3client.Object) bool
 		return false
 	}
 	for k, v := range meta.UserMeta {
-		if tgt.Meta.UserMeta[strings.ToLower(k)] != v {
+		// The target's value comes decoded, so a source value that is itself an encoded word
+		// is compared decoded too; otherwise it would be copied again at every comparison.
+		if t := tgt.Meta.UserMeta[strings.ToLower(k)]; t != v && t != s3client.DecodeMeta(v) {
 			return false
 		}
 	}

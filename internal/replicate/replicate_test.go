@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -524,6 +525,64 @@ func TestNoEchoBetweenTwoServers(t *testing.T) {
 	e.compareNow(rule)
 	if n := writes.Load(); n != settled {
 		t.Errorf("%d writes after the copy settled", n-settled)
+	}
+}
+
+// A target that returns non-ASCII metadata RFC 2047 encoded, as AWS S3 does, is not
+// taken for a different object.
+func TestEncodedMetadataIsTheSame(t *testing.T) {
+	e := newEnv(t)
+	e.put("k", "v", storage.PutOptions{Metadata: storage.Metadata{UserMeta: map[string]string{"title": "한글"}}})
+	var writes atomic.Int32
+	aws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writes.Add(1)
+		}
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, r)
+		for k, vs := range rec.Header() {
+			for _, v := range vs {
+				if strings.HasPrefix(strings.ToLower(k), "x-amz-meta-") {
+					v = mime.BEncoding.Encode("UTF-8", v)
+				}
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	}))
+	defer aws.Close()
+	rule := e.rule(func(r *Rule) { r.Endpoint = aws.URL })
+	e.r.SetRules([]Rule{rule})
+	e.waitFor("the copy", func() bool { copied, _, _, _, _ := e.r.Stats(); return copied == 1 })
+	settled := writes.Load()
+	e.r.Changed("src", "k")
+	e.compareNow(rule)
+	if n := writes.Load(); n != settled {
+		t.Errorf("%d writes for an unchanged object with encoded metadata", n-settled)
+	}
+}
+
+// A source value that is itself an encoded word settles too, though the target's comes back decoded.
+func TestEncodedLiteralSettles(t *testing.T) {
+	e := newEnv(t)
+	e.put("k", "v", storage.PutOptions{Metadata: storage.Metadata{UserMeta: map[string]string{"title": "=?UTF-8?B?7ZWc6riA?="}}})
+	var writes atomic.Int32
+	counting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writes.Add(1)
+		}
+		e.h.ServeHTTP(w, r)
+	}))
+	defer counting.Close()
+	rule := e.rule(func(r *Rule) { r.Endpoint = counting.URL })
+	e.r.SetRules([]Rule{rule})
+	e.waitFor("the copy", func() bool { copied, _, _, _, _ := e.r.Stats(); return copied == 1 })
+	settled := writes.Load()
+	e.r.Changed("src", "k")
+	e.compareNow(rule)
+	if n := writes.Load(); n != settled {
+		t.Errorf("%d writes for an unchanged object whose metadata is an encoded word", n-settled)
 	}
 }
 
