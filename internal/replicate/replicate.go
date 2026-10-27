@@ -324,6 +324,13 @@ func (r *Replicator) syncWithRetry(ctx context.Context, w *worker, key string) {
 	}
 }
 
+// partGaveUp is a part that exhausted its own retries. Retrying the upload would resend
+// every earlier part, so the key waits for the next comparison.
+type partGaveUp struct{ err error }
+
+func (e partGaveUp) Error() string { return e.err.Error() }
+func (e partGaveUp) Unwrap() error { return e.err }
+
 // retry runs fn until it succeeds, fails for good, or runs out of delays.
 func retry(ctx context.Context, delays []time.Duration, fn func() error) error {
 	for attempt := 0; ; attempt++ {
@@ -339,9 +346,11 @@ func retry(ctx context.Context, delays []time.Duration, fn func() error) error {
 	}
 }
 
-// permanent reports an error that repeating the request will not fix.
+// permanent reports an error not worth repeating the request for: it will not fix it, or
+// (partGaveUp) the part already had its retries.
 func permanent(err error) bool {
-	if errors.Is(err, storage.ErrNoSuchBucket) {
+	var gaveUp partGaveUp
+	if errors.Is(err, storage.ErrNoSuchBucket) || errors.As(err, &gaveUp) {
 		return true
 	}
 	var e *s3client.Error
@@ -500,6 +509,9 @@ func (r *Replicator) upload(ctx context.Context, c *s3client.Client, w *worker, 
 				parts[i].ETag, err = c.UploadPart(pctx, w.rule.TargetBucket, key, id, i+1, io.NewSectionReader(f, off, n), n, sum)
 				return err
 			})
+			if err != nil {
+				err = partGaveUp{err}
+			}
 		}
 		if err != nil {
 			abort()

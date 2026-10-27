@@ -417,6 +417,33 @@ func TestFailedPartAborts(t *testing.T) {
 	}
 }
 
+// A part that keeps failing is retried on its own, not by uploading every part again.
+func TestPartRetriesAloneThenGivesUp(t *testing.T) {
+	e := newEnv(t)
+	var creates, parts atomic.Int32
+	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Query().Has("partNumber"):
+			parts.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		case r.Method == http.MethodPost && r.URL.Query().Has("uploads"):
+			creates.Add(1)
+		}
+		e.h.ServeHTTP(w, r)
+	}))
+	defer flaky.Close()
+	e.multipart("big", "first", "second")
+	e.r.SetRules([]Rule{e.rule(func(r *Rule) { r.Endpoint = flaky.URL })})
+	e.waitFor("the failure", func() bool { _, _, failed, _, _ := e.r.Stats(); return failed == 1 })
+	if c, p := creates.Load(), parts.Load(); c != 1 || int(p) != 1+len(e.r.backoff) {
+		t.Errorf("%d uploads started, %d part attempts; want 1 and %d", c, p, 1+len(e.r.backoff))
+	}
+	if ups, _, err := e.dst.ListUploads("dst", "", "", "", 10); err != nil || len(ups) != 0 {
+		t.Errorf("uploads left on the target: %v %v", ups, err)
+	}
+}
+
 // Changes that arrive during a long comparison are applied as it goes.
 func TestChangesDuringComparison(t *testing.T) {
 	e := newEnv(t)
@@ -518,6 +545,7 @@ func TestPermanent(t *testing.T) {
 		&s3client.Error{Status: 403, Code: "AccessDenied"}:    true,
 		&s3client.Error{Status: 429, Code: "TooManyRequests"}: false,
 		storage.ErrNoSuchBucket:                               true,
+		partGaveUp{errors.New("connection reset")}:            true,
 		errors.New("connection reset"):                        false,
 	} {
 		if permanent(err) != want {
