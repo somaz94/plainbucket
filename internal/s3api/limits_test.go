@@ -26,8 +26,8 @@ func TestMetricsEndpoint(t *testing.T) {
 	scrape := func() string {
 		rec := httptest.NewRecorder()
 		x.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("metrics: %d", rec.Code)
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("metrics: %d, Cache-Control %q", rec.Code, rec.Header().Get("Cache-Control"))
 		}
 		return rec.Body.String()
 	}

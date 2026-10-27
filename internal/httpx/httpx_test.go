@@ -69,3 +69,21 @@ func TestRecorderReadFrom(t *testing.T) {
 func TestRecorderFlushWithoutFlusher(t *testing.T) {
 	NewRecorder(struct{ http.ResponseWriter }{httptest.NewRecorder()}).Flush()
 }
+
+func TestRecorderWrote(t *testing.T) {
+	for name, send := range map[string]func(*Recorder){
+		"header":    func(r *Recorder) { r.WriteHeader(http.StatusNoContent) },
+		"write":     func(r *Recorder) { _, _ = r.Write([]byte("x")) },
+		"read from": func(r *Recorder) { _, _ = r.ReadFrom(strings.NewReader("x")) },
+		"flush":     func(r *Recorder) { r.Flush() },
+	} {
+		r := NewRecorder(httptest.NewRecorder())
+		if r.Wrote() {
+			t.Fatalf("%s: wrote before anything was sent", name)
+		}
+		send(r)
+		if !r.Wrote() {
+			t.Errorf("%s: not reported as written", name)
+		}
+	}
+}

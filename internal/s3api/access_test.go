@@ -106,9 +106,9 @@ func TestKeyScopes(t *testing.T) {
 	x.as("NOPE", "x", func() { x.expectErr(http.MethodGet, "/cache/k", nil, nil, "InvalidAccessKeyId") })
 }
 
-// A client that leaves mid-copy gets no 500 and no error log.
+// A client that leaves mid-copy gets no 500 and no error log, and is logged as 499.
 func TestCanceledCopyIsNotAnError(t *testing.T) {
-	x := newHarness(t, nil)
+	x := newHarness(t, func(o *Options) { o.AccessLog = true })
 	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
 	x.mustDo(http.MethodPut, "/bkt/src", []byte("data"), nil, http.StatusOK)
 	r := httptest.NewRequest(http.MethodPut, "http://pb.test/bkt/dst", nil)
@@ -118,7 +118,8 @@ func TestCanceledCopyIsNotAnError(t *testing.T) {
 	cancel()
 	rec := httptest.NewRecorder()
 	x.h.ServeHTTP(rec, r.WithContext(ctx))
-	if rec.Body.Len() != 0 || strings.Contains(x.logs.String(), "level=ERROR") || !strings.Contains(x.logs.String(), "request canceled") {
+	if rec.Body.Len() != 0 || strings.Contains(x.logs.String(), "level=ERROR") || !strings.Contains(x.logs.String(), "request canceled") ||
+		!strings.Contains(x.logs.String(), "operation=CopyObject method=PUT") || !strings.Contains(x.logs.String(), "status=499") {
 		t.Errorf("canceled copy: %d %q\n%s", rec.Code, rec.Body.String(), x.logs.String())
 	}
 }

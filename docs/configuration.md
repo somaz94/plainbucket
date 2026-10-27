@@ -304,7 +304,7 @@ Set it in the config file and reload (`SIGHUP`, or wait for the file check) to t
 
 With `PLAINBUCKET_METRICS=true`, `GET /metrics` returns Prometheus text format without authentication:
 
-- `plainbucket_requests_total{operation,method,status}` and the `plainbucket_request_duration_seconds{operation}` histogram. `operation` is the S3 operation name (`PutObject`, `UploadPart`, `ListObjectsV2`, ...), decided from the request alone, so refused requests count under the operation they asked for; `Console` covers the web console, `Preflight` CORS preflights, `NotImplemented` unsupported operations and `Unknown` anything else.
+- `plainbucket_requests_total{operation,method,status}` and the `plainbucket_request_duration_seconds{operation}` histogram. `operation` is the S3 operation name (`PutObject`, `UploadPart`, `ListObjectsV2`, ...), decided from the request alone, so refused requests count under the operation they asked for; `Console` covers the web console, `Preflight` CORS preflights, `NotImplemented` unsupported operations and `Unknown` anything else. A request the client cancels while the server is still working on it, before any response, is counted with status `499`, as nginx does; an upload cut off mid-body is `400` (`IncompleteBody`).
 - `plainbucket_received_bytes_total` (stored by successful uploads) and `plainbucket_sent_bytes_total`.
 - `plainbucket_throttled_requests_total{client}`, requests refused by a [rate limit](#rate-limits), `client` being `key` or `anonymous`.
 - `plainbucket_objects`, `plainbucket_stored_bytes` and `plainbucket_usage_scan_timestamp_seconds`, measured at startup and then hourly by walking the buckets, so they lag recent uploads.
@@ -367,7 +367,7 @@ Two unsigned `GET` endpoints on the path-style host report the server's state:
 
 ## Access Log
 
-With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in the format `PLAINBUCKET_LOG_FORMAT` selects, with `operation` (as in the metrics), `method`, `host`, `path`, `query`, `bucket`, `key`, `status`, `bytes` (sent), `duration_ms`, `remote`, `access_key` (empty for unsigned requests), `user_agent` and `request_id`, which is also the `x-amz-request-id` response header. The signature of a presigned URL is logged as `REDACTED`, so the log cannot be used to replay requests. `/healthz`, `/readyz` and `/metrics` are not logged.
+With `PLAINBUCKET_ACCESS_LOG=true` every API request is logged at info level, in the format `PLAINBUCKET_LOG_FORMAT` selects, with `operation` (as in the metrics), `method`, `host`, `path`, `query`, `bucket`, `key`, `status` (`499` when the client canceled before any response, as in the metrics), `bytes` (sent), `duration_ms`, `remote`, `access_key` (empty for unsigned requests), `user_agent` and `request_id`, which is also the `x-amz-request-id` response header. The signature of a presigned URL is logged as `REDACTED`, so the log cannot be used to replay requests. `/healthz`, `/readyz` and `/metrics` are not logged.
 
 <br/>
 

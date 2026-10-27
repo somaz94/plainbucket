@@ -34,6 +34,7 @@ type Recorder struct {
 	http.ResponseWriter
 	Status int
 	Bytes  int64
+	wrote  bool
 }
 
 // NewRecorder returns a Recorder whose status defaults to 200, as net/http's does.
@@ -42,11 +43,12 @@ func NewRecorder(w http.ResponseWriter) *Recorder {
 }
 
 func (r *Recorder) WriteHeader(code int) {
-	r.Status = code
+	r.Status, r.wrote = code, true
 	r.ResponseWriter.WriteHeader(code)
 }
 
 func (r *Recorder) Write(b []byte) (int, error) {
+	r.wrote = true
 	n, err := r.ResponseWriter.Write(b)
 	r.Bytes += int64(n)
 	return n, err
@@ -54,6 +56,7 @@ func (r *Recorder) Write(b []byte) (int, error) {
 
 // ReadFrom forwards to the wrapped writer so http.ServeContent keeps its sendfile path.
 func (r *Recorder) ReadFrom(src io.Reader) (int64, error) {
+	r.wrote = true
 	if rf, ok := r.ResponseWriter.(io.ReaderFrom); ok {
 		n, err := rf.ReadFrom(src)
 		r.Bytes += n
@@ -62,9 +65,13 @@ func (r *Recorder) ReadFrom(src io.Reader) (int64, error) {
 	return io.Copy(writerOnly{r}, src)
 }
 
+// Wrote reports whether any part of the response has been sent.
+func (r *Recorder) Wrote() bool { return r.wrote }
+
 // Flush implements http.Flusher when the wrapped writer does.
 func (r *Recorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		r.wrote = true // net/http sends the header on a flush
 		f.Flush()
 	}
 }

@@ -110,6 +110,7 @@ func (h *Handler) serveMetrics(w http.ResponseWriter) {
 func (m *metrics) write(w http.ResponseWriter, s scrape) {
 	st := s.store
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 
 	m.mu.Lock()
 	keys := slices.SortedFunc(maps.Keys(m.requests), func(a, b requestKey) int {

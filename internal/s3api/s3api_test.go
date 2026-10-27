@@ -162,8 +162,8 @@ func TestHealthzAndAnonymous(t *testing.T) {
 	if rec.Code != http.StatusForbidden || errCode(rec) != "AccessDenied" || rec.Header().Get("X-Amz-Request-Id") == "" {
 		t.Errorf("anonymous: %d %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(x.logs.String(), "request denied") {
-		t.Error("denial not logged at debug")
+	if !strings.Contains(x.logs.String(), "request denied") || !strings.Contains(x.logs.String(), "request_id="+rec.Header().Get("X-Amz-Request-Id")) {
+		t.Errorf("denial not logged at debug with its request id:\n%s", x.logs.String())
 	}
 	rec = httptest.NewRecorder()
 	x.h.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/bkt/key", nil))

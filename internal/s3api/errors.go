@@ -64,8 +64,15 @@ func toS3(err error) *s3err.Error {
 	return nil
 }
 
+// statusClientClosed records a request the client left before any response, as nginx does.
+const statusClientClosed = 499
+
+func clientGone(req *request, err error) bool {
+	return errors.Is(err, context.Canceled) && req.r.Context().Err() != nil
+}
+
 func (h *Handler) fail(req *request, err error) {
-	if errors.Is(err, context.Canceled) && req.r.Context().Err() != nil {
+	if clientGone(req, err) {
 		h.log.Debug("request canceled by the client", "method", req.r.Method, "path", req.r.URL.Path, "request_id", req.id)
 		return
 	}
@@ -75,7 +82,7 @@ func (h *Handler) fail(req *request, err error) {
 		e = s3err.Internal()
 	} else if e.Status == http.StatusForbidden {
 		// Debug, not warn: unsigned probes would flood the log.
-		h.log.Debug("request denied", "method", req.r.Method, "path", req.r.URL.Path, "code", e.Code, "reason", e.Message)
+		h.log.Debug("request denied", "method", req.r.Method, "path", req.r.URL.Path, "request_id", req.id, "code", e.Code, "reason", e.Message)
 	} else if e.Status == http.StatusInsufficientStorage {
 		h.log.Warn("write refused: not enough disk space", "method", req.r.Method, "path", req.r.URL.Path, "request_id", req.id, "err", err)
 	}

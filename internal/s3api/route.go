@@ -202,6 +202,9 @@ func (h *Handler) dispatch(req *request, rec *httpx.Recorder) string {
 		}
 	}
 	if err != nil {
+		if clientGone(req, err) && !rec.Wrote() {
+			rec.Status = statusClientClosed
+		}
 		h.fail(req, err)
 	}
 	if req.website {
