@@ -51,7 +51,9 @@ const (
 const (
 	queueSize      = 1000
 	attemptTimeout = 10 * time.Second
-	ownerID        = "plainbucket" // matches the owner the S3 API reports
+	// maxRetryAfter caps a receiver's Retry-After: a target's events go out one at a time.
+	maxRetryAfter = time.Minute
+	ownerID       = "plainbucket" // matches the owner the S3 API reports
 )
 
 var defaultBackoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
@@ -248,6 +250,26 @@ func (n *Notifier) sequencer(t time.Time) string {
 	}
 }
 
+// retryable is a refusal worth retrying, no sooner than its after (the receiver's Retry-After).
+type retryable struct {
+	status int
+	after  time.Duration
+}
+
+func (e retryable) Error() string { return fmt.Sprintf("status %d", e.status) }
+
+// retryAfter reads a Retry-After header, in seconds or as a date, capped at maxRetryAfter.
+func retryAfter(v string, now time.Time) time.Duration {
+	if s, err := strconv.ParseInt(v, 10, 64); err == nil {
+		// Compared before multiplying, which a huge value would overflow.
+		return time.Duration(min(max(s, 0), int64(maxRetryAfter/time.Second))) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return min(max(t.Sub(now), 0), maxRetryAfter)
+	}
+	return 0
+}
+
 // permanent is a failure that retrying will not change: a response status, or err.
 type permanent struct {
 	status int
@@ -282,8 +304,12 @@ func (n *Notifier) deliver(t Target, d delivery) {
 			n.log.Warn("event notification failed", "target", t.ID, "url", redactURL(t.URL), "event", d.name, "attempts", attempt+1, "err", err)
 			return
 		}
+		wait := n.backoff[attempt]
+		if r := (retryable{}); errors.As(err, &r) && r.after > wait {
+			wait = r.after
+		}
 		select {
-		case <-time.After(n.backoff[attempt]):
+		case <-time.After(wait):
 		case <-n.ctx.Done():
 		}
 	}
@@ -320,7 +346,7 @@ func (n *Notifier) post(t Target, d delivery) error {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return nil
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return retryable{status: resp.StatusCode, after: retryAfter(resp.Header.Get("Retry-After"), n.now())}
 	}
 	return permanent{status: resp.StatusCode}
 }

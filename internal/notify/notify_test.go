@@ -377,3 +377,46 @@ func TestSequencerIncreases(t *testing.T) {
 		t.Errorf("sequencer did not increase: %s %s", a, b)
 	}
 }
+
+func TestRetryAfter(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for v, want := range map[string]time.Duration{
+		"":            0,
+		"soon":        0,
+		"3":           3 * time.Second,
+		"-5":          0,
+		"99999999999": maxRetryAfter,
+		now.Add(10 * time.Second).Format(http.TimeFormat): 10 * time.Second,
+		now.Add(-time.Hour).Format(http.TimeFormat):       0,
+		now.Add(time.Hour).Format(http.TimeFormat):        maxRetryAfter,
+	} {
+		if got := retryAfter(v, now); got != want {
+			t.Errorf("retryAfter(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+func TestDeliveryWaitsForRetryAfter(t *testing.T) {
+	var mu sync.Mutex
+	var at []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		at = append(at, time.Now())
+		first := len(at) == 1
+		mu.Unlock()
+		if first {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	n := newNotifier(t) // backoff of a millisecond
+	n.SetTargets(map[string][]Target{"bkt": {{URL: srv.URL}}})
+	n.Publish(Event{Name: ObjectCreatedPut, Bucket: "bkt", Key: "k", Time: time.Now()})
+	eventually(t, "the retry", func() bool { s, _, _, _ := n.Stats(); return s == 1 })
+	mu.Lock()
+	defer mu.Unlock()
+	if gap := at[1].Sub(at[0]); gap < 900*time.Millisecond {
+		t.Errorf("retried after %v, before the receiver's Retry-After", gap)
+	}
+}
