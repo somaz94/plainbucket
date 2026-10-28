@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.10.0](https://github.com/somaz94/plainbucket/compare/v0.9.0...v0.10.0) (2026-10-28)
+
+### Features
+
+- flush deletes before answering them ([fe60feb](https://github.com/somaz94/plainbucket/commit/fe60feb9ac9f1e9020470363c037c02889fc0760))
+- dashboard panel for failed directory flushes ([6f8ac43](https://github.com/somaz94/plainbucket/commit/6f8ac43efba0674d4b0805ba0f6f633d5c113447))
+
+### Bug Fixes
+
+- answer re-creating an owned bucket with 200 in us-east-1 ([8162cea](https://github.com/somaz94/plainbucket/commit/8162ceaaec6111af4ec488dc8d6ec39789885a2b))
+- answer a repeated CompleteMultipartUpload with its first answer ([35ac5e7](https://github.com/somaz94/plainbucket/commit/35ac5e7aed2f90c805e1562912f6ac4c51906fac))
+- check directory flushes at startup and test the console and fsck warnings ([0538a7b](https://github.com/somaz94/plainbucket/commit/0538a7bae5989508a63fa7790009fd70ee0edc96))
+- tell the server's own same-size rewrites apart by inode ([624fcb6](https://github.com/somaz94/plainbucket/commit/624fcb6fbded9c94dfeca3c1db51aa02d22d3ac6))
+
+### Documentation
+
+- drop the claim that bucket tags are not implemented ([c140e88](https://github.com/somaz94/plainbucket/commit/c140e88c99ae88d83ddbfa3f71dbf788cb6b73dd))
+
+### Continuous Integration
+
+- bound the time the test downloads may take ([3f19546](https://github.com/somaz94/plainbucket/commit/3f19546b1977f3b13a9e0455547a9ccb2030bb92))
+
+### Chores
+
+- bump version to v0.10.0 ([17189fc](https://github.com/somaz94/plainbucket/commit/17189fc19d865f9e5ade6971bd15506cae559cdc))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.9.0](https://github.com/somaz94/plainbucket/compare/v0.8.0...v0.9.0) (2026-10-28)
 
 ### Features
