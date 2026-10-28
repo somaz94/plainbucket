@@ -533,7 +533,8 @@ func TestPutSyncsDirectories(t *testing.T) {
 	}
 }
 
-// A filesystem refusing the flush (or a removed directory) is not a sync error.
+// A refused flush is not counted but reported once, as ErrSyncUnsupported; a removed
+// directory is neither.
 func TestSyncErrorsAreReported(t *testing.T) {
 	s := newStore(t)
 	var failWith error
@@ -560,7 +561,25 @@ func TestSyncErrorsAreReported(t *testing.T) {
 		failWith = refused
 		put(t, s, "a/b.txt", "y")
 	}
-	if n := s.SyncErrors(); n != 1 || len(reported) != 1 {
-		t.Errorf("refused flushes counted: %d sync errors, reported %v", n, reported)
+	if n := s.SyncErrors(); n != 1 {
+		t.Errorf("refused flushes counted: %d sync errors", n)
+	}
+	if len(reported) != 2 || !strings.HasPrefix(reported[1], "bkt/a: "+ErrSyncUnsupported.Error()+": sync") {
+		t.Errorf("reported %v", reported)
+	}
+
+	// A refusal before anyone listens does not use up the report.
+	late := newStore(t)
+	failWith = syscall.EINVAL
+	if _, err := late.PutObject("bkt", "a/b.txt", strings.NewReader("z"), 1, PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	reported = nil
+	late.OnSyncError(func(dir string, err error) { reported = append(reported, dir) })
+	if _, err := late.PutObject("bkt", "a/c.txt", strings.NewReader("z"), 1, PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(reported) != 1 {
+		t.Errorf("refusal after a listener was set reported %v", reported)
 	}
 }

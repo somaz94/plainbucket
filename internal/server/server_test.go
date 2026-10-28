@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -331,5 +332,9 @@ func TestSyncErrorLogIsThrottled(t *testing.T) {
 	always("bkt", syscall.EIO)
 	if n := strings.Count(logs.String(), "could not be flushed"); n != 3 {
 		t.Errorf("%d logs, want 3", n)
+	}
+	hourly("bkt", fmt.Errorf("%w: %w", storage.ErrSyncUnsupported, syscall.EINVAL))
+	if !strings.Contains(logs.String(), "level=WARN msg=\"acknowledged writes may not survive a power loss\"") {
+		t.Errorf("no warning for an unsupported flush:\n%s", logs)
 	}
 }

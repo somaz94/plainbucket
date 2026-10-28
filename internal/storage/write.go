@@ -201,27 +201,39 @@ var syncDir = func(r *os.Root, dir string) error {
 	return err
 }
 
+// ErrSyncUnsupported is wrapped in the error OnSyncError gets once, the first time the
+// filesystem refuses to flush a directory, as some network filesystems do. Refusals are
+// not counted.
+var ErrSyncUnsupported = errors.New("the filesystem does not support flushing directories")
+
 // flushDir syncs dir after a rename into it. The file is in place by then, so a failure
-// never fails the write; it is counted and reported unless the filesystem refuses the
-// call (some network filesystems do) or a delete has removed the directory since.
+// never fails the write: it is counted and reported, a refusal is reported once (see
+// ErrSyncUnsupported), and a directory a delete has removed since is ignored.
 func (s *Store) flushDir(dir string) {
 	err := syncDir(s.r, dir)
-	if err == nil || errors.Is(err, os.ErrNotExist) || errors.Is(err, errors.ErrUnsupported) ||
-		errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTTY) {
-		return
-	}
-	s.syncErrors.Add(1)
-	if fn := s.onSyncError.Load(); fn != nil {
-		(*fn)(dir, err)
+	fn := s.onSyncError.Load()
+	switch {
+	case err == nil || errors.Is(err, os.ErrNotExist):
+	case errors.Is(err, errors.ErrUnsupported) || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTTY):
+		// The once is spent only on a listener, so a write before OnSyncError cannot use it up.
+		if fn != nil && !s.syncRefused.Swap(true) {
+			(*fn)(dir, fmt.Errorf("%w: %w", ErrSyncUnsupported, err))
+		}
+	default:
+		s.syncErrors.Add(1)
+		if fn != nil {
+			(*fn)(dir, err)
+		}
 	}
 }
 
 // OnSyncError sets fn to be called when flushing a directory after a rename or a new
-// directory in it fails: the change stands but may not survive a power loss. fn runs
+// directory in it fails: the change stands but may not survive a power loss. A refusal
+// arrives only once, wrapping ErrSyncUnsupported. fn runs
 // concurrently and may hold a bucket or key lock, so it must not call into the store.
 func (s *Store) OnSyncError(fn func(dir string, err error)) { s.onSyncError.Store(&fn) }
 
-// SyncErrors returns how many directory flushes have failed since startup.
+// SyncErrors returns how many directory flushes have failed since startup, refusals aside.
 func (s *Store) SyncErrors() int64 { return s.syncErrors.Load() }
 
 // place renames src to dst (both absolute, under the root), creating dst's parent, and

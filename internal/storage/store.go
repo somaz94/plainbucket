@@ -98,6 +98,7 @@ type Store struct {
 	onLimit     atomic.Pointer[func(bucket, key string)]    // see OnLimitRemove
 	onSyncError atomic.Pointer[func(dir string, err error)] // see OnSyncError
 	syncErrors  atomic.Int64
+	syncRefused atomic.Bool // ErrSyncUnsupported was reported
 	paused      atomic.Bool // see SetPaused
 	lastScrub   atomic.Pointer[ScrubResult]
 
