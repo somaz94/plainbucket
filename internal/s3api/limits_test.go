@@ -39,6 +39,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		`plainbucket_request_duration_seconds_bucket{operation="GetObject",le="+Inf"} 2`,
 		`plainbucket_request_duration_seconds_count{operation="PutObject"} 1`,
 		"plainbucket_received_bytes_total 5",
+		"plainbucket_sync_errors_total 0",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("metrics lack %q:\n%s", want, body)

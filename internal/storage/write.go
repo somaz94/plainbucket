@@ -190,14 +190,39 @@ func (s *Store) writeFileAtomic(path string, raw []byte) error {
 // rename is os.Root.Rename; tests replace it to fail or hold a specific rename.
 var rename = func(r *os.Root, src, dst string) error { return r.Rename(src, dst) }
 
-// syncDir flushes a directory, so a rename into it survives a power loss. Its error is
-// ignored: the file is in place by then, and some network filesystems refuse the call.
-var syncDir = func(r *os.Root, dir string) {
-	if d, err := r.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
+// syncDir flushes a directory, so a rename into it survives a power loss; tests replace it.
+var syncDir = func(r *os.Root, dir string) error {
+	d, err := r.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	_ = d.Close()
+	return err
+}
+
+// flushDir syncs dir after a rename into it. The file is in place by then, so a failure
+// never fails the write; it is counted and reported unless the filesystem refuses the
+// call (some network filesystems do) or a delete has removed the directory since.
+func (s *Store) flushDir(dir string) {
+	err := syncDir(s.r, dir)
+	if err == nil || errors.Is(err, os.ErrNotExist) || errors.Is(err, errors.ErrUnsupported) ||
+		errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTTY) {
+		return
+	}
+	s.syncErrors.Add(1)
+	if fn := s.onSyncError.Load(); fn != nil {
+		(*fn)(dir, err)
 	}
 }
+
+// OnSyncError sets fn to be called when flushing a directory after a rename or a new
+// directory in it fails: the change stands but may not survive a power loss. fn runs
+// concurrently and may hold a bucket or key lock, so it must not call into the store.
+func (s *Store) OnSyncError(fn func(dir string, err error)) { s.onSyncError.Store(&fn) }
+
+// SyncErrors returns how many directory flushes have failed since startup.
+func (s *Store) SyncErrors() int64 { return s.syncErrors.Load() }
 
 // place renames src to dst (both absolute, under the root), creating dst's parent, and
 // syncs every directory that gained an entry. It retries when a concurrent delete prunes
@@ -227,7 +252,7 @@ func (s *Store) place(src, dst string, perm os.FileMode) error {
 // syncUp syncs d and each parent of it up to and including top.
 func (s *Store) syncUp(d, top string) {
 	for ; ; d = filepath.Dir(d) {
-		syncDir(s.r, s.rel(d))
+		s.flushDir(s.rel(d))
 		if d == top || len(d) <= len(s.root) {
 			return
 		}

@@ -114,7 +114,7 @@ func (s *Store) CreateBucketWithTags(name string, tags []Tag) error {
 		}
 		return err
 	}
-	syncDir(s.r, ".")
+	s.flushDir(".")
 	raw, _ := json.Marshal(bucketRecord{Created: s.now().UTC(), Tags: tags})
 	_ = s.writeFileAtomic(s.sys("buckets", name+".json"), raw)
 	s.usageMu.Lock()

@@ -33,7 +33,7 @@ Single-node, S3-compatible object server whose storage is plain files: object `<
 ## Invariants
 
 - The main module depends only on the standard library, Cobra and yaml.v3. Test-only SDK use goes in `compat/`, never in the main `go.mod`.
-- Objects are written to `.plainbucket/tmp`, verified, then renamed into place. Nothing writes into a bucket directory in place. Every staged file is synced before its rename, and `place` (`syncUp`) syncs each directory the rename or its new parents added an entry to, so an acknowledged write survives a power loss. Deletes are not flushed.
+- Objects are written to `.plainbucket/tmp`, verified, then renamed into place. Nothing writes into a bucket directory in place. Every staged file is synced before its rename, and `place` (`syncUp`) syncs each directory the rename or its new parents added an entry to, so an acknowledged write survives a power loss. A failed directory flush (`flushDir`) is counted and passed to `OnSyncError`, never returned: the file is already in place. Deletes are not flushed.
 - Every path built from a bucket name or key goes through the store's `os.Root`, so `..` and symlinks cannot leave the root. Do not reintroduce plain `os.Open` / `os.Rename` on data paths.
 - Temporary credentials are never stored: a session is valid only while its issuing key exists with the same secret, and gets that key's current access narrowed by its claims, never more. A session policy that a bucket list and a read-only flag cannot express exactly is refused, never widened.
 - A request verifies its signature and takes its access from one `access` snapshot (`access.secret`), so a reload between the two cannot pair an old secret with new access.

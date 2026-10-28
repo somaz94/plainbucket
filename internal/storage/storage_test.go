@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -493,14 +494,14 @@ func TestPutSyncsDirectories(t *testing.T) {
 	s := newStore(t)
 	var synced []string
 	old := syncDir
-	syncDir = func(r *os.Root, dir string) {
+	syncDir = func(r *os.Root, dir string) error {
 		if dir == "bkt/a" {
 			if _, err := os.Stat(filepath.Join(s.Root(), "bkt", "a", "b.txt")); err != nil {
 				t.Errorf("bkt/a synced before the object was in it: %v", err)
 			}
 		}
 		synced = append(synced, filepath.ToSlash(dir))
-		old(r, dir)
+		return old(r, dir)
 	}
 	t.Cleanup(func() { syncDir = old })
 	put(t, s, "a/b.txt", "x")
@@ -529,5 +530,37 @@ func TestPutSyncsDirectories(t *testing.T) {
 	}
 	if !slices.Contains(synced, ".") {
 		t.Errorf("a new bucket synced %v, want the root", synced)
+	}
+}
+
+// A filesystem refusing the flush (or a removed directory) is not a sync error.
+func TestSyncErrorsAreReported(t *testing.T) {
+	s := newStore(t)
+	var failWith error
+	old := syncDir
+	syncDir = func(r *os.Root, dir string) error {
+		if filepath.ToSlash(dir) == "bkt/a" && failWith != nil {
+			return &os.PathError{Op: "sync", Path: dir, Err: failWith}
+		}
+		return old(r, dir)
+	}
+	t.Cleanup(func() { syncDir = old })
+	var reported []string
+	s.OnSyncError(func(dir string, err error) { reported = append(reported, filepath.ToSlash(dir)+": "+err.Error()) })
+
+	failWith = syscall.EIO
+	put(t, s, "a/b.txt", "x")
+	if got, _ := read(t, s, "a/b.txt"); got != "x" {
+		t.Errorf("object %q after a failed flush", got)
+	}
+	if n := s.SyncErrors(); n != 1 || len(reported) != 1 || !strings.Contains(reported[0], "bkt/a: sync") {
+		t.Errorf("%d sync errors, reported %v", n, reported)
+	}
+	for _, refused := range []error{syscall.EINVAL, syscall.ENOTSUP, syscall.ENOTTY, syscall.ENOENT} {
+		failWith = refused
+		put(t, s, "a/b.txt", "y")
+	}
+	if n := s.SyncErrors(); n != 1 || len(reported) != 1 {
+		t.Errorf("refused flushes counted: %d sync errors, reported %v", n, reported)
 	}
 }

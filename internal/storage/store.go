@@ -95,8 +95,10 @@ type Store struct {
 	kick        chan struct{}    // wakes the janitor when an evicting bucket is over its limit
 	expired     atomic.Int64
 	evicted     atomic.Int64
-	onLimit     atomic.Pointer[func(bucket, key string)] // see OnLimitRemove
-	paused      atomic.Bool                              // see SetPaused
+	onLimit     atomic.Pointer[func(bucket, key string)]    // see OnLimitRemove
+	onSyncError atomic.Pointer[func(dir string, err error)] // see OnSyncError
+	syncErrors  atomic.Int64
+	paused      atomic.Bool // see SetPaused
 	lastScrub   atomic.Pointer[ScrubResult]
 
 	probes    shared[int64]

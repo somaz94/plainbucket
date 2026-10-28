@@ -80,6 +80,7 @@ type storeStats interface {
 	AllBucketUsage() map[string]storage.Usage
 	Limits() map[string]storage.Limit
 	Removed() (expired, evicted int64)
+	SyncErrors() int64
 	DiskSpaceWithin(timeout time.Duration) (free, size int64, err error)
 	LastScrub() (storage.ScrubResult, bool)
 	MinFree() int64
@@ -162,6 +163,7 @@ func (m *metrics) write(w http.ResponseWriter, s scrape) {
 	expired, evicted := st.Removed()
 	metric("counter", "plainbucket_expired_objects_total", "Objects removed by a bucket's expire-after.", expired)
 	metric("counter", "plainbucket_evicted_objects_total", "Objects evicted by a bucket's max-size.", evicted)
+	metric("counter", "plainbucket_sync_errors_total", "Directory flushes after a rename or a new directory that failed; those changes stand but may not survive a power loss.", st.SyncErrors())
 
 	if s.notifier != nil {
 		sent, failed, dropped, queued := s.notifier.Stats()

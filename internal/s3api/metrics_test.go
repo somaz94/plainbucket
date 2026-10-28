@@ -31,6 +31,7 @@ func (f *shiftingStats) Limits() map[string]storage.Limit {
 }
 
 func (f *shiftingStats) Removed() (int64, int64)                             { return 0, 0 }
+func (f *shiftingStats) SyncErrors() int64                                   { return 0 }
 func (f *shiftingStats) DiskSpaceWithin(time.Duration) (int64, int64, error) { return 1, 2, nil }
 func (f *shiftingStats) LastScrub() (storage.ScrubResult, bool)              { return storage.ScrubResult{}, false }
 func (f *shiftingStats) MinFree() int64                                      { return 0 }

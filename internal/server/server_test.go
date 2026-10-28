@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -313,5 +314,22 @@ func TestCredentialRateLimits(t *testing.T) {
 		if c.AccessKey == "default" && !c.RateLimit.Zero() {
 			t.Errorf("no default, yet %+v", c.RateLimit)
 		}
+	}
+}
+
+func TestSyncErrorLogIsThrottled(t *testing.T) {
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logs, nil))
+	hourly, always := syncErrorLog(logger, time.Hour), syncErrorLog(logger, 0)
+	for range 3 {
+		hourly("bkt", syscall.EIO)
+	}
+	if n := strings.Count(logs.String(), "could not be flushed"); n != 1 {
+		t.Errorf("%d logs within the interval, want 1:\n%s", n, logs)
+	}
+	always("bkt", syscall.EIO)
+	always("bkt", syscall.EIO)
+	if n := strings.Count(logs.String(), "could not be flushed"); n != 3 {
+		t.Errorf("%d logs, want 3", n)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -104,6 +105,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 	replicator.SetRules(replicateRules(cfg))
 	defer replicator.Close()
 	store.OnLimitRemove(lifecycleEvents(notifier, replicator))
+	store.OnSyncError(syncErrorLog(logger, time.Minute))
 
 	janitorCtx, stopJanitor := context.WithCancel(context.Background())
 	var janitor sync.WaitGroup
@@ -314,4 +316,17 @@ func bucketLimits(cfg *config.Config) map[string]storage.Limit {
 		}
 	}
 	return out
+}
+
+// syncErrorLog logs a failed directory flush, then at most one every interval: a failing
+// disk fails every write, and plainbucket_sync_errors_total counts them all.
+func syncErrorLog(logger *slog.Logger, every time.Duration) func(dir string, err error) {
+	var last atomic.Int64
+	return func(dir string, err error) {
+		now, prev := time.Now().UnixNano(), last.Load()
+		if prev != 0 && now-prev < int64(every) || !last.CompareAndSwap(prev, now) {
+			return
+		}
+		logger.Error("a directory could not be flushed: writes into it may not survive a power loss", "dir", dir, "err", err)
+	}
 }
