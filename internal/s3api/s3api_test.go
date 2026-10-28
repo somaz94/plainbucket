@@ -172,6 +172,26 @@ func TestHealthzAndAnonymous(t *testing.T) {
 	}
 }
 
+// In us-east-1 re-creating a bucket succeeds and changes nothing, as on S3.
+func TestRecreateBucketInUSEast1(t *testing.T) {
+	x := newHarness(t, nil)
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/k", []byte("kept"), nil, http.StatusOK)
+	tags := []byte(`<CreateBucketConfiguration><Tags><Tag><Key>a</Key><Value>b</Value></Tag></Tags></CreateBucketConfiguration>`)
+	if rec := x.mustDo(http.MethodPut, "/bkt", tags, nil, http.StatusOK); rec.Header().Get("Location") != "/bkt" {
+		t.Errorf("Location = %q", rec.Header().Get("Location"))
+	}
+	if body := x.mustDo(http.MethodGet, "/bkt/k", nil, nil, http.StatusOK).Body.String(); body != "kept" {
+		t.Errorf("object after re-creating its bucket: %q", body)
+	}
+	x.expectErr(http.MethodGet, "/bkt?tagging", nil, nil, "NoSuchTagSet")
+	// A file at the root is not a bucket to answer for.
+	if err := os.WriteFile(filepath.Join(x.root, "file"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	x.expectErr(http.MethodPut, "/file", nil, nil, "BucketAlreadyOwnedByYou")
+}
+
 func TestBucketOps(t *testing.T) {
 	x := newHarness(t, func(o *Options) { o.Region = "eu-west-1" })
 	x.expectErr(http.MethodPut, "/", nil, nil, "MethodNotAllowed")

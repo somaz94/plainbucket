@@ -118,10 +118,9 @@ func TestBuckets(t *testing.T) {
 	forEachTransport(t, func(t *testing.T, e *env) {
 		ctx := context.Background()
 		mustCreateBucket(t, e, "alpha")
-		_, err := e.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("alpha")})
-		var owned *types.BucketAlreadyOwnedByYou
-		if !errors.As(err, &owned) {
-			t.Errorf("duplicate bucket: %v", err)
+		// us-east-1 answers re-creating an owned bucket with 200, as S3 does.
+		if _, err := e.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("alpha")}); err != nil {
+			t.Errorf("re-creating a bucket in us-east-1: %v", err)
 		}
 		if _, err := e.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String("alpha")}); err != nil {
 			t.Errorf("HeadBucket: %v", err)

@@ -3,6 +3,7 @@ package s3api
 import (
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -82,7 +83,13 @@ func (h *Handler) createBucket(req *request) error {
 			return err
 		}
 	}
-	if err := h.store.CreateBucketWithTags(req.bucket, tags); err != nil {
+	// us-east-1 answers re-creating a bucket the caller owns with 200, for legacy
+	// compatibility, leaving it as it is; every other region refuses.
+	err = h.store.CreateBucketWithTags(req.bucket, tags)
+	if errors.Is(err, storage.ErrBucketExists) && h.opts.Region == "us-east-1" && h.store.HeadBucket(req.bucket) == nil {
+		err = nil // a file of that name at the root is not a bucket
+	}
+	if err != nil {
 		return err
 	}
 	loc := "/" + req.bucket
