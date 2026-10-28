@@ -13,6 +13,10 @@ import (
 // the chart's readiness probe timeout.
 const storageTimeout = 2 * time.Second
 
+// storageRetry is the Retry-After, in seconds, of a request refused because the storage
+// did not answer within storageTimeout.
+const storageRetry = "10"
+
 type readiness struct {
 	Ready    bool `json:"ready"`
 	ReadOnly bool `json:"read_only"`
