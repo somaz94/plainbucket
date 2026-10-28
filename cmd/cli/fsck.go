@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -39,6 +41,12 @@ var fsckCmd = &cobra.Command{
 		case err != nil:
 			return fmt.Errorf("locking %s: %w", cfg.Root, err)
 		}
+		store.OnSyncError(syncWarnings(cmd.ErrOrStderr()))
+		defer func() {
+			if n := store.SyncErrors(); n > 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d directory flush(es) failed; what fsck wrote is in place but may not survive a power loss\n", n)
+			}
+		}()
 		out := cmd.OutOrStdout()
 		var found, unfixed int
 		err = store.Fsck(cmd.Context(), cfg.UploadExpiry, fsckRepair, func(f storage.Finding) {
@@ -80,6 +88,19 @@ var fsckCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// syncWarnings prints the first failed directory flush and an unsupported one; the
+// count follows at the end.
+func syncWarnings(w io.Writer) func(dir string, err error) {
+	var once sync.Once
+	return func(dir string, err error) {
+		if errors.Is(err, storage.ErrSyncUnsupported) {
+			_, _ = fmt.Fprintf(w, "warning: %s: %v; what fsck writes may not survive a power loss\n", dir, err)
+			return
+		}
+		once.Do(func() { _, _ = fmt.Fprintf(w, "warning: flushing %s: %v\n", dir, err) })
+	}
 }
 
 func init() {

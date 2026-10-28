@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -184,6 +185,18 @@ func TestFsckCommand(t *testing.T) {
 	reset(t, "fsck")
 	if err := Execute(); err == nil || !strings.Contains(err.Error(), "stop the server") {
 		t.Errorf("fsck under a running server: %v", err)
+	}
+}
+
+func TestFsckSyncWarnings(t *testing.T) {
+	var w bytes.Buffer
+	warn := syncWarnings(&w)
+	warn("bkt/a", errors.New("input/output error"))
+	warn("bkt/b", errors.New("input/output error"))
+	warn("bkt", fmt.Errorf("%w: invalid argument", storage.ErrSyncUnsupported))
+	if got := w.String(); got != "warning: flushing bkt/a: input/output error\n"+
+		"warning: bkt: "+storage.ErrSyncUnsupported.Error()+": invalid argument; what fsck writes may not survive a power loss\n" {
+		t.Errorf("warnings:\n%s", got)
 	}
 }
 
