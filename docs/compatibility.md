@@ -34,7 +34,7 @@ plainbucket implements the part of the S3 REST API that general-purpose clients 
 | Object | `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` (`COPY` or `REPLACE` metadata directive), `GetObjectAttributes`, `GetObjectTagging`, `PutObjectTagging`, `DeleteObjectTagging` |
 | Browser upload | `PostObject` (an HTML form signed with a Signature Version 4 POST policy, as `PresignPostObject` in the SDKs produces) |
 | STS | At `POST /` on the S3 endpoint (point the SDK's STS client there): `AssumeRole`, with `DurationSeconds` and a session `Policy`, and `GetCallerIdentity`, for long-term and temporary keys; see [Temporary Credentials](configuration.md#temporary-credentials) |
-| Multipart | `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy` (with `x-amz-copy-source-range`; a range outside the source is `400 InvalidArgument`, as on S3), `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` (with `prefix`, `delimiter` and `encoding-type=url`) |
+| Multipart | `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy` (with `x-amz-copy-source-range`; a range outside the source is `400 InvalidArgument`, as on S3), `CompleteMultipartUpload` (a repeat with the same parts, as an SDK sends when it lost the first answer, gets the same answer for as long as `upload-expiry` keeps an unfinished upload), `AbortMultipartUpload`, `ListParts`, `ListMultipartUploads` (with `prefix`, `delimiter` and `encoding-type=url`) |
 
 POST uploads:
 

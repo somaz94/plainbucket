@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -72,11 +73,96 @@ func TestMultipartLifecycle(t *testing.T) {
 	if body != "aaaabbbbc" || got.ContentType != "application/x-test" || got.ETag != info.ETag {
 		t.Errorf("assembled %q %+v", body, got)
 	}
-	if _, err := os.Stat(s.sys("uploads", id)); !os.IsNotExist(err) {
-		t.Error("upload directory kept after completion")
+	// Only the record of the completion is left, which answers a repeated Complete.
+	if ents, _ := os.ReadDir(s.sys("uploads", id)); len(ents) != 1 || ents[0].Name() != completedFile {
+		t.Errorf("upload directory after completion: %v", ents)
 	}
-	if _, err := s.CompleteUpload(context.Background(), "bkt", "big/file.bin", id, []CompletePart{{1, p1.ETag}}, Conditions{}, 0, CompleteChecksums{}); !errors.Is(err, ErrNoSuchUpload) {
+	done := []CompletePart{{1, p1.ETag}, {2, p2.ETag}, {3, p3.ETag}}
+	if _, err := s.CompleteUpload(context.Background(), "bkt", "big/file.bin", id, done, Conditions{}, 0, CompleteChecksums{}); !errors.Is(err, ErrNoSuchUpload) {
 		t.Errorf("complete twice: %v", err)
+	}
+	if again, ok := s.CompletedUpload("bkt", "big/file.bin", id, done); !ok || again.ETag != info.ETag {
+		t.Errorf("completed upload = %+v %v, want ETag %s", again, ok, info.ETag)
+	}
+	for _, other := range [][]CompletePart{done[:2], {{1, p1.ETag}, {2, p3.ETag}, {3, p3.ETag}}} {
+		if _, ok := s.CompletedUpload("bkt", "big/file.bin", id, other); ok {
+			t.Errorf("completed upload matched other parts %v", other)
+		}
+	}
+	if _, ok := s.CompletedUpload("bkt", "other", id, done); ok {
+		t.Error("completed upload matched another key")
+	}
+	if _, _, err := s.ListParts("bkt", "big/file.bin", id, 0, 10); !errors.Is(err, ErrNoSuchUpload) {
+		t.Errorf("list parts of a completed upload: %v", err)
+	}
+	if ups, _, _ := s.ListUploads("bkt", "", "", "", 10); len(ups) != 0 {
+		t.Errorf("completed upload listed: %v", ups)
+	}
+
+	// A manifest a power loss brings back beside the record does not reopen the upload.
+	raw, _ := json.Marshal(uploadMeta{Bucket: "bkt", Key: "big/file.bin", Initiated: time.Now()})
+	if err := os.WriteFile(filepath.Join(s.sys("uploads", id), uploadMetaFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutPart("bkt", "big/file.bin", id, 1, strings.NewReader("x"), 1, nil); !errors.Is(err, ErrNoSuchUpload) {
+		t.Errorf("part after a resurrected manifest: %v", err)
+	}
+	if err := s.AbortUpload("bkt", "big/file.bin", id); !errors.Is(err, ErrNoSuchUpload) {
+		t.Errorf("abort after a resurrected manifest: %v", err)
+	}
+	if ups, _, _ := s.ListUploads("bkt", "", "", "", 10); len(ups) != 0 {
+		t.Errorf("resurrected manifest listed: %v", ups)
+	}
+	if _, ok := s.CompletedUpload("bkt", "big/file.bin", id, done); !ok {
+		t.Error("record no longer answers")
+	}
+}
+
+// The record of a completed upload expires with the uploads, and goes with its bucket.
+func TestCompletedUploadRecordExpires(t *testing.T) {
+	s := newStore(t)
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	complete := func(bucket string) (string, []CompletePart) {
+		t.Helper()
+		id, err := s.CreateUpload(bucket, "k", Metadata{}, MultipartChecksum{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := s.PutPart(bucket, "k", id, 1, strings.NewReader("data"), 4, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts := []CompletePart{{1, p.ETag}}
+		if _, err := s.CompleteUpload(context.Background(), bucket, "k", id, parts, Conditions{}, 0, CompleteChecksums{}); err != nil {
+			t.Fatal(err)
+		}
+		return id, parts
+	}
+	id, parts := complete("bkt")
+	if n := s.Sweep(context.Background(), time.Hour); n != 0 {
+		t.Errorf("swept %d before the record expired", n)
+	}
+	c.t = c.t.Add(2 * time.Hour)
+	if n := s.Sweep(context.Background(), time.Hour); n != 1 {
+		t.Errorf("swept %d, want the expired record", n)
+	}
+	if _, ok := s.CompletedUpload("bkt", "k", id, parts); ok {
+		t.Error("expired record still answers")
+	}
+
+	if err := s.CreateBucket("gone"); err != nil {
+		t.Fatal(err)
+	}
+	id, _ = complete("gone")
+	if err := s.DeleteObject("gone", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteBucket("gone"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(s.sys("uploads", id)); !os.IsNotExist(err) {
+		t.Errorf("record kept after its bucket was deleted: %v", err)
 	}
 }
 

@@ -1123,3 +1123,34 @@ func TestListBucketsPaginated(t *testing.T) {
 		x.expectErr(http.MethodGet, "/"+q, nil, nil, "InvalidArgument")
 	}
 }
+
+// A Complete repeated with the same parts, as an SDK sends when it lost the first answer,
+// gets the same answer and publishes nothing; other parts still find no upload.
+func TestCompleteRepeated(t *testing.T) {
+	rp := &fakeReplicator{}
+	x := newHarness(t, func(o *Options) { o.Replicator = rp })
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	rec := x.mustDo(http.MethodPost, "/bkt/k?uploads", nil, nil, http.StatusOK)
+	var up initiateMultipartUploadResult
+	_ = xml.Unmarshal(rec.Body.Bytes(), &up)
+	etag := x.mustDo(http.MethodPut, "/bkt/k?partNumber=1&uploadId="+up.UploadID, []byte("data"), nil, http.StatusOK).Header().Get("ETag")
+	doc := []byte("<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>" + etag + "</ETag></Part></CompleteMultipartUpload>")
+	complete := func() completeMultipartUploadResult {
+		t.Helper()
+		var res completeMultipartUploadResult
+		_ = xml.Unmarshal(x.mustDo(http.MethodPost, "/bkt/k?uploadId="+up.UploadID, doc, nil, http.StatusOK).Body.Bytes(), &res)
+		return res
+	}
+	first, again := complete(), complete()
+	if first.ETag == "" || again != first {
+		t.Errorf("repeated complete: %+v, first %+v", again, first)
+	}
+	rp.mu.Lock()
+	if len(rp.changed) != 1 {
+		t.Errorf("published %v, want one change", rp.changed)
+	}
+	rp.mu.Unlock()
+	other := []byte("<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>\"0\"</ETag></Part></CompleteMultipartUpload>")
+	x.expectErr(http.MethodPost, "/bkt/k?uploadId="+up.UploadID, other, nil, "NoSuchUpload")
+	x.expectErr(http.MethodPost, "/bkt/k?uploadId="+up.UploadID, doc, map[string]string{"X-Amz-Checksum-Crc32": "AAAAAA=="}, "BadDigest")
+}

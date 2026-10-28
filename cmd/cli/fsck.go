@@ -18,7 +18,8 @@ var fsckCmd = &cobra.Command{
 	Use:   "fsck",
 	Short: "Check the root for stale metadata and leftovers while the server is stopped",
 	Long: "fsck reports objects whose metadata is missing or outdated, files whose names cannot be " +
-		"keys, and leftovers such as staging files and expired multipart uploads. With --repair it " +
+		"keys, and leftovers such as staging files, expired multipart uploads and expired records of " +
+		"completed ones. With --repair it " +
 		"rebuilds the metadata and removes the leftovers. With --verify it also reads every object and " +
 		"compares its data with the ETag and checksums recorded when it was written, which finds damage " +
 		"that keeps a file's size and modification time. It refuses to run while a server uses the root.",

@@ -61,8 +61,8 @@ func (s *Store) applyLimits(ctx context.Context, log *slog.Logger) {
 	}
 }
 
-// Sweep removes stale staging files, multipart uploads older than uploadExpiry, expired
-// trash, and metadata whose object or bucket is gone. It returns how many entries it
+// Sweep removes stale staging files, multipart uploads and records of completed ones
+// older than uploadExpiry, expired trash, and metadata whose object or bucket is gone. It returns how many entries it
 // removed and stops early when ctx is cancelled.
 func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
 	return s.sweep(ctx, uploadExpiry, func(_, path string) bool { return !s.paused.Load() && os.RemoveAll(path) == nil })
@@ -72,6 +72,7 @@ func (s *Store) Sweep(ctx context.Context, uploadExpiry time.Duration) int {
 const (
 	LeftoverStaging  = "stale staging file"
 	LeftoverUpload   = "expired multipart upload"
+	LeftoverComplete = "expired record of a completed upload"
 	LeftoverMetadata = "orphaned metadata"
 	LeftoverRecord   = "record of a deleted bucket"
 	LeftoverTrash    = "expired trash"
@@ -105,6 +106,13 @@ func (s *Store) sweep(ctx context.Context, uploadExpiry time.Duration, act func(
 				return removed
 			}
 			dir := s.sys("uploads", e.Name())
+			var c completedUpload
+			if raw, err := os.ReadFile(filepath.Join(dir, completedFile)); err == nil && json.Unmarshal(raw, &c) == nil {
+				if now.Sub(c.Completed) > uploadExpiry {
+					rm(LeftoverComplete, dir)
+				}
+				continue
+			}
 			var u uploadMeta
 			raw, err := os.ReadFile(filepath.Join(dir, uploadMetaFile))
 			switch {

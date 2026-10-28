@@ -147,6 +147,8 @@ test_s3::test_multipart_copy_small
 test_s3::test_multipart_copy_special_names
 test_s3::test_multipart_copy_without_range
 test_s3::test_multipart_put_object_if_match
+test_s3::test_multipart_reupload_checksum_and_etag
+test_s3::test_multipart_upload
 test_s3::test_multipart_upload_complete_without_create
 test_s3::test_multipart_upload_contents
 test_s3::test_multipart_upload_empty
@@ -156,6 +158,7 @@ test_s3::test_multipart_upload_multiple_sizes
 test_s3::test_multipart_upload_overwrite_existing_object
 test_s3::test_multipart_upload_resend_part
 test_s3::test_multipart_upload_size_too_small
+test_s3::test_multipart_upload_small
 test_s3::test_multipart_use_cksum_helper_crc32
 test_s3::test_multipart_use_cksum_helper_crc32c
 test_s3::test_multipart_use_cksum_helper_crc64nvme

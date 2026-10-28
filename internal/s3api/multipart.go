@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"math"
 	"net/http"
 	"strconv"
@@ -157,11 +158,26 @@ func (h *Handler) completeMultipartUpload(req *request) error {
 		ck.Parts[p.PartNumber] = p.values()
 	}
 	cond := writeConditions(req.r.Header)
-	info, err := h.store.CompleteUpload(req.r.Context(), req.bucket, req.key, req.q.Get("uploadId"), parts, cond, h.opts.MaxObjectSize, ck)
-	if err != nil {
+	id := req.q.Get("uploadId")
+	info, err := h.store.CompleteUpload(req.r.Context(), req.bucket, req.key, id, parts, cond, h.opts.MaxObjectSize, ck)
+	if errors.Is(err, storage.ErrNoSuchUpload) {
+		// A repeat of a Complete that succeeded gets its answer again and publishes nothing.
+		// Its conditions are not checked again: they held when the object was written.
+		prev, ok := h.store.CompletedUpload(req.bucket, req.key, id, parts)
+		if !ok {
+			return err
+		}
+		for alg, v := range ck.Object {
+			if prev.Checksums[alg] != v {
+				return s3err.BadDigest("The checksum does not match the completed upload's.")
+			}
+		}
+		info = prev
+	} else if err != nil {
 		return err
+	} else {
+		h.publish(req, notify.ObjectCreatedComplete, req.key, info)
 	}
-	h.publish(req, notify.ObjectCreatedComplete, req.key, info)
 	res := completeMultipartUploadResult{NS: s3NS, Location: req.url(req.key), Bucket: req.bucket, Key: req.key, ETag: info.ETag}
 	if len(info.Checksums) > 0 {
 		res.checksumFields, res.ChecksumType = newChecksumFields(info.Checksums), info.ChecksumType

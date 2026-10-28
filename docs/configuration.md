@@ -22,7 +22,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_REGION` | `region` | `us-east-1` | Region reported by `GetBucketLocation` and `HeadBucket` |
 | `PLAINBUCKET_MAX_OBJECT_SIZE` | `max-object-size` | `0` | Largest object or part in bytes; `0` means no limit |
 | `PLAINBUCKET_MIN_FREE_SPACE` | `min-free-space` | `0` | Free bytes every write must leave on the root's filesystem; `0` turns the check off. See [Free Space](#free-space) |
-| `PLAINBUCKET_UPLOAD_EXPIRY` | `upload-expiry` | `168h` | Age after which an unfinished multipart upload is removed |
+| `PLAINBUCKET_UPLOAD_EXPIRY` | `upload-expiry` | `168h` | Age after which an unfinished multipart upload is removed, and how long a completed one's record answers a repeated `CompleteMultipartUpload` |
 | `PLAINBUCKET_SCRUB_INTERVAL` | `scrub-interval` | `0` | How often every object is read again to find damaged data; `0` turns it off. See [Integrity Checks](#integrity-checks) |
 | `PLAINBUCKET_SCRUB_RATE` | `scrub-rate` | `33554432` | Bytes per second the integrity check may read; `0` for no limit |
 | `PLAINBUCKET_REPLICATE_INTERVAL` | `replicate-interval` | `1h` | How often each [replication](#replication) rule compares the source and target listings; at least `1m` |
@@ -348,7 +348,7 @@ With `PLAINBUCKET_CONSOLE=true`, `/_console/` serves a web console: browse bucke
 
 ## Background Cleanup
 
-Once an hour the server removes staging files left by interrupted uploads, multipart uploads older than `PLAINBUCKET_UPLOAD_EXPIRY`, and metadata whose object was deleted outside the server, and applies the [bucket limits](#expiry-and-size-limits).
+Once an hour the server removes staging files left by interrupted uploads, multipart uploads and records of completed ones older than `PLAINBUCKET_UPLOAD_EXPIRY`, and metadata whose object was deleted outside the server, and applies the [bucket limits](#expiry-and-size-limits).
 
 <br/>
 

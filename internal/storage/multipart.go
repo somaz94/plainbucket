@@ -21,6 +21,8 @@ import (
 const (
 	maxPartNumber  = 10000
 	uploadMetaFile = "upload.json"
+	// completedFile replaces an upload's manifest and parts once it is completed.
+	completedFile = "completed.json"
 )
 
 var (
@@ -74,8 +76,20 @@ type UploadInfo struct {
 
 // CompletePart names a part in a CompleteMultipartUpload request.
 type CompletePart struct {
-	Number int
-	ETag   string
+	Number int    `json:"number"`
+	ETag   string `json:"etag"`
+}
+
+// completedUpload records a completed upload, so that a repeated CompleteMultipartUpload,
+// as an SDK sends when it lost the first answer, gets the same answer.
+type completedUpload struct {
+	Bucket       string            `json:"bucket"`
+	Key          string            `json:"key"`
+	Completed    time.Time         `json:"completed"`
+	ETag         string            `json:"etag"`
+	Checksums    map[string]string `json:"checksums,omitempty"`
+	ChecksumType string            `json:"checksum_type,omitempty"`
+	Parts        []CompletePart    `json:"parts"` // ETags without quotes
 }
 
 func partFile(n int) string { return fmt.Sprintf("part-%05d", n) }
@@ -112,6 +126,11 @@ func (s *Store) loadUpload(bucket, key, id string) (uploadMeta, string, error) {
 	dir := s.sys("uploads", id)
 	raw, err := os.ReadFile(filepath.Join(dir, uploadMetaFile))
 	if err != nil || json.Unmarshal(raw, &u) != nil || u.Bucket != bucket || u.Key != key {
+		return u, "", ErrNoSuchUpload
+	}
+	// recordCompleted's removals are not flushed, so a power loss can bring the manifest
+	// back beside the record.
+	if _, err := os.Stat(filepath.Join(dir, completedFile)); err == nil {
 		return u, "", ErrNoSuchUpload
 	}
 	return u, dir, nil
@@ -329,8 +348,52 @@ func (s *Store) CompleteUpload(ctx context.Context, bucket, key, id string, part
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	_ = os.RemoveAll(dir)
+	// A power loss before the record leaves the upload open: a retry assembles it again.
+	s.recordCompleted(dir, completedUpload{Bucket: bucket, Key: key, Completed: s.now().UTC(), ETag: info.ETag,
+		Checksums: info.Checksums, ChecksumType: info.ChecksumType, Parts: trimmedParts(parts)})
 	return info, nil
+}
+
+// recordCompleted replaces the contents of upload directory dir with the record c, or
+// removes dir when c cannot be written.
+func (s *Store) recordCompleted(dir string, c completedUpload) {
+	raw, err := json.Marshal(c)
+	if err != nil || s.writeFileAtomic(filepath.Join(dir, completedFile), raw) != nil {
+		_ = os.RemoveAll(dir)
+		return
+	}
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if e.Name() != completedFile {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+func trimmedParts(parts []CompletePart) []CompletePart {
+	out := make([]CompletePart, len(parts))
+	for i, p := range parts {
+		out[i] = CompletePart{Number: p.Number, ETag: trimETag(p.ETag)}
+	}
+	return out
+}
+
+// CompletedUpload returns the object that upload id became when it completed bucket/key
+// with the same parts; ok is false otherwise, or once the janitor removed the record
+// (upload-expiry).
+func (s *Store) CompletedUpload(bucket, key, id string, parts []CompletePart) (info ObjectInfo, ok bool) {
+	if !uploadIDRe.MatchString(id) {
+		return ObjectInfo{}, false
+	}
+	unlock := s.lockUpload(id)
+	defer unlock()
+	var c completedUpload
+	raw, err := os.ReadFile(filepath.Join(s.sys("uploads", id), completedFile))
+	if err != nil || json.Unmarshal(raw, &c) != nil || c.Bucket != bucket || c.Key != key ||
+		!slices.Equal(c.Parts, trimmedParts(parts)) {
+		return ObjectInfo{}, false
+	}
+	return ObjectInfo{Key: key, ETag: c.ETag, Checksums: c.Checksums, ChecksumType: c.ChecksumType}, true
 }
 
 func appendFile(dst io.Writer, src string) error {
@@ -399,6 +462,9 @@ func (s *Store) ListUploads(bucket, prefix, keyMarker, idMarker string, max int)
 	}
 	var ups []UploadInfo
 	for _, e := range ents {
+		if _, err := os.Stat(s.sys("uploads", e.Name(), completedFile)); err == nil {
+			continue // completed, beside a manifest a power loss brought back
+		}
 		var u uploadMeta
 		raw, err := os.ReadFile(filepath.Join(s.sys("uploads", e.Name()), uploadMetaFile))
 		if err != nil || json.Unmarshal(raw, &u) != nil || u.Bucket != bucket || !strings.HasPrefix(u.Key, prefix) {

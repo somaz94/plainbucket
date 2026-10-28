@@ -134,7 +134,8 @@ func (s *Store) CreateBucketWithTags(name string, tags []Tag) error {
 // HeadBucket returns ErrNoSuchBucket unless the bucket exists.
 func (s *Store) HeadBucket(name string) error { return s.requireBucket(name) }
 
-// DeleteBucket removes an empty bucket with its metadata and in-progress uploads.
+// DeleteBucket removes an empty bucket with its metadata, in-progress uploads and records
+// of completed ones.
 func (s *Store) DeleteBucket(name string) error {
 	bl := s.bucketLock(name)
 	bl.Lock()
@@ -155,10 +156,14 @@ func (s *Store) DeleteBucket(name string) error {
 	s.usageMu.Unlock()
 	ups, _ := os.ReadDir(s.sys("uploads"))
 	for _, e := range ups {
-		var u uploadMeta
-		raw, err := os.ReadFile(filepath.Join(s.sys("uploads", e.Name()), uploadMetaFile))
-		if err == nil && json.Unmarshal(raw, &u) == nil && u.Bucket == name {
-			_ = os.RemoveAll(s.sys("uploads", e.Name()))
+		// The manifest and a completion record both carry the bucket.
+		for _, f := range []string{uploadMetaFile, completedFile} {
+			var u struct{ Bucket string }
+			raw, err := os.ReadFile(filepath.Join(s.sys("uploads", e.Name()), f))
+			if err == nil && json.Unmarshal(raw, &u) == nil && u.Bucket == name {
+				_ = os.RemoveAll(s.sys("uploads", e.Name()))
+				break
+			}
 		}
 	}
 	return nil
