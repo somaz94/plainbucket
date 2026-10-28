@@ -2,8 +2,8 @@ apiVersion: v2
 name: plainbucket
 description: A Helm chart for plainbucket, a single-node S3-compatible server that stores objects as plain files
 type: application
-version: 0.9.0
-appVersion: "v0.9.0"
+version: 0.10.0
+appVersion: "v0.10.0"
 
 kubeVersion: ">=1.21.0-0"
 
