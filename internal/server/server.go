@@ -319,7 +319,7 @@ func bucketLimits(cfg *config.Config) map[string]storage.Limit {
 }
 
 // syncErrorLog logs a failed directory flush, then at most one every interval: a failing
-// disk fails every write, and plainbucket_sync_errors_total counts them all. A refusal,
+// disk fails every write and delete, and plainbucket_sync_errors_total counts them all. A refusal,
 // which the store reports once, is a warning outside that interval.
 func syncErrorLog(logger *slog.Logger, every time.Duration) func(dir string, err error) {
 	var last atomic.Int64
@@ -332,6 +332,6 @@ func syncErrorLog(logger *slog.Logger, every time.Duration) func(dir string, err
 		if prev != 0 && now-prev < int64(every) || !last.CompareAndSwap(prev, now) {
 			return
 		}
-		logger.Error("a directory could not be flushed: writes into it may not survive a power loss", "dir", dir, "err", err)
+		logger.Error("a directory could not be flushed: recent changes in it may not survive a power loss", "dir", dir, "err", err)
 	}
 }

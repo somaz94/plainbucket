@@ -263,6 +263,8 @@ func (h *Handler) deleteObjects(req *request) error {
 		return err
 	}
 	res := deleteResult{NS: s3NS}
+	batch := h.store.Deletes()
+	var removedKeys []string
 	for _, o := range del.Objects {
 		var err error
 		if o.VersionID != "" && o.VersionID != "null" {
@@ -283,8 +285,8 @@ func (h *Handler) deleteObjects(req *request) error {
 			}
 			if err == nil {
 				var removed bool
-				if removed, err = h.store.DeleteObjectIf(req.bucket, o.Key, cond); removed {
-					h.publish(req, notify.ObjectRemovedDelete, o.Key, storage.ObjectInfo{})
+				if removed, err = batch.DeleteObjectIf(req.bucket, o.Key, cond); removed {
+					removedKeys = append(removedKeys, o.Key)
 				}
 			}
 		}
@@ -300,6 +302,11 @@ func (h *Handler) deleteObjects(req *request) error {
 		if !del.Quiet {
 			res.Deleted = append(res.Deleted, deletedItem{Key: o.Key})
 		}
+	}
+	batch.Flush()
+	// Published once flushed, as a single delete is: a power loss cannot bring them back.
+	for _, k := range removedKeys {
+		h.publish(req, notify.ObjectRemovedDelete, k, storage.ObjectInfo{})
 	}
 	writeXML(req.w, http.StatusOK, res)
 	return nil

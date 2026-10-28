@@ -6,11 +6,13 @@ import (
 	"crypto/md5"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -530,6 +532,99 @@ func TestPutSyncsDirectories(t *testing.T) {
 	}
 	if !slices.Contains(synced, ".") {
 		t.Errorf("a new bucket synced %v, want the root", synced)
+	}
+}
+
+// recordFlushes replaces syncDir with one that records the directories it is asked to flush.
+func recordFlushes(t *testing.T) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var dirs []string
+	old := syncDir
+	syncDir = func(r *os.Root, dir string) error {
+		mu.Lock()
+		dirs = append(dirs, filepath.ToSlash(dir))
+		mu.Unlock()
+		return old(r, dir)
+	}
+	t.Cleanup(func() { syncDir = old })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := dirs
+		dirs = nil
+		return out
+	}
+}
+
+// A delete flushes the directory it removed the last entry from; a batch flushes each
+// changed directory once, at Flush; expiry does not flush the bucket directory.
+func TestDeletesFlush(t *testing.T) {
+	s := newStore(t)
+	for _, k := range []string{"a/b", "a/c", "x/y", "x/z", "top", "old"} {
+		put(t, s, k, "v")
+	}
+	flushed := recordFlushes(t)
+
+	if _, err := s.DeleteObjectIf("bkt", "a/b", DeleteConditions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := flushed(); !slices.Equal(got, []string{"bkt/a"}) {
+		t.Errorf("delete beside another object flushed %v, want bkt/a", got)
+	}
+	if _, err := s.DeleteObjectIf("bkt", "a/c", DeleteConditions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := flushed(); !slices.Equal(got, []string{"bkt"}) {
+		t.Errorf("delete of the last object in a/ flushed %v, want bkt", got)
+	}
+
+	batch := s.Deletes()
+	for _, k := range []string{"x/y", "x/z", "top"} {
+		if removed, err := batch.DeleteObjectIf("bkt", k, DeleteConditions{}); !removed || err != nil {
+			t.Fatal(k, removed, err)
+		}
+	}
+	if got := flushed(); len(got) != 0 {
+		t.Errorf("batch flushed %v before Flush", got)
+	}
+	batch.Flush()
+	// x/y left x behind, then x/z removed it: x, gone by then, counts as its parent.
+	if got := flushed(); !slices.Equal(got, []string{"bkt"}) {
+		t.Errorf("batch flushed %v, want bkt once", got)
+	}
+	// A directory a concurrent prune removed hands its flush to the nearest one left.
+	s.flushLeft("bkt/gone/deeper")
+	if got := flushed(); !slices.Equal(got, []string{"bkt"}) {
+		t.Errorf("flushLeft of a removed directory flushed %v, want bkt", got)
+	}
+
+	c := &clock{t: time.Now()}
+	s.now = c.now
+	s.SetLimits(map[string]Limit{"bkt": {ExpireAfter: time.Hour}})
+	age(t, s, "old", c.t.Add(-2*time.Hour))
+	flushed()
+	s.applyLimits(context.Background(), slog.New(slog.DiscardHandler))
+	if _, err := os.Stat(filepath.Join(s.root, "bkt", "old")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("not expired: %v", err)
+	}
+	if got := flushed(); slices.Contains(got, "bkt") {
+		t.Errorf("expiry flushed %v", got)
+	}
+}
+
+// A delete into the trash flushes the directory the object left.
+func TestTrashDeleteFlushes(t *testing.T) {
+	s := newStore(t)
+	s.SetTrash(map[string]time.Duration{"bkt": time.Hour})
+	put(t, s, "d/k", "v")
+	put(t, s, "d/keep", "v")
+	flushed := recordFlushes(t)
+	if _, err := s.DeleteObjectIf("bkt", "d/k", DeleteConditions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := flushed(); !slices.Contains(got, "bkt/d") {
+		t.Errorf("trash delete flushed %v, want bkt/d among them", got)
 	}
 }
 

@@ -313,6 +313,7 @@ func (s *Store) removeUnchanged(bucket string, c candidate, ok func(os.FileInfo)
 	if ok != nil && !ok(fi) {
 		return false
 	}
-	removed, err := s.removeFile(bucket, c.key, p, fi)
+	// Not flushed: an object a power loss brings back is removed again by the next scan.
+	removed, err := s.removeFile(bucket, c.key, p, fi, nil)
 	return removed && err == nil
 }

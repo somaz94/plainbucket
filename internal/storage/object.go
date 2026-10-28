@@ -317,8 +317,42 @@ func (c DeleteConditions) check(info ObjectInfo) error {
 }
 
 // DeleteObjectIf deletes bucket/key when it meets cond; removed reports whether there
-// was an object to delete.
+// was an object to delete. The directory it removed an entry from is flushed before it
+// returns, so an acknowledged delete survives a power loss.
 func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) (removed bool, err error) {
+	return s.deleteObject(bucket, key, cond, s.flushLeft)
+}
+
+// Deletes runs deletes whose directory flushes wait for Flush, which syncs each
+// directory they changed once: a DeleteObjects of many keys in one directory needs one.
+// It is for one goroutine.
+type Deletes struct {
+	s    *Store
+	dirs map[string]bool
+}
+
+// Deletes starts a batch of deletes.
+func (s *Store) Deletes() *Deletes { return &Deletes{s: s, dirs: map[string]bool{}} }
+
+// DeleteObjectIf is Store.DeleteObjectIf with the flush left to Flush.
+func (d *Deletes) DeleteObjectIf(bucket, key string, cond DeleteConditions) (removed bool, err error) {
+	return d.s.deleteObject(bucket, key, cond, func(dir string) { d.dirs[dir] = true })
+}
+
+// Flush syncs the directories the deletes so far changed, each once.
+func (d *Deletes) Flush() {
+	done := map[string]bool{}
+	for dir := range d.dirs {
+		if left := d.s.present(dir); !done[left] {
+			done[left] = true
+			d.s.flushDir(left)
+		}
+	}
+	clear(d.dirs)
+}
+
+// deleteObject is DeleteObjectIf with the directory flush handed to flush.
+func (s *Store) deleteObject(bucket, key string, cond DeleteConditions, flush func(dir string)) (removed bool, err error) {
 	bl := s.bucketLock(bucket)
 	bl.RLock()
 	defer bl.RUnlock()
@@ -356,7 +390,7 @@ func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) (remov
 		if s.r.Remove(s.rel(p)) != nil {
 			return hadMarker, nil // a folder with objects in it loses only its marker
 		}
-		s.pruneEmptyParents(bucket, filepath.Dir(p))
+		flush(s.rel(s.pruneEmptyParents(bucket, filepath.Dir(p))))
 		return true, nil
 	}
 	fi, err := s.r.Lstat(s.rel(p))
@@ -365,15 +399,15 @@ func (s *Store) DeleteObjectIf(bucket, key string, cond DeleteConditions) (remov
 		return false, nil
 	}
 	if after := s.TrashAfter(bucket); after > 0 && fi.Mode().IsRegular() {
-		return s.trashFile(bucket, key, p, fi, after)
+		return s.trashFile(bucket, key, p, fi, after, flush)
 	}
-	return s.removeFile(bucket, key, p, fi)
+	return s.removeFile(bucket, key, p, fi, flush)
 }
 
 // removeFile deletes the object file p, described by fi, with its sidecar and the
-// directories it leaves empty; removed is false when the file was already gone. The
-// caller holds the key lock.
-func (s *Store) removeFile(bucket, key, p string, fi os.FileInfo) (removed bool, err error) {
+// directories it leaves empty, then passes the directory left to flush unless it is nil;
+// removed is false when the file was already gone. The caller holds the key lock.
+func (s *Store) removeFile(bucket, key, p string, fi os.FileInfo, flush func(dir string)) (removed bool, err error) {
 	if err := s.r.Remove(s.rel(p)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -384,7 +418,10 @@ func (s *Store) removeFile(bucket, key, p string, fi os.FileInfo) (removed bool,
 		s.adjust(bucket, -1, -fi.Size())
 	}
 	_ = os.Remove(s.metaPath(bucket, key))
-	s.pruneEmptyParents(bucket, filepath.Dir(p))
+	left := s.pruneEmptyParents(bucket, filepath.Dir(p))
+	if flush != nil {
+		flush(s.rel(left))
+	}
 	return true, nil
 }
 

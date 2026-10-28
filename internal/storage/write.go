@@ -190,7 +190,8 @@ func (s *Store) writeFileAtomic(path string, raw []byte) error {
 // rename is os.Root.Rename; tests replace it to fail or hold a specific rename.
 var rename = func(r *os.Root, src, dst string) error { return r.Rename(src, dst) }
 
-// syncDir flushes a directory, so a rename into it survives a power loss; tests replace it.
+// syncDir flushes a directory, so a rename into or a removal from it survives a power
+// loss; tests replace it.
 var syncDir = func(r *os.Root, dir string) error {
 	d, err := r.Open(dir)
 	if err != nil {
@@ -206,9 +207,9 @@ var syncDir = func(r *os.Root, dir string) error {
 // not counted.
 var ErrSyncUnsupported = errors.New("the filesystem does not support flushing directories")
 
-// flushDir syncs dir after a rename into it. The file is in place by then, so a failure
-// never fails the write: it is counted and reported, a refusal is reported once (see
-// ErrSyncUnsupported), and a directory a delete has removed since is ignored.
+// flushDir syncs dir after a rename into it or a removal from it. The change stands by
+// then, so a failure never fails the request: it is counted and reported, a refusal is
+// reported once (see ErrSyncUnsupported), and a directory removed since is ignored.
 func (s *Store) flushDir(dir string) {
 	err := syncDir(s.r, dir)
 	fn := s.onSyncError.Load()
@@ -227,11 +228,35 @@ func (s *Store) flushDir(dir string) {
 	}
 }
 
-// OnSyncError sets fn to be called when flushing a directory after a rename or a new
-// directory in it fails: the change stands but may not survive a power loss. A refusal
-// arrives only once, wrapping ErrSyncUnsupported. fn runs
-// concurrently and may hold a bucket or key lock, so it must not call into the store.
+// OnSyncError sets fn to be called when a directory flush fails (after a write or a
+// delete): the change stands but may not survive a power loss. A refusal
+// arrives only once, wrapping ErrSyncUnsupported. fn runs concurrently and may hold a
+// bucket or key lock, so it must not call into the store.
 func (s *Store) OnSyncError(fn func(dir string, err error)) { s.onSyncError.Store(&fn) }
+
+// flushLeft flushes dir, the directory a delete left, or its nearest parent still present
+// when a concurrent prune removed it: that prune may not flush (expiry does not) or may
+// flush only later, after this delete is answered.
+func (s *Store) flushLeft(dir string) { s.flushDir(s.present(dir)) }
+
+// present returns dir, or its nearest parent that still exists.
+func (s *Store) present(dir string) string {
+	for ; dir != "."; dir = filepath.Dir(dir) {
+		if _, err := s.r.Lstat(dir); err == nil {
+			break
+		}
+	}
+	return dir
+}
+
+// SetSyncDirForTest replaces how every store flushes a directory, for tests outside this
+// package; it returns the function that restores it. It is not safe while a store is in
+// use: set it before starting anything that flushes, and restore it after that stops.
+func SetSyncDirForTest(fn func(dir string) error) (restore func()) {
+	old := syncDir
+	syncDir = func(_ *os.Root, dir string) error { return fn(dir) }
+	return func() { syncDir = old }
+}
 
 // SyncErrors returns how many directory flushes have failed since startup, refusals aside.
 func (s *Store) SyncErrors() int64 { return s.syncErrors.Load() }
@@ -294,16 +319,18 @@ func (s *Store) mkdirParent(dst string, perm os.FileMode) (string, error) {
 }
 
 // pruneEmptyParents removes now-empty directories from dir up to, not including, the
-// bucket directory, stopping at an explicit directory marker.
-func (s *Store) pruneEmptyParents(bucket, dir string) {
+// bucket directory, stopping at an explicit directory marker. It returns the directory
+// that lost the last entry, the one to flush.
+func (s *Store) pruneEmptyParents(bucket, dir string) string {
 	stop := s.bucketPath(bucket)
 	for dir != stop && strings.HasPrefix(dir, stop+string(filepath.Separator)) {
 		if s.hasMarker(bucket, filepath.ToSlash(dir[len(stop)+1:])+"/") {
-			return
+			return dir
 		}
 		if s.r.Remove(s.rel(dir)) != nil {
-			return
+			return dir
 		}
 		dir = filepath.Dir(dir)
 	}
+	return dir
 }

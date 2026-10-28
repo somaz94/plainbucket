@@ -110,7 +110,7 @@ spec:
             severity: {{ .severity }}
           annotations:
             summary: plainbucket cannot flush writes to disk.
-            description: Flushing a directory after a write failed, so recent writes may not survive a power loss; the volume may be failing. The server log names the directory and the error.
+            description: Flushing a directory after a write or delete failed, so recent changes may not survive a power loss; the volume may be failing. The server log names the directory and the error.
         {{- end }}{{ end }}
         {{- with .Values.prometheusRule.additionalRules }}
         {{- toYaml . | nindent 8 }}

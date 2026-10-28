@@ -1033,7 +1033,7 @@
     {
       "type": "timeseries",
       "title": "Directory flush failures",
-      "description": "Directory flushes after a write that failed: those writes are in place but may not survive a power loss, and the server log names the directory. A filesystem that does not support flushing is not counted.",
+      "description": "Directory flushes that failed after a write or delete: those changes stand but may not survive a power loss, and the server log names the directory. A filesystem that does not support flushing is not counted.",
       "id": 22,
       "datasource": {
         "type": "prometheus",

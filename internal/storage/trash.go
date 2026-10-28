@@ -59,8 +59,8 @@ func (s *Store) trashDir(bucket string, id ...string) string {
 }
 
 // trashFile moves the object file p of bucket/key, described by fi, into the trash instead of
-// deleting it; removed means what it does for removeFile. The caller holds the key lock.
-func (s *Store) trashFile(bucket, key, p string, fi os.FileInfo, after time.Duration) (removed bool, err error) {
+// deleting it; removed and flush mean what they do for removeFile. The caller holds the key lock.
+func (s *Store) trashFile(bucket, key, p string, fi os.FileInfo, after time.Duration, flush func(dir string)) (removed bool, err error) {
 	var raw [16]byte
 	_, _ = rand.Read(raw[:])
 	id := hex.EncodeToString(raw[:])
@@ -92,7 +92,10 @@ func (s *Store) trashFile(bucket, key, p string, fi os.FileInfo, after time.Dura
 	}
 	_ = os.Remove(s.metaPath(bucket, key))
 	s.adjust(bucket, -1, -fi.Size())
-	s.pruneEmptyParents(bucket, filepath.Dir(p))
+	left := s.pruneEmptyParents(bucket, filepath.Dir(p))
+	if flush != nil {
+		flush(s.rel(left))
+	}
 	return true, nil
 }
 

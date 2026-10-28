@@ -7,8 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/somaz94/plainbucket/internal/storage"
 )
 
 func TestConditionalDelete(t *testing.T) {
@@ -147,5 +150,33 @@ func TestListUploadsDelimiter(t *testing.T) {
 	keys, res = list("&encoding-type=url&prefix=e%20&max-uploads=1")
 	if strings.Join(keys, ",") != "e%20f/" || res.Prefix != "e%20" || res.NextKeyMarker != "" {
 		t.Errorf("encoded: %v %+v", keys, res)
+	}
+}
+
+// DeleteObjects flushes each directory it changed once, not once per key.
+func TestDeleteObjectsFlushesOncePerDirectory(t *testing.T) {
+	x := newHarness(t, nil)
+	x.mustDo(http.MethodPut, "/bkt", nil, nil, http.StatusOK)
+	var body strings.Builder
+	body.WriteString("<Delete>")
+	for i := range 5 {
+		k := fmt.Sprintf("k%d", i)
+		x.mustDo(http.MethodPut, "/bkt/"+k, []byte("v"), nil, http.StatusOK)
+		body.WriteString("<Object><Key>" + k + "</Key></Object>")
+	}
+	body.WriteString("</Delete>")
+	var mu sync.Mutex
+	flushed := map[string]int{}
+	t.Cleanup(storage.SetSyncDirForTest(func(dir string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		flushed[filepath.ToSlash(dir)]++
+		return nil
+	}))
+	x.mustDo(http.MethodPost, "/bkt?delete", []byte(body.String()), nil, http.StatusOK)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(flushed) != 1 || flushed["bkt"] != 1 {
+		t.Errorf("flushed %v, want bkt once", flushed)
 	}
 }

@@ -50,7 +50,7 @@ tests:
           - exp_labels: {severity: warning, job: t-plainbucket, namespace: ns}
             exp_annotations:
               summary: plainbucket cannot flush writes to disk.
-              description: Flushing a directory after a write failed, so recent writes may not survive a power loss; the volume may be failing. The server log names the directory and the error.
+              description: Flushing a directory after a write or delete failed, so recent changes may not survive a power loss; the volume may be failing. The server log names the directory and the error.
       - eval_time: 20m
         alertname: PlainbucketNotificationsFailing
         exp_alerts:
