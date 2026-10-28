@@ -116,7 +116,7 @@ func (r *reloader) snapshot() map[string]fileStamp {
 	return out
 }
 
-// afterLoad runs once a reload has read the files; tests replace it to write one meanwhile.
+// afterLoad runs once a reload has read every file; tests replace it to write one meanwhile.
 var afterLoad = func() {}
 
 func (r *reloader) reload(ctx context.Context, cause string) {
@@ -125,7 +125,6 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 	before := r.snapshot()
 	r.stamps = before
 	next, err := config.Load(r.src.configFile)
-	afterLoad()
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && errors.Is(pe, fs.ErrNotExist) {
 		r.missing = pe.Path // such as a secret-file whose Secret is not mounted yet
 		r.stamps[pe.Path] = fileStamp{}
@@ -140,6 +139,7 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 			return
 		}
 	}
+	afterLoad()
 	if names := r.boot.RestartNeeded(next); len(names) > 0 {
 		r.logger.Warn("some settings change only on restart", "settings", names)
 	}

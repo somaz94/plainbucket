@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -106,6 +107,21 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// armAfterLoad installs afterLoad before the server starts and resets it after the server
+// stops; arm sets what the next reload that read every file runs, on the reloader's goroutine
+// (so t.Error, not t.Fatal).
+func armAfterLoad(t *testing.T) (arm func(func())) {
+	t.Helper()
+	var next atomic.Pointer[func()]
+	afterLoad = func() {
+		if f := next.Swap(nil); f != nil {
+			(*f)()
+		}
+	}
+	t.Cleanup(func() { afterLoad = func() {} })
+	return func(f func()) { next.Store(&f) }
 }
 
 func TestReloadOnFileChangeAndSignal(t *testing.T) {
@@ -256,6 +272,7 @@ func TestReloadSwapsTheCertificate(t *testing.T) {
 	file := filepath.Join(dir, "config.yaml")
 	writeFile(t, file, "root: "+filepath.Join(dir, "data")+"\naccess-key: ak\nsecret-key: sk\ntls-cert: "+cert+"\ntls-key: "+key+"\n")
 	logs := &syncBuffer{}
+	arm := armAfterLoad(t)
 	url, _ := startReloading(t, file, logs)
 	addr := strings.TrimPrefix(url, "https://")
 
@@ -280,16 +297,20 @@ func TestReloadSwapsTheCertificate(t *testing.T) {
 	if c := served(); !bytes.Equal(c, first) {
 		t.Fatal("certificate changed after a failed reload")
 	}
-	writeFile(t, cert, string(good))
 
+	// The new pair lands while the reload restoring the good one runs, after it read both
+	// files: that reload must not record the new files as already loaded.
 	newCert, newKey := writeCert(t)
-	for _, p := range [][2]string{{newCert, cert}, {newKey, key}} {
-		b, err := os.ReadFile(p[0])
-		if err != nil {
-			t.Fatal(err)
+	arm(func() {
+		for _, p := range [][2]string{{newCert, cert}, {newKey, key}} {
+			if b, err := os.ReadFile(p[0]); err != nil {
+				t.Error(err)
+			} else if err := os.WriteFile(p[1], b, 0o600); err != nil {
+				t.Error(err)
+			}
 		}
-		writeFile(t, p[1], string(b))
-	}
+	})
+	writeFile(t, cert, string(good))
 	eventually(t, "the new certificate", func() bool { c := served(); return c != nil && !bytes.Equal(c, first) })
 }
 
@@ -369,7 +390,7 @@ func TestReloadReadsReplicationToken(t *testing.T) {
 	eventually(t, "the copy with the new token", func() bool { return has("after") })
 }
 
-// A credential file rewritten while a reload reads the others is taken over by the next one.
+// A credential file rewritten after a reload read it, before the reload finished, triggers the next one.
 func TestReloadCatchesAWriteDuringLoad(t *testing.T) {
 	dir := t.TempDir()
 	dst, err := storage.New(filepath.Join(dir, "target"))
@@ -388,12 +409,15 @@ func TestReloadCatchesAWriteDuringLoad(t *testing.T) {
 	writeFile(t, file, "root: "+filepath.Join(dir, "data")+"\naccess-key: ak\nsecret-key: sk\nbuckets: {src: {replicate: [{endpoint: \""+target.URL+
 		"\", bucket: copy, access-key-file: "+keyFile+", secret-key-file: "+secretFile+", session-token-file: "+tokenFile+"}]}}\n")
 	logs := &syncBuffer{}
+	arm := armAfterLoad(t)
 	url, _ := startReloading(t, file, logs)
 	eventually(t, "the server", func() bool { return doAs(t, http.MethodPut, url+"/src", "ak", "sk", "") == http.StatusOK })
 
-	var once sync.Once
-	t.Cleanup(func() { afterLoad = func() {} })
-	afterLoad = func() { once.Do(func() { writeFile(t, tokenFile, creds.Token) }) }
+	arm(func() {
+		if err := os.WriteFile(tokenFile, []byte(creds.Token), 0o600); err != nil {
+			t.Error(err)
+		}
+	})
 	writeFile(t, tokenFile, "another-stale-token") // triggers the reload that reads it, then gets the real one
 	eventually(t, "two reloads", func() bool { return strings.Count(logs.String(), "configuration reloaded") >= 2 })
 	doAs(t, http.MethodPut, url+"/src/k", "ak", "sk", "data")
