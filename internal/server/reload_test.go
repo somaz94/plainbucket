@@ -390,36 +390,51 @@ func TestReloadReadsReplicationToken(t *testing.T) {
 	eventually(t, "the copy with the new token", func() bool { return has("after") })
 }
 
-// A credential file rewritten after a reload read it, before the reload finished, triggers the next one.
+// A credential file rewritten after a reload read it, before the reload finished, triggers
+// the next one, also when only the new configuration names it.
 func TestReloadCatchesAWriteDuringLoad(t *testing.T) {
-	dir := t.TempDir()
-	dst, err := storage.New(filepath.Join(dir, "target"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = dst.Close() }()
-	_ = dst.CreateBucket("copy")
-	target := httptest.NewServer(s3api.New(s3api.Options{Store: dst, Region: "us-east-1", Credentials: []s3api.Credential{{AccessKey: "tk", SecretKey: "ts"}}}))
-	defer target.Close()
-	creds := session.Issue("ts", session.Claims{Parent: "tk", Expires: time.Now().Add(time.Hour)})
-	keyFile, secretFile, tokenFile, file := filepath.Join(dir, "key"), filepath.Join(dir, "secret"), filepath.Join(dir, "token"), filepath.Join(dir, "config.yaml")
-	writeFile(t, keyFile, creds.AccessKey)
-	writeFile(t, secretFile, creds.SecretKey)
-	writeFile(t, tokenFile, "stale-token")
-	writeFile(t, file, "root: "+filepath.Join(dir, "data")+"\naccess-key: ak\nsecret-key: sk\nbuckets: {src: {replicate: [{endpoint: \""+target.URL+
-		"\", bucket: copy, access-key-file: "+keyFile+", secret-key-file: "+secretFile+", session-token-file: "+tokenFile+"}]}}\n")
-	logs := &syncBuffer{}
-	arm := armAfterLoad(t)
-	url, _ := startReloading(t, file, logs)
-	eventually(t, "the server", func() bool { return doAs(t, http.MethodPut, url+"/src", "ak", "sk", "") == http.StatusOK })
+	for _, newFile := range []bool{false, true} {
+		t.Run(fmt.Sprintf("new file %t", newFile), func(t *testing.T) {
+			dir := t.TempDir()
+			dst, err := storage.New(filepath.Join(dir, "target"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = dst.Close() }()
+			_ = dst.CreateBucket("copy")
+			target := httptest.NewServer(s3api.New(s3api.Options{Store: dst, Region: "us-east-1", Credentials: []s3api.Credential{{AccessKey: "tk", SecretKey: "ts"}}}))
+			defer target.Close()
+			creds := session.Issue("ts", session.Claims{Parent: "tk", Expires: time.Now().Add(time.Hour)})
+			keyFile, secretFile, tokenFile, file := filepath.Join(dir, "key"), filepath.Join(dir, "secret"), filepath.Join(dir, "token"), filepath.Join(dir, "config.yaml")
+			writeFile(t, keyFile, creds.AccessKey)
+			writeFile(t, secretFile, creds.SecretKey)
+			writeFile(t, tokenFile, "stale-token")
+			config := func(token string) string {
+				return "root: " + filepath.Join(dir, "data") + "\naccess-key: ak\nsecret-key: sk\nbuckets: {src: {replicate: [{endpoint: \"" + target.URL +
+					"\", bucket: copy, access-key-file: " + keyFile + ", secret-key-file: " + secretFile + ", session-token-file: " + token + "}]}}\n"
+			}
+			writeFile(t, file, config(tokenFile))
+			logs := &syncBuffer{}
+			arm := armAfterLoad(t)
+			url, _ := startReloading(t, file, logs)
+			eventually(t, "the server", func() bool { return doAs(t, http.MethodPut, url+"/src", "ak", "sk", "") == http.StatusOK })
 
-	arm(func() {
-		if err := os.WriteFile(tokenFile, []byte(creds.Token), 0o600); err != nil {
-			t.Error(err)
-		}
-	})
-	writeFile(t, tokenFile, "another-stale-token") // triggers the reload that reads it, then gets the real one
-	eventually(t, "two reloads", func() bool { return strings.Count(logs.String(), "configuration reloaded") >= 2 })
-	doAs(t, http.MethodPut, url+"/src/k", "ak", "sk", "data")
-	eventually(t, "the copy", func() bool { _, err := dst.HeadObject("copy", "k"); return err == nil })
+			read := tokenFile
+			if newFile {
+				read = filepath.Join(dir, "token-2")
+			}
+			arm(func() {
+				if err := os.WriteFile(read, []byte(creds.Token), 0o600); err != nil {
+					t.Error(err)
+				}
+			})
+			writeFile(t, read, "another-stale-token")
+			if newFile {
+				writeFile(t, file, config(read))
+			}
+			eventually(t, "two reloads", func() bool { return strings.Count(logs.String(), "configuration reloaded") >= 2 })
+			doAs(t, http.MethodPut, url+"/src/k", "ak", "sk", "data")
+			eventually(t, "the copy", func() bool { _, err := dst.HeadObject("copy", "k"); return err == nil })
+		})
+	}
 }

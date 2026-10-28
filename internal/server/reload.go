@@ -120,10 +120,11 @@ func (r *reloader) snapshot() map[string]fileStamp {
 var afterLoad = func() {}
 
 func (r *reloader) reload(ctx context.Context, cause string) {
-	// Taken first, so a file that fails to load is not retried on every tick.
-	r.missing = ""
+	// Taken first, so a file that fails to load is not retried on every tick; the missing
+	// file is still in it, so its appearance needs no second reload.
 	before := r.snapshot()
 	r.stamps = before
+	r.missing = ""
 	next, err := config.Load(r.src.configFile)
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && errors.Is(pe, fs.ErrNotExist) {
 		r.missing = pe.Path // such as a secret-file whose Secret is not mounted yet
@@ -171,12 +172,11 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 	}
 	r.cfg = next
 	// The files read keep the stamps from before Load, so one rewritten since (a refreshed
-	// key, secret or token written one by one) still triggers the next reload.
+	// key, secret or token written one by one) still triggers the next reload. A file only
+	// the new configuration names has no such stamp: the next tick reloads once to confirm it.
 	r.stamps = r.snapshot()
-	for f, s := range before {
-		if _, ok := r.stamps[f]; ok {
-			r.stamps[f] = s
-		}
+	for f := range r.stamps {
+		r.stamps[f] = before[f]
 	}
 	r.logger.Info("configuration reloaded", "cause", cause, "keys", len(next.AllCredentials()), "buckets", len(next.Buckets))
 }
