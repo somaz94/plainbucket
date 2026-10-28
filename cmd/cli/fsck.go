@@ -42,8 +42,10 @@ var fsckCmd = &cobra.Command{
 			return fmt.Errorf("locking %s: %w", cfg.Root, err)
 		}
 		store.OnSyncError(syncWarnings(cmd.ErrOrStderr()))
+		store.CheckFlush() // reported by syncWarnings, so not in the count below
+		base := store.SyncErrors()
 		defer func() {
-			if n := store.SyncErrors(); n > 0 {
+			if n := store.SyncErrors() - base; n > 0 {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d directory flush(es) failed; what fsck wrote is in place but may not survive a power loss\n", n)
 			}
 		}()

@@ -58,6 +58,7 @@ type Options struct {
 type Handler struct {
 	opts      Options
 	store     *storage.Store
+	listing   func(timeout time.Duration) ([]storage.BucketInfo, error) // store.ListBucketsWithin, replaced in tests
 	log       *slog.Logger
 	now       func() time.Time
 	metrics   *metrics
@@ -83,6 +84,7 @@ func New(opts Options) *Handler {
 		logger = slog.Default()
 	}
 	h := &Handler{opts: opts, store: opts.Store, log: logger, now: time.Now, metrics: newMetrics()}
+	h.listing = h.store.ListBucketsWithin
 	h.SetAccess(opts.Credentials, opts.Buckets, opts.PublicBuckets)
 	h.readOnly.Store(opts.ReadOnly)
 	h.SetAnonymousRateLimit(opts.AnonymousRateLimit)

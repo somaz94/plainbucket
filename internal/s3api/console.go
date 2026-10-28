@@ -89,7 +89,7 @@ func (h *Handler) consoleUsage(req *request) error {
 		return err
 	}
 
-	buckets, err := h.store.ListBucketsWithin(storageTimeout)
+	buckets, err := h.listing(storageTimeout)
 	if errors.Is(err, storage.ErrProbeTimeout) {
 		req.w.Header().Set("Retry-After", storageRetry)
 		return s3err.ServiceUnavailable("The storage did not answer in time.")

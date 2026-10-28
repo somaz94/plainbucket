@@ -338,3 +338,17 @@ func TestSyncErrorLogIsThrottled(t *testing.T) {
 		t.Errorf("no warning for an unsupported flush:\n%s", logs)
 	}
 }
+
+// A filesystem that refuses directory flushes is reported when the server starts, before
+// any write.
+func TestServeChecksFlushAtStart(t *testing.T) {
+	t.Cleanup(storage.SetSyncDirForTest(func(string) error { return syscall.EINVAL }))
+	dir := t.TempDir()
+	file := filepath.Join(dir, "config.yaml")
+	writeFile(t, file, "root: "+filepath.Join(dir, "data")+"\naccess-key: ak\nsecret-key: sk\n")
+	logs := &syncBuffer{}
+	startReloading(t, file, logs)
+	eventually(t, "the warning", func() bool {
+		return strings.Contains(logs.String(), "acknowledged writes may not survive a power loss")
+	})
+}

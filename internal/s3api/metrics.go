@@ -163,7 +163,7 @@ func (m *metrics) write(w http.ResponseWriter, s scrape) {
 	expired, evicted := st.Removed()
 	metric("counter", "plainbucket_expired_objects_total", "Objects removed by a bucket's expire-after.", expired)
 	metric("counter", "plainbucket_evicted_objects_total", "Objects evicted by a bucket's max-size.", evicted)
-	metric("counter", "plainbucket_sync_errors_total", "Directory flushes that failed after a write or delete; those changes stand but may not survive a power loss.", st.SyncErrors())
+	metric("counter", "plainbucket_sync_errors_total", "Directory flushes that failed after a write or delete, or at startup; those changes stand but may not survive a power loss.", st.SyncErrors())
 
 	if s.notifier != nil {
 		sent, failed, dropped, queued := s.notifier.Stats()

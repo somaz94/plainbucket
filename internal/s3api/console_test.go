@@ -150,3 +150,13 @@ func TestConsoleUsage(t *testing.T) {
 		x.expectErr(http.MethodGet, consoleUsagePath, nil, nil, "SignatureDoesNotMatch")
 	})
 }
+
+// A storage that does not list its buckets in time is a 503 the console may retry.
+func TestConsoleUsageStorageTimeout(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.Console = true })
+	x.h.listing = func(time.Duration) ([]storage.BucketInfo, error) { return nil, storage.ErrProbeTimeout }
+	rec := x.do(http.MethodGet, consoleUsagePath, nil, nil)
+	if rec.Code != http.StatusServiceUnavailable || errCode(rec) != "ServiceUnavailable" || rec.Header().Get("Retry-After") != storageRetry {
+		t.Errorf("%d %s, Retry-After %q", rec.Code, errCode(rec), rec.Header().Get("Retry-After"))
+	}
+}

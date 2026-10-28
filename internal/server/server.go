@@ -106,6 +106,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 	defer replicator.Close()
 	store.OnLimitRemove(lifecycleEvents(notifier, replicator))
 	store.OnSyncError(syncErrorLog(logger, time.Minute))
+	store.CheckFlush()
 
 	janitorCtx, stopJanitor := context.WithCancel(context.Background())
 	var janitor sync.WaitGroup

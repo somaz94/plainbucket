@@ -229,7 +229,7 @@ func (s *Store) flushDir(dir string) {
 }
 
 // OnSyncError sets fn to be called when a directory flush fails (after a write or a
-// delete): the change stands but may not survive a power loss. A refusal
+// delete, or in CheckFlush): the change stands but may not survive a power loss. A refusal
 // arrives only once, wrapping ErrSyncUnsupported. fn runs concurrently and may hold a
 // bucket or key lock, so it must not call into the store.
 func (s *Store) OnSyncError(fn func(dir string, err error)) { s.onSyncError.Store(&fn) }
@@ -248,6 +248,10 @@ func (s *Store) present(dir string) string {
 	}
 	return dir
 }
+
+// CheckFlush flushes the root once, so a filesystem that refuses or fails directory
+// flushes shows through OnSyncError at startup rather than at the first write.
+func (s *Store) CheckFlush() { s.flushDir(".") }
 
 // SetSyncDirForTest replaces how every store flushes a directory, for tests outside this
 // package; it returns the function that restores it. It is not safe while a store is in

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -197,6 +198,30 @@ func TestFsckSyncWarnings(t *testing.T) {
 	if got := w.String(); got != "warning: flushing bkt/a: input/output error\n"+
 		"warning: bkt: "+storage.ErrSyncUnsupported.Error()+": invalid argument; what fsck writes may not survive a power loss\n" {
 		t.Errorf("warnings:\n%s", got)
+	}
+}
+
+// A repair whose directories cannot be flushed still succeeds, and says so on stderr.
+func TestFsckReportsFailedFlushes(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PLAINBUCKET_ACCESS_KEY", "")
+	t.Setenv("PLAINBUCKET_ROOT", root)
+	_ = os.MkdirAll(filepath.Join(root, "bkt"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "bkt", "dropped-in"), []byte("x"), 0o644)
+	t.Cleanup(storage.SetSyncDirForTest(func(string) error { return syscall.EIO }))
+	var out, errOut bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&errOut)
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); fsckRepair = false })
+
+	reset(t, "fsck", "--repair")
+	if err := Execute(); err != nil || !strings.Contains(out.String(), "(fixed)") {
+		t.Fatalf("repair: %v\n%s", err, out.String())
+	}
+	got := errOut.String()
+	if !strings.Contains(got, "warning: flushing .: input/output error\n") ||
+		!strings.Contains(got, " directory flush(es) failed; what fsck wrote is in place") || strings.Count(got, "warning: flushing") != 1 {
+		t.Errorf("stderr:\n%s", got)
 	}
 }
 
