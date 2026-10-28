@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -88,7 +89,10 @@ func (h *Handler) consoleUsage(req *request) error {
 		return err
 	}
 
-	buckets, err := h.store.ListBuckets()
+	buckets, err := h.store.ListBucketsWithin(storageTimeout)
+	if errors.Is(err, storage.ErrProbeTimeout) {
+		return s3err.ServiceUnavailable("The storage did not answer in time.")
+	}
 	if err != nil {
 		return err
 	}

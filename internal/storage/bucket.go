@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 )
@@ -34,6 +35,13 @@ func (s *Store) ListBuckets() ([]BucketInfo, error) {
 		out = append(out, BucketInfo{Name: e.Name(), Created: s.bucketCreated(e.Name(), fi)})
 	}
 	return out, nil
+}
+
+// ListBucketsWithin is ListBuckets failing with ErrProbeTimeout after timeout, for callers
+// that must answer while a network mount hangs. Calls made meanwhile share one listing.
+func (s *Store) ListBucketsWithin(timeout time.Duration) ([]BucketInfo, error) {
+	b, err := s.listings.wait(timeout, s.listRead)
+	return slices.Clone(b), err
 }
 
 // bucketRecord is what the server keeps about a bucket under SysDir/buckets.

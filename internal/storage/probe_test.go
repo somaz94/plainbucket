@@ -78,6 +78,37 @@ func TestProbeHungRoot(t *testing.T) {
 	}
 }
 
+func TestListBucketsWithinHungMount(t *testing.T) {
+	s := newStore(t)
+	release, started := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	var once sync.Once
+	list := s.listRead
+	s.listRead = func() ([]BucketInfo, error) {
+		calls.Add(1)
+		once.Do(func() { close(started) })
+		<-release
+		return list()
+	}
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			if _, err := s.ListBucketsWithin(10 * time.Millisecond); !errors.Is(err, ErrProbeTimeout) {
+				t.Errorf("hung listing: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	<-started
+	if n := calls.Load(); n != 1 {
+		t.Errorf("%d listings on a hung mount, want 1", n)
+	}
+	close(release)
+	if b, err := s.ListBucketsWithin(time.Second); err != nil || len(b) != 1 || b[0].Name != "bkt" {
+		t.Errorf("after the mount answers: %v %v", b, err)
+	}
+}
+
 func TestDiskSpaceWithinHungMount(t *testing.T) {
 	s := newStore(t)
 	release, started := make(chan struct{}), make(chan struct{})

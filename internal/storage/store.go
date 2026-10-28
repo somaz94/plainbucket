@@ -104,6 +104,8 @@ type Store struct {
 	probes    shared[int64]
 	probeRead func() (int64, error) // readRoot, replaced in tests
 	spaces    shared[spaceReading]
+	listings  shared[[]BucketInfo]
+	listRead  func() ([]BucketInfo, error) // ListBuckets, replaced in tests
 
 	trashAfter atomic.Pointer[map[string]time.Duration] // swapped whole by SetTrash
 	trashMu    sync.Mutex                               // serializes restores, purges and the sweep's expiry
@@ -153,7 +155,7 @@ func OpenReadOnly(root string) (*Store, error) {
 func storeAt(abs string) *Store {
 	s := &Store{root: abs, now: time.Now, MinPartSize: 5 << 20, buckets: map[string]*sync.RWMutex{},
 		bucketUsage: map[string]Usage{}, kick: make(chan struct{}, 1), statfs: diskSpace}
-	s.probeRead = s.readRoot
+	s.probeRead, s.listRead = s.readRoot, s.ListBuckets
 	return s
 }
 
