@@ -2,6 +2,71 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.9.0](https://github.com/somaz94/plainbucket/compare/v0.8.0...v0.9.0) (2026-10-28)
+
+### Features
+
+- alert on failed directory flushes in the Helm chart ([e15a8ae](https://github.com/somaz94/plainbucket/commit/e15a8aecddb6a1b1c0c3b9d2b2051793f351a3da))
+- replicate with temporary credentials and their session token ([6776b42](https://github.com/somaz94/plainbucket/commit/6776b42f5440058c6403f739aa10510fd312e735))
+
+### Bug Fixes
+
+- warn in fsck when a directory flush fails ([5a1e1ff](https://github.com/somaz94/plainbucket/commit/5a1e1ff7009f9c0da4c6fe9eb7f8e51fc7321ec9))
+- send Retry-After with the console usage 503 ([62e1654](https://github.com/somaz94/plainbucket/commit/62e1654051c0a7f17c3fdb629a1c9e96bbf66d73))
+- warn once when the filesystem refuses to flush directories ([57cc8f6](https://github.com/somaz94/plainbucket/commit/57cc8f680b3ceec8ce12288cec00febe80a54a5f))
+- bound the console usage bucket listing by the storage timeout ([88da28f](https://github.com/somaz94/plainbucket/commit/88da28f3505949766bc61686a456791b59bb9f89))
+- count and log failed directory flushes ([08129e7](https://github.com/somaz94/plainbucket/commit/08129e7bf6d88de2d52209a81cf6e1f169702aaa))
+- reload again when a file only the new configuration names changes during the reload ([e87e895](https://github.com/somaz94/plainbucket/commit/e87e895be43cc94f0466eb18f27fea9a8bc884f9))
+- reload again when a file changes while a reload reads it ([065e189](https://github.com/somaz94/plainbucket/commit/065e18946f58b2434fd51d01386d07bfb364c9e2))
+- recheck a mismatched sidecar under the key lock before rebuilding it ([9a6bf78](https://github.com/somaz94/plainbucket/commit/9a6bf786dd0f0d7341748559b4905afb6b273157))
+- sync staged files and the directories a write changes ([caa00af](https://github.com/somaz94/plainbucket/commit/caa00af3b8f560eef70901ac20dc55d76b45fd94))
+- answer a directory key only for a marker or an empty directory, as listed ([d83beeb](https://github.com/somaz94/plainbucket/commit/d83beeb13919863946d8e14478e0e36a9e3a21bd))
+- decode RFC 2047 metadata from a replication target before comparing ([7271be6](https://github.com/somaz94/plainbucket/commit/7271be69fc0b84b98dd8ee4d809edebcf1a56419))
+- keep a webhook's queue on secret rotation and try a removed one's events once ([e81fa1b](https://github.com/somaz94/plainbucket/commit/e81fa1b06e3053549881b2dff38826895d140bb7))
+- leave a part that gives up to the next comparison instead of re-uploading ([14cc2d0](https://github.com/somaz94/plainbucket/commit/14cc2d063a917c8e3c889ecd74f74bbd3966f47b))
+- wait as long as a webhook's Retry-After asks before retrying ([00ebb7f](https://github.com/somaz94/plainbucket/commit/00ebb7f3d08af8bb8b2c9a67a55e3b02db148adc))
+- keep a changed rule's comparison time and hide replication metrics without rules ([16ae755](https://github.com/somaz94/plainbucket/commit/16ae755a74d4b53cffa75cbb7efb1f4f2c15fa26))
+- read usage and limits once per metrics scrape ([fdb2429](https://github.com/somaz94/plainbucket/commit/fdb242985daaa62ed1e6606f3c6af7562ec277d3))
+- bound the free-space query of /metrics and the console ([a6c91d4](https://github.com/somaz94/plainbucket/commit/a6c91d4ef0dcc8395a0d4068b21d4bca82356e6d))
+- check buckets in name order and refuse a second YAML document ([8f3b140](https://github.com/somaz94/plainbucket/commit/8f3b1407c12f7814e50a34fd47c94aa8c2ec8af5))
+- record abandoned requests as 499 and tidy /metrics and denial logs ([22cf8f8](https://github.com/somaz94/plainbucket/commit/22cf8f82f73b0cd5b8f989d6b6fbb8e577369bbe))
+- let a nil replicator report nothing instead of panicking ([1d48f03](https://github.com/somaz94/plainbucket/commit/1d48f033c98d7f0a3e003a510fcdac883ea7462c))
+- count a write before reading the read-only mode ([1f4f096](https://github.com/somaz94/plainbucket/commit/1f4f096cf0637007a5cb8395aaaab9a7384c653b))
+
+### Code Refactoring
+
+- remove the test-only BucketUsage and BucketLimit ([5b92880](https://github.com/somaz94/plainbucket/commit/5b9288081288fc7b99fc8053fb01263ed40b9d0a))
+- split ServeHTTP into probe, dispatch and access-log steps ([6cc7734](https://github.com/somaz94/plainbucket/commit/6cc7734ce992bb3d15d3b2fda862cb67beffa387))
+- move routing, error mapping and event hooks out of handler.go ([3715b4e](https://github.com/somaz94/plainbucket/commit/3715b4ef2bc5d74aa53519d1f199918e56ad9daa))
+- validate buckets and domains outside validateAccess ([af656bc](https://github.com/somaz94/plainbucket/commit/af656bc2cf4ddd1a58385061bd864814dc50e745))
+- one function per concern in bucket validation ([e63f163](https://github.com/somaz94/plainbucket/commit/e63f16316bbe04cbc18e09d6e816cd3f69ef7377))
+- split env parsing and validation out of config.go ([3a5dc63](https://github.com/somaz94/plainbucket/commit/3a5dc6324bca9b52d535efc2b7820b4b690d7543))
+- name the replication backoff like the notifier's ([21d940c](https://github.com/somaz94/plainbucket/commit/21d940ce5d1ef9e59d79b376cc6af6bf9921363f))
+- split store.go into paths, sidecar and write files ([23c42d0](https://github.com/somaz94/plainbucket/commit/23c42d0e6f028f8014c0a450b4d52d4262a39958))
+- share the pinned e2e download in e2e-lib.sh ([dea52a7](https://github.com/somaz94/plainbucket/commit/dea52a773e0669041c0c579d8a49b2c723e87e5a))
+- bundle the metrics scrape inputs into one struct ([05e7789](https://github.com/somaz94/plainbucket/commit/05e7789c03c2c49d2f00d24e0cd01272865b62b0))
+
+### Tests
+
+- reproduce the certificate reload race deterministically ([1afadc9](https://github.com/somaz94/plainbucket/commit/1afadc901330fa5ebfefda690a2c619ca14f17ba))
+- wait for the sent count before checking webhook stats ([179749b](https://github.com/somaz94/plainbucket/commit/179749bafc90d1d0f9896af9884da55fec8c794b))
+- wait for both rules' copies before counting a retag ([375a311](https://github.com/somaz94/plainbucket/commit/375a31112a35b71dd5a0a2013735881d32ca72bd))
+- retry e2e downloads and create their cache directory ([47ef4c9](https://github.com/somaz94/plainbucket/commit/47ef4c9774abb50310c79e3c7a846abb5ce58ea7))
+- wait for the first comparison before replacing the clock ([8800bf1](https://github.com/somaz94/plainbucket/commit/8800bf1c58ef1c92f1e3e82ff8faadaa0ae8a72a))
+- pin access log field order ([d25e581](https://github.com/somaz94/plainbucket/commit/d25e581abd713473b8bf90bb874cd17a3948c557))
+- pin config validation error messages ([582af06](https://github.com/somaz94/plainbucket/commit/582af061df5a9810ee695f894e1d9e9e5399984b))
+- wait for the recorded ETag in the replication test ([8e59797](https://github.com/somaz94/plainbucket/commit/8e5979797ffd2c241bc2973b142927b0d0425b6e))
+
+### Chores
+
+- bump version to v0.9.0 ([7586a70](https://github.com/somaz94/plainbucket/commit/7586a706ad53512fae3013a032e6076b6681d7bc))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.8.0](https://github.com/somaz94/plainbucket/compare/v0.7.0...v0.8.0) (2026-10-27)
 
 ### Features
