@@ -1031,6 +1031,63 @@
       ]
     },
     {
+      "type": "timeseries",
+      "title": "Directory flush failures",
+      "description": "Directory flushes after a write that failed: those writes are in place but may not survive a power loss, and the server log names the directory. A filesystem that does not support flushing is not counted.",
+      "id": 22,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(increase(plainbucket_sync_errors_total{job=\"$job\",namespace=\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "failed",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "type": "row",
       "title": "Webhooks",
       "id": 19,
@@ -1039,7 +1096,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 53
       },
       "panels": []
     },
@@ -1056,7 +1113,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 48
+        "y": 54
       },
       "fieldConfig": {
         "defaults": {
@@ -1113,7 +1170,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 48
+        "y": 54
       },
       "fieldConfig": {
         "defaults": {
