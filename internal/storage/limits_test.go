@@ -123,7 +123,7 @@ func TestEvictLeastRecentlyUsed(t *testing.T) {
 	if evicted != 1 || exists(s, "a") || !exists(s, "b") || !exists(s, "c") {
 		t.Errorf("evicted %d; a=%v b=%v c=%v", evicted, exists(s, "a"), exists(s, "b"), exists(s, "c"))
 	}
-	if u := s.BucketUsage()["bkt"]; u.Bytes != 8 || u.Objects != 2 {
+	if u := s.AllBucketUsage()["bkt"]; u.Bytes != 8 || u.Objects != 2 {
 		t.Errorf("usage after eviction = %+v", u)
 	}
 }
@@ -145,7 +145,7 @@ func TestQuotaRefusesWrites(t *testing.T) {
 	if err := s.DeleteObject("bkt", "a"); err != nil {
 		t.Fatal(err)
 	}
-	if u := s.BucketUsage()["bkt"]; u.Bytes != 0 || u.Objects != 0 {
+	if u := s.AllBucketUsage()["bkt"]; u.Bytes != 0 || u.Objects != 0 {
 		t.Errorf("usage after delete = %+v", u)
 	}
 	s.MinPartSize = 1
@@ -191,7 +191,7 @@ func TestMeasureUsagePerBucket(t *testing.T) {
 	put(t, s, "a", "123")
 	_ = os.WriteFile(filepath.Join(s.root, "bkt", "external"), []byte("12345"), 0o644)
 	s.MeasureUsage(context.Background())
-	u := s.BucketUsage()
+	u := s.AllBucketUsage()
 	if u["bkt"].Bytes != 8 || u["bkt"].Objects != 2 || u["none"].Bytes != 0 {
 		t.Errorf("usage = %+v", u)
 	}
@@ -205,10 +205,7 @@ func TestMeasureUsagePerBucket(t *testing.T) {
 	if all := s.AllBucketUsage(); all["free"].Bytes != 2 || all["bkt"].Bytes != 8 || all["free"].At.IsZero() {
 		t.Errorf("all buckets = %+v", all)
 	}
-	if _, ok := s.BucketUsage()["free"]; ok {
-		t.Error("BucketUsage lists a bucket without limits")
-	}
-	if l := s.BucketLimit("bkt"); l.MaxSize != 100 || !reflect.DeepEqual(s.BucketLimit("free"), Limit{}) {
+	if l := s.Limits(); l["bkt"].MaxSize != 100 || !reflect.DeepEqual(l["free"], Limit{}) {
 		t.Errorf("limits = %+v", l)
 	}
 	if err := s.CreateBucket("gone"); err != nil {
@@ -302,7 +299,7 @@ func TestChangesDuringMeasurementAreKept(t *testing.T) {
 	}
 	put(t, s, "a", "123")
 	s.MeasureUsage(context.Background())
-	if u := s.BucketUsage()["bkt"]; u.Bytes != 3 {
+	if u := s.AllBucketUsage()["bkt"]; u.Bytes != 3 {
 		t.Errorf("after measurement = %+v", u)
 	}
 }

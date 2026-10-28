@@ -152,18 +152,6 @@ func (s *Store) wake() {
 	}
 }
 
-// BucketUsage returns the tracked usage of the buckets that have limits. Writes and
-// deletes update it as they happen; each janitor round re-measures it.
-func (s *Store) BucketUsage() map[string]Usage {
-	s.usageMu.Lock()
-	defer s.usageMu.Unlock()
-	out := map[string]Usage{}
-	for name := range s.limitsNow() {
-		out[name] = s.bucketUsage[name]
-	}
-	return out
-}
-
 // AllBucketUsage returns every bucket's tracked usage. Writes and deletes update it as
 // they happen; each janitor round re-measures it.
 func (s *Store) AllBucketUsage() map[string]Usage {
@@ -171,9 +159,6 @@ func (s *Store) AllBucketUsage() map[string]Usage {
 	defer s.usageMu.Unlock()
 	return maps.Clone(s.bucketUsage)
 }
-
-// BucketLimit returns the limits set for bucket.
-func (s *Store) BucketLimit(bucket string) Limit { return s.limitsNow()[bucket] }
 
 // Limits returns a copy of every bucket's limits, all from one SetLimits.
 func (s *Store) Limits() map[string]Limit { return maps.Clone(s.limitsNow()) }
