@@ -21,7 +21,7 @@ plainbucket keeps the data a client uploads as ordinary files and everything els
 
 ## Metadata and Files Changed Outside the Server
 
-Each object's ETag, content type, user metadata, stored headers, tags and checksums, and for a multipart object the sizes of its parts, sit in a metadata file under the system directory. That file also records the object's size and modification time, and it is trusted only while both still match the data file. The metadata file's own modification time is the object's last read, used by [expiry and size limits](configuration.md#expiry-and-size-limits).
+Each object's ETag, content type, user metadata, stored headers, tags and checksums, and for a multipart object the sizes of its parts, sit in a metadata file under the system directory. That file also records the object's size and modification time, and it is trusted only while both still match the data file. It records the file's inode too, so that on a filesystem with coarse modification times a read between the two renames of the server's own same-size rewrite is not given the old metadata. A file whose inode changed but whose size and modification time did not, as in a copy of the root restored from a backup, keeps its metadata, and the first `GetObject` or `HeadObject` records the new inode; on a filesystem whose inode numbers change between reads, as some FUSE mounts' do, every read rewrites the metadata file. A change by another program that keeps the size within one tick, in place or by replacing the file, still goes unnoticed. The metadata file's own modification time is the object's last read, used by [expiry and size limits](configuration.md#expiry-and-size-limits).
 
 When a file was changed, or added, without the server:
 

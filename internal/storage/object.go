@@ -180,14 +180,23 @@ func (s *Store) open(bucket, key string, persist, locked bool) (*os.File, Object
 		return nil, ObjectInfo{}, err
 	}
 	m, ok := s.readSidecar(bucket, key)
-	if (!ok || !m.matches(fi)) && !locked {
-		// Between a commit's two renames the new data has no matching sidecar yet; under the
-		// key lock the commit has finished, so look again before taking the file for edited.
+	if (!ok || !m.matches(fi) || !m.sameInode(fi)) && !locked {
+		// Between a commit's two renames the new data has no matching sidecar yet (or, on a
+		// coarse filesystem, the old one still matches by size and mtime); under the key lock
+		// the commit has finished, so look again before taking the file for edited.
 		_ = f.Close()
 		unlock := s.lock(bucket, key)
 		f, fi, err = s.openData(bucket, key)
 		if err == nil {
 			m, ok = s.readSidecar(bucket, key)
+		}
+		if err == nil && persist && ok && m.matches(fi) && !m.sameInode(fi) {
+			// Same size and mtime under the lock: taken for a copy, as by a restore, which
+			// keeps both but not the inode.
+			m.Ino = inode(fi)
+			if raw, err := json.Marshal(m); err == nil {
+				_ = s.writeFileAtomic(s.metaPath(bucket, key), raw)
+			}
 		}
 		unlock()
 		if err != nil {
@@ -255,7 +264,7 @@ func (s *Store) refresh(bucket, key string, f *os.File, fi os.FileInfo, old side
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return sidecar{}, err
 	}
-	m := sidecar{Key: key, ETag: md5ETag(sum), Size: fi.Size(), MtimeNs: fi.ModTime().UnixNano(), Metadata: old.Metadata}
+	m := sidecar{Key: key, ETag: md5ETag(sum), Size: fi.Size(), MtimeNs: fi.ModTime().UnixNano(), Ino: inode(fi), Metadata: old.Metadata}
 	if m.ContentType == "" {
 		m.ContentType = mime.TypeByExtension(filepath.Ext(key))
 	}

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -207,5 +208,95 @@ func TestReadBetweenCommitRenames(t *testing.T) {
 	rename = orig
 	if info := <-got; info.Size != 5 || info.ContentType != "text/new" {
 		t.Errorf("read during the commit: size %d, %q; want the new object", info.Size, info.ContentType)
+	}
+}
+
+// On a filesystem with coarse mtimes a same-size rewrite can leave the old sidecar
+// matching the new data by size and mtime between the commit's renames; the inode tells
+// them apart, so the read still waits for the new sidecar.
+func TestReadBetweenSameSizeCommitRenames(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.PutObject("bkt", "k", strings.NewReader("old"), 3, PutOptions{Metadata: Metadata{ContentType: "text/old"}}); err != nil {
+		t.Fatal(err)
+	}
+	orig := rename
+	t.Cleanup(func() { rename = orig })
+	between, release := make(chan struct{}), make(chan struct{})
+	rename = func(r *os.Root, src, dst string) error {
+		if strings.Contains(dst, filepath.Join(SysDir, "meta")) {
+			old, _ := s.readSidecar("bkt", "k")
+			fi, err := os.Stat(s.dataPath("bkt", "k"))
+			if err != nil {
+				return err
+			}
+			old.MtimeNs = fi.ModTime().UnixNano() // as one mtime tick would leave it
+			raw, _ := json.Marshal(old)
+			if err := os.WriteFile(s.metaPath("bkt", "k"), raw, 0o644); err != nil {
+				return err
+			}
+			close(between)
+			<-release
+		}
+		return orig(r, src, dst)
+	}
+	put := make(chan error, 1)
+	go func() {
+		_, err := s.PutObject("bkt", "k", strings.NewReader("new"), 3, PutOptions{Metadata: Metadata{ContentType: "text/new"}})
+		put <- err
+	}()
+	<-between
+	got := make(chan ObjectInfo, 1)
+	go func() {
+		f, info, err := s.ReadObject("bkt", "k")
+		if f != nil {
+			_ = f.Close()
+		}
+		if err != nil {
+			t.Error(err)
+		}
+		got <- info
+	}()
+	time.Sleep(20 * time.Millisecond) // let the read reach the key lock
+	close(release)
+	if err := <-put; err != nil {
+		t.Fatal(err)
+	}
+	rename = orig
+	if info := <-got; info.ContentType != "text/new" {
+		t.Errorf("read during a same-size commit: %q; want the new object's metadata", info.ContentType)
+	}
+}
+
+// A copied root keeps sizes and mtimes but not inodes: its sidecars stay trusted, and a
+// read records the new inode.
+func TestCopiedFileKeepsItsSidecar(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.PutObject("bkt", "k", strings.NewReader("data"), 4, PutOptions{Metadata: Metadata{ContentType: "text/kept"}}); err != nil {
+		t.Fatal(err)
+	}
+	p := s.dataPath("bkt", "k")
+	fi, _ := os.Stat(p)
+	if inode(fi) == 0 {
+		t.Skip("no inode numbers on this platform")
+	}
+	if m, _ := s.readSidecar("bkt", "k"); m.Ino == 0 || m.Ino != inode(fi) {
+		t.Fatalf("recorded inode %d, file %d", m.Ino, inode(fi))
+	}
+	// Replace the file with a copy, as a restore does.
+	if err := os.Rename(p, p+".orig"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chtimes(p, fi.ModTime(), fi.ModTime())
+	_ = os.Remove(p + ".orig")
+	info, err := s.HeadObject("bkt", "k")
+	if err != nil || info.ContentType != "text/kept" {
+		t.Fatalf("after the copy: %q %v", info.ContentType, err)
+	}
+	now, _ := os.Stat(p)
+	if m, _ := s.readSidecar("bkt", "k"); m.Ino != inode(now) {
+		t.Errorf("inode not updated: %d, file %d", m.Ino, inode(now))
 	}
 }

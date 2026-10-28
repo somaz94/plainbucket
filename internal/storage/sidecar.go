@@ -27,10 +27,13 @@ type Metadata struct {
 // sidecar is stored per object under SysDir/meta. It is trusted only while size and
 // mtime still match the data file, so an edit made outside the server invalidates it.
 type sidecar struct {
-	Key          string            `json:"key"`
-	ETag         string            `json:"etag"`
-	Size         int64             `json:"size"`
-	MtimeNs      int64             `json:"mtime_ns"`
+	Key     string `json:"key"`
+	ETag    string `json:"etag"`
+	Size    int64  `json:"size"`
+	MtimeNs int64  `json:"mtime_ns"`
+	// Ino is the data file's inode: a mismatch sends an unlocked read to the locked
+	// recheck, where size and mtime decide. 0 when unknown (older sidecars, other platforms).
+	Ino          uint64            `json:"ino,omitempty"`
 	Checksums    map[string]string `json:"checksums,omitempty"`
 	ChecksumType string            `json:"checksum_type,omitempty"`
 	Parts        []PartRecord      `json:"parts,omitempty"`
@@ -56,6 +59,12 @@ func (s *Store) hasMarker(bucket, dirKey string) bool {
 
 func (m sidecar) matches(fi os.FileInfo) bool {
 	return m.ETag != "" && m.Size == fi.Size() && m.MtimeNs == fi.ModTime().UnixNano()
+}
+
+// sameInode reports whether fi is the file m was recorded for, as far as inodes tell.
+func (m sidecar) sameInode(fi os.FileInfo) bool {
+	ino := inode(fi)
+	return m.Ino == 0 || ino == 0 || m.Ino == ino
 }
 
 // syntheticETag stands in for an MD5 the server has not computed. The "-1" suffix marks

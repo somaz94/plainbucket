@@ -75,7 +75,7 @@ func (s *Store) commit(bucket, key, tmp string, m sidecar, cond Conditions) (Obj
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	m.Key, m.Size, m.MtimeNs = key, fi.Size(), fi.ModTime().UnixNano()
+	m.Key, m.Size, m.MtimeNs, m.Ino = key, fi.Size(), fi.ModTime().UnixNano(), inode(fi) // a rename keeps the inode
 	metaTmp, err := s.stageSidecar(m)
 	if err != nil {
 		return ObjectInfo{}, fmt.Errorf("writing metadata: %w", err)
