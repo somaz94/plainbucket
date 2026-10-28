@@ -101,6 +101,17 @@ spec:
             summary: plainbucket found objects whose data is damaged.
             description: {{ printf "The last scrub found %s objects whose data no longer matches the ETag or checksums recorded when they were written. The server log names them; restore them from a backup." "{{ $value }}" | quote }}
         {{- end }}{{ end }}
+        {{- with $r.syncErrors }}{{ if .enabled }}
+        - alert: PlainbucketSyncErrors
+          expr: |-
+            sum by (namespace, job) (increase(plainbucket_sync_errors_total{ {{- $sel -}} }[10m])) > 0
+          for: {{ .for }}
+          labels:
+            severity: {{ .severity }}
+          annotations:
+            summary: plainbucket cannot flush writes to disk.
+            description: Flushing a directory after a write failed, so recent writes may not survive a power loss; the volume may be failing. The server log names the directory and the error.
+        {{- end }}{{ end }}
         {{- with .Values.prometheusRule.additionalRules }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

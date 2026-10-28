@@ -190,6 +190,8 @@ prometheusRule:
     notificationsFailing: {enabled: true, for: 0m, severity: warning}
     # The last scrub (config.scrubInterval) found objects with damaged data.
     corruptObjects: {enabled: true, for: 0m, severity: critical}
+    # Flushing a directory after a write failed: recent writes may not survive a power loss.
+    syncErrors: {enabled: true, for: 0m, severity: warning}
   # Further rules appended to the group as they are.
   additionalRules: []
 

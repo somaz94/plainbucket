@@ -32,6 +32,8 @@ tests:
         values: '0x15 1 1 1 1 1'
       - series: 'plainbucket_notifications_total{job="t-plainbucket",namespace="ns",result="sent"}'
         values: '0+3x20'
+      - series: 'plainbucket_sync_errors_total{job="t-plainbucket",namespace="ns"}'
+        values: '0x15 3 3 3 3 3'
       - series: 'plainbucket_scrub_corrupt_objects{job="t-plainbucket",namespace="ns"}'
         values: '2x20'
     alert_rule_test:
@@ -42,6 +44,13 @@ tests:
             exp_annotations:
               summary: plainbucket found objects whose data is damaged.
               description: The last scrub found 2 objects whose data no longer matches the ETag or checksums recorded when they were written. The server log names them; restore them from a backup.
+      - eval_time: 20m
+        alertname: PlainbucketSyncErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, job: t-plainbucket, namespace: ns}
+            exp_annotations:
+              summary: plainbucket cannot flush writes to disk.
+              description: Flushing a directory after a write failed, so recent writes may not survive a power loss; the volume may be failing. The server log names the directory and the error.
       - eval_time: 20m
         alertname: PlainbucketNotificationsFailing
         exp_alerts:
@@ -110,6 +119,9 @@ tests:
         values: '0+3x20'
       - series: 'plainbucket_scrub_corrupt_objects{job="t-plainbucket",namespace="ns"}'
         values: '0x20'
+      # Flushes that failed long ago, then a restart that reset the counter.
+      - series: 'plainbucket_sync_errors_total{job="t-plainbucket",namespace="ns"}'
+        values: '4x14 0x6'
     alert_rule_test:
       - {eval_time: 20m, alertname: PlainbucketDown, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketHighErrorRate, exp_alerts: []}
@@ -118,6 +130,7 @@ tests:
       - {eval_time: 20m, alertname: PlainbucketBucketNearLimit, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketNotificationsFailing, exp_alerts: []}
       - {eval_time: 20m, alertname: PlainbucketCorruptObjects, exp_alerts: []}
+      - {eval_time: 20m, alertname: PlainbucketSyncErrors, exp_alerts: []}
 
   # A target that vanished keeps its job and namespace on the alert.
   - interval: 1m

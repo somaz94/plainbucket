@@ -228,7 +228,7 @@ expect_fail "empty group" "${KEY[@]}" --set config.metrics=true --set prometheus
     --set prometheusRule.rules.down.enabled=false --set prometheusRule.rules.errors.enabled=false \
     --set prometheusRule.rules.writesRefused.enabled=false --set prometheusRule.rules.diskLow.enabled=false \
     --set prometheusRule.rules.bucketNearLimit.enabled=false --set prometheusRule.rules.notificationsFailing.enabled=false \
-    --set prometheusRule.rules.corruptObjects.enabled=false
+    --set prometheusRule.rules.corruptObjects.enabled=false --set prometheusRule.rules.syncErrors.enabled=false
 ok "fail guards"
 
 expect_fail "bogus" "${KEY[@]}" --set bogus=1
