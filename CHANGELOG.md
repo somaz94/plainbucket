@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased (2026-11-04)
+
+### Chores
+
+- **deps:** bump distroless/static-debian13 from `d620678` to `18f4cc2` (#4) ([#4](https://github.com/somaz94/plainbucket/pull/4)) ([3516467](https://github.com/somaz94/plainbucket/commit/35164675cb6fefadd4d6c9a104e4eab5b7be1a6a))
+- **deps:** bump the compat-minor group in /compat with 3 updates (#5) ([#5](https://github.com/somaz94/plainbucket/pull/5)) ([30f718b](https://github.com/somaz94/plainbucket/commit/30f718ba4cc399bea26da7efd6dececad262d3e4))
+
+<br/>
+
 ## [v0.10.0](https://github.com/somaz94/plainbucket/compare/v0.9.0...v0.10.0) (2026-10-28)
 
 ### Features
