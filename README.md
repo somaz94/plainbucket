@@ -4,6 +4,8 @@ An S3-compatible object server that stores every object as a plain file.
 
 Bucket `photos` is the directory `<root>/photos`, and object `2026/trip.jpg` in it is the file `<root>/photos/2026/trip.jpg`. Nothing is chunked, encoded or hidden in a database, so the data stays readable with `ls`, `cp` and `rsync` when the server is stopped, and files you drop into the directory show up as objects.
 
+![aws s3 sync uploads a small site to plainbucket, and ls and cat read the same objects straight from the data directory](examples/demo/demo.gif)
+
 plainbucket is a single binary with no runtime dependencies beyond the Go standard library, Cobra and a YAML parser. It is meant for one node: a laptop, a homelab box, or a Kubernetes pod with one volume. It does not replicate, erasure-code or version objects.
 
 <br/>
@@ -121,6 +123,13 @@ make lint
 ```
 
 `compat/` is its own Go module so the AWS SDK never becomes a dependency of the server.
+
+The GIF at the top replays output saved from a real run, because the recording container has no aws cli. When that output changes, regenerate both:
+
+```bash
+make build && examples/demo/capture.sh
+docker run --rm -v "$PWD:/vhs" ghcr.io/charmbracelet/vhs examples/demo/demo.tape
+```
 
 <br/>
 

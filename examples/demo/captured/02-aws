@@ -1,0 +1,4 @@
+Completed 61 Bytes/232 Bytes (559 Bytes/s) with 4 file(s) remainingupload: public/about/index.html to s3://site/about/index.html      
+Completed 61 Bytes/232 Bytes (559 Bytes/s) with 3 file(s) remainingCompleted 133 Bytes/232 Bytes (1.2 KiB/s) with 3 file(s) remaining upload: public/index.html to s3://site/index.html                  
+Completed 133 Bytes/232 Bytes (1.2 KiB/s) with 2 file(s) remainingCompleted 167 Bytes/232 Bytes (1.4 KiB/s) with 2 file(s) remainingupload: public/css/site.css to s3://site/css/site.css             
+Completed 167 Bytes/232 Bytes (1.4 KiB/s) with 1 file(s) remainingCompleted 232 Bytes/232 Bytes (1.9 KiB/s) with 1 file(s) remainingupload: public/img/logo.svg to s3://site/img/logo.svg             
