@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.11.1](https://github.com/somaz94/plainbucket/compare/v0.11.0...v0.11.1) (2026-11-18)
+
+### Bug Fixes
+
+- harden body timeouts, free-space budget, reload and bucket races ([b8da9eb](https://github.com/somaz94/plainbucket/commit/b8da9eb0a79f643136553e1d4cf8b5fea19fac70))
+
+### Chores
+
+- bump version to v0.11.1 ([abb7f49](https://github.com/somaz94/plainbucket/commit/abb7f49aa7cb2448f884d4b6c284fc119e2d402f))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v0.11.0](https://github.com/somaz94/plainbucket/compare/v0.10.0...v0.11.0) (2026-11-18)
 
 ### Features
