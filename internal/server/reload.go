@@ -126,6 +126,9 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 	r.stamps = before
 	r.missing = ""
 	next, err := config.Load(r.src.configFile)
+	if err == nil && r.cert != nil && next.HasTLS() {
+		err = r.cert.load(next.TLSCert, next.TLSKey)
+	}
 	if pe, ok := errors.AsType[*fs.PathError](err); ok && errors.Is(pe, fs.ErrNotExist) {
 		r.missing = pe.Path // such as a secret-file whose Secret is not mounted yet
 		r.stamps[pe.Path] = fileStamp{}
@@ -134,27 +137,12 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 		r.logger.Error("reload failed; keeping the running configuration", "cause", cause, "err", err)
 		return
 	}
-	if r.cert != nil && next.HasTLS() {
-		if err := r.cert.load(next.TLSCert, next.TLSKey); err != nil {
-			r.logger.Error("reload failed; keeping the running configuration", "cause", cause, "err", err)
-			return
-		}
-	}
 	afterLoad()
 	if names := r.boot.RestartNeeded(next); len(names) > 0 {
 		r.logger.Warn("some settings change only on restart", "settings", names)
 	}
-	limits := bucketLimits(next)
-	if len(limits) > 0 && len(bucketLimits(r.cfg)) == 0 {
-		// Usage was never measured, and a refusing limit checks writes against it.
-		r.store.MeasureUsage(ctx)
-	}
-	r.store.SetLimits(limits)
 	r.store.SetMinFree(next.MinFreeSpace)
 	r.store.SetTrash(bucketTrash(next))
-	if _, _, err := r.store.DiskSpace(); err != nil && next.MinFreeSpace > 0 {
-		r.logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
-	}
 	r.handler.SetAccess(credentials(next), bucketPolicies(next), nil)
 	if rateLimit(next.AnonymousRateLimit) != rateLimit(r.cfg.AnonymousRateLimit) {
 		r.handler.SetAnonymousRateLimit(rateLimit(next.AnonymousRateLimit))
@@ -164,6 +152,16 @@ func (r *reloader) reload(ctx context.Context, cause string) {
 	}
 	r.handler.SetReadOnly(next.ReadOnly)
 	r.store.SetPaused(next.ReadOnly)
+	// After access and read-only, so a revoked key or read-only mode does not wait for the walk.
+	limits := bucketLimits(next)
+	if len(limits) > 0 && len(bucketLimits(r.cfg)) == 0 {
+		// Usage was never measured, and a refusing limit checks writes against it.
+		r.store.MeasureUsage(ctx)
+	}
+	r.store.SetLimits(limits)
+	if _, _, err := r.store.DiskSpace(); err != nil && next.MinFreeSpace > 0 {
+		r.logger.Warn("min-free-space is not enforced: free space cannot be read", "err", err)
+	}
 	if r.notifier != nil {
 		r.notifier.SetTargets(notifyTargets(next))
 	}

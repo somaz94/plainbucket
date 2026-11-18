@@ -36,6 +36,7 @@ type Client struct {
 	Signer        sigv4.Signer
 	HTTP          *http.Client
 	Now           func() time.Time // nil: time.Now
+	PageTimeout   time.Duration    // bounds each ListObjectsV2 page, body included; 0: none
 }
 
 // Error is an S3 error response.
@@ -373,24 +374,9 @@ func (c *Client) ListObjects(ctx context.Context, bucket, prefix string, fn func
 		if token != "" {
 			q.Set("continuation-token", token)
 		}
-		resp, err := c.do(ctx, http.MethodGet, bucket, "", q, nil, nil, 0, nil, "")
+		page, err := c.listPage(ctx, bucket, q)
 		if err != nil {
 			return err
-		}
-		var page struct {
-			Contents []struct {
-				Key  string
-				Size int64
-				ETag string
-			}
-			IsTruncated           bool
-			NextContinuationToken string
-			EncodingType          string
-		}
-		err = xml.NewDecoder(resp.Body).Decode(&page)
-		drain(resp)
-		if err != nil {
-			return fmt.Errorf("ListObjectsV2: %w", err)
 		}
 		for _, o := range page.Contents {
 			key := o.Key
@@ -412,6 +398,37 @@ func (c *Client) ListObjects(ctx context.Context, bucket, prefix string, fn func
 		}
 		token = page.NextContinuationToken
 	}
+}
+
+// listResult is one ListObjectsV2 page.
+type listResult struct {
+	Contents []struct {
+		Key  string
+		Size int64
+		ETag string
+	}
+	IsTruncated           bool
+	NextContinuationToken string
+	EncodingType          string
+}
+
+func (c *Client) listPage(ctx context.Context, bucket string, q url.Values) (*listResult, error) {
+	if c.PageTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.PageTimeout)
+		defer cancel()
+	}
+	resp, err := c.do(ctx, http.MethodGet, bucket, "", q, nil, nil, 0, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	var page listResult
+	err = xml.NewDecoder(resp.Body).Decode(&page)
+	drain(resp)
+	if err != nil {
+		return nil, fmt.Errorf("ListObjectsV2: %w", err)
+	}
+	return &page, nil
 }
 
 // MD5 returns the digest an S3 ETag holds for a single-part object, or nil when etag is

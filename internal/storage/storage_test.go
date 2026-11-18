@@ -710,3 +710,51 @@ func TestNoLockEntryForMissingBucket(t *testing.T) {
 		t.Error("a missing bucket got a lock entry")
 	}
 }
+
+func TestMarkerSurvivesAConcurrentPrune(t *testing.T) {
+	s := newStore(t)
+	put(t, s, "a/b/c", "x")
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	old := syncDir
+	syncDir = func(r *os.Root, dir string) error {
+		if dir == filepath.Join("bkt", "a", "b") {
+			once.Do(func() { close(entered); <-release })
+		}
+		return old(r, dir)
+	}
+	t.Cleanup(func() { syncDir = old })
+	marked := make(chan error, 1)
+	go func() {
+		_, err := s.PutObject("bkt", "a/b/", strings.NewReader(""), 0, PutOptions{})
+		marked <- err
+	}()
+	<-entered // the marker's directory exists, its sidecar not yet
+	deleted := make(chan error, 1)
+	go func() { deleted <- s.DeleteObject("bkt", "a/b/c") }()
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	if err := <-marked; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-deleted; err != nil {
+		t.Fatal(err)
+	}
+	if !exists(s, "a/b/") {
+		t.Error("the marker was lost to the prune of its last child")
+	}
+}
+
+func TestCreateBucketWithTagsReportsAnUnstoredRecord(t *testing.T) {
+	s := newStore(t)
+	// A directory where the record goes makes its rename fail.
+	if err := os.MkdirAll(s.sys("buckets", "tagged.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateBucketWithTags("tagged", []Tag{{"a", "1"}}); err == nil {
+		t.Error("tags lost without an error")
+	}
+	if s.HeadBucket("tagged") == nil {
+		t.Error("bucket kept although its tags were not stored")
+	}
+}

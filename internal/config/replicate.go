@@ -18,7 +18,8 @@ func validateReplicaTargets(buckets map[string]Bucket) error {
 	var rules []rule
 	for _, name := range slices.Sorted(maps.Keys(buckets)) {
 		for i, r := range buckets[name].Replicate {
-			rules = append(rules, rule{fmt.Sprintf("buckets.%s.replicate[%d]", name, i), r.Endpoint + "/" + r.Bucket, r.Prefix})
+			// Hosts compare without case, so two spellings of one endpoint are one target.
+			rules = append(rules, rule{fmt.Sprintf("buckets.%s.replicate[%d]", name, i), strings.ToLower(r.Endpoint) + "/" + r.Bucket, r.Prefix})
 		}
 	}
 	for i, a := range rules {

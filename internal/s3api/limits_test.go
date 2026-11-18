@@ -250,3 +250,34 @@ func TestBodyDeadlineClearedAtEOF(t *testing.T) {
 		}
 	}
 }
+
+func TestSlowFormAndSTSBodiesAreCut(t *testing.T) {
+	x := newHarness(t, func(o *Options) { o.BodyTimeout = 200 * time.Millisecond })
+	x.h.now = time.Now
+	srv := httptest.NewServer(x.h)
+	defer srv.Close()
+	stop := make(chan struct{})
+	defer close(stop)
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, c := range []struct{ name, path, ctype, auth string }{
+		{"POST upload", "/bkt", "multipart/form-data; boundary=b", ""},
+		{"STS", "/", "application/x-www-form-urlencoded", "AWS4-HMAC-SHA256 Credential=x"},
+	} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+c.path, &trickle{first: []byte("--b\r\n"), stop: stop})
+		req.ContentLength = 1 << 20
+		req.Header.Set("Content-Type", c.ctype)
+		if c.auth != "" {
+			req.Header.Set("Authorization", c.auth)
+		}
+		start := time.Now()
+		if resp, err := client.Do(req); err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode < 400 {
+				t.Errorf("%s: stalled body accepted: %d", c.name, resp.StatusCode)
+			}
+		}
+		if d := time.Since(start); d > 3*time.Second {
+			t.Errorf("%s: stalled body held for %v", c.name, d)
+		}
+	}
+}

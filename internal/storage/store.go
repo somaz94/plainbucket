@@ -81,6 +81,7 @@ type Store struct {
 
 	locks       [64]sync.Mutex // per key
 	uploadLocks [64]sync.Mutex // per multipart upload
+	dirLocks    [64]sync.Mutex // per directory marker: putMarker against pruneEmptyParents
 	bucketMu    sync.Mutex
 	recordMu    sync.Mutex               // serializes changes to bucket records
 	buckets     map[string]*sync.RWMutex // writers hold RLock, bucket deletion holds Lock
@@ -197,6 +198,9 @@ func stripe(locks *[64]sync.Mutex, id string) func() {
 func (s *Store) lock(bucket, key string) func() { return stripe(&s.locks, bucket+"/"+key) }
 
 func (s *Store) lockUpload(id string) func() { return stripe(&s.uploadLocks, id) }
+
+// lockDir is taken after a key lock and held alone, so it cannot deadlock against one.
+func (s *Store) lockDir(bucket, dirKey string) func() { return stripe(&s.dirLocks, bucket+"/"+dirKey) }
 
 func (s *Store) bucketLock(bucket string) *sync.RWMutex {
 	s.bucketMu.Lock()

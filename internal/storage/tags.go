@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"os"
+	"time"
 )
 
 // Tag is one object or bucket tag.
@@ -28,6 +29,7 @@ func (s *Store) SetTags(bucket, key string, tags []Tag) error {
 	if checkKey(key) != nil {
 		return ErrNoSuchKey
 	}
+	var dataMod time.Time
 	m, ok := s.readSidecar(bucket, key)
 	if isDirKey(key) {
 		// A directory that only holds other keys is not an object; a sidecar would make it one.
@@ -40,6 +42,7 @@ func (s *Store) SetTags(bucket, key string, tags []Tag) error {
 			return err
 		}
 		defer func() { _ = f.Close() }()
+		dataMod = fi.ModTime()
 		if !ok || !m.matches(fi) {
 			// The key lock is held, so persist here rather than through refresh.
 			if m, err = s.refresh(bucket, key, f, fi, m, false); err != nil {
@@ -59,6 +62,8 @@ func (s *Store) SetTags(bucket, key string, tags []Tag) error {
 	}
 	if statErr == nil {
 		_ = os.Chtimes(p, old.ModTime(), old.ModTime())
+	} else if !dataMod.IsZero() {
+		_ = os.Chtimes(p, dataMod, dataMod) // no read recorded yet: the last use stays the write
 	}
 	return nil
 }

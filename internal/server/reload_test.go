@@ -438,3 +438,38 @@ func TestReloadCatchesAWriteDuringLoad(t *testing.T) {
 		})
 	}
 }
+
+func TestReloadWaitsForAMissingCertificate(t *testing.T) {
+	dir := t.TempDir()
+	cert, key := writeCert(t)
+	file := filepath.Join(dir, "config.yaml")
+	base := "root: " + filepath.Join(dir, "data") + "\naccess-key: ak\nsecret-key: sk\n"
+	writeFile(t, file, base+"tls-cert: "+cert+"\ntls-key: "+key+"\n")
+	logs := &syncBuffer{}
+	url, _ := startReloading(t, file, logs)
+	addr := strings.TrimPrefix(url, "https://")
+	served := func() []byte {
+		conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // self-signed test cert
+		if err != nil {
+			return nil
+		}
+		defer func() { _ = conn.Close() }()
+		return conn.ConnectionState().PeerCertificates[0].Raw
+	}
+	var first []byte
+	eventually(t, "the server", func() bool { first = served(); return first != nil })
+
+	// A pair not written yet fails the reload, and its arrival retries it.
+	nextCert, nextKey := filepath.Join(dir, "next.crt"), filepath.Join(dir, "next.key")
+	writeFile(t, file, base+"tls-cert: "+nextCert+"\ntls-key: "+nextKey+"\n")
+	eventually(t, "the failed reload", func() bool { return strings.Contains(logs.String(), "reload failed") })
+	newCert, newKey := writeCert(t)
+	for _, p := range [][2]string{{newKey, nextKey}, {newCert, nextCert}} {
+		b, err := os.ReadFile(p[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, p[1], string(b))
+	}
+	eventually(t, "the new certificate", func() bool { c := served(); return c != nil && !bytes.Equal(c, first) })
+}

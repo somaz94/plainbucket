@@ -236,3 +236,21 @@ func TestTrashEdgeCases(t *testing.T) {
 		t.Errorf("entries after a failed move: %d, want %d", len(list), before)
 	}
 }
+
+func TestDeleteBucketEmptiesItsTrash(t *testing.T) {
+	s := newStore(t)
+	s.SetTrash(map[string]time.Duration{"bkt": 24 * time.Hour})
+	put(t, s, "k", "x")
+	if err := s.DeleteObject("bkt", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteBucket("bkt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateBucket("bkt"); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := s.ListTrash("bkt"); err != nil || len(list) != 0 {
+		t.Errorf("a recreated bucket inherited the trash: %+v %v", list, err)
+	}
+}

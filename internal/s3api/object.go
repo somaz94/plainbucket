@@ -293,7 +293,7 @@ func (h *Handler) deleteObjects(req *request) error {
 		if err != nil {
 			e := toS3(err)
 			if e == nil {
-				h.log.Error("delete failed", "bucket", req.bucket, "key", o.Key, "err", err)
+				h.log.Error("delete failed", "bucket", req.bucket, "key", o.Key, "request_id", req.id, "err", err)
 				e = s3err.Internal()
 			}
 			res.Errors = append(res.Errors, deleteError{Key: o.Key, Code: e.Code, Message: e.Message})

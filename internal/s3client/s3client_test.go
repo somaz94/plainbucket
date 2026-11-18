@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/somaz94/plainbucket/internal/s3api"
 	"github.com/somaz94/plainbucket/internal/sigv4"
@@ -310,5 +311,32 @@ func TestHeadDecodesEncodedMetadata(t *testing.T) {
 		if got := o.Meta.UserMeta[k]; got != want {
 			t.Errorf("%s = %q, want %q", k, got, want)
 		}
+	}
+}
+
+func TestListObjectsPageTimeout(t *testing.T) {
+	stop := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "<ListBucketResult>")
+		w.(http.Flusher).Flush()
+		select {
+		case <-stop:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(stop)
+	u, _ := url.Parse(srv.URL)
+	c := &Client{Endpoint: u, Signer: sigv4.Signer{AccessKey: "AK", SecretKey: "SK", Region: "us-east-1"},
+		HTTP: srv.Client(), PageTimeout: 50 * time.Millisecond}
+	done := make(chan error, 1)
+	go func() { done <- c.ListObjects(context.Background(), "bkt", "", func(Object) error { return nil }) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a stalled page ended without an error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled page was not cut")
 	}
 }

@@ -76,7 +76,7 @@ func (h *Handler) stsAction(req *request) error {
 		}
 		return &stsError{http.StatusForbidden, "AccessDenied", "STS requests must be signed."}
 	}
-	body, err := io.ReadAll(io.LimitReader(req.r.Body, maxSTSBody+1))
+	body, err := io.ReadAll(io.LimitReader(newBodyReader(req, h.opts.BodyTimeout), maxSTSBody+1))
 	if err != nil {
 		return err
 	}

@@ -135,3 +135,19 @@ func TestSetTagsKeepsLastUse(t *testing.T) {
 		t.Errorf("sidecar mtime %v, want %v", fi.ModTime(), old)
 	}
 }
+
+func TestSetTagsWithoutSidecarKeepsLastUse(t *testing.T) {
+	s := newStore(t)
+	p := filepath.Join(s.root, "bkt", "ext")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	_ = os.Chtimes(p, old, old)
+	if err := s.SetTags("bkt", "ext", []Tag{{"a", "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(s.metaPath("bkt", "ext")); err != nil || !fi.ModTime().Equal(old) {
+		t.Errorf("sidecar of a file copied in: %v, want mtime %v", err, old)
+	}
+}

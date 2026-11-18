@@ -676,3 +676,11 @@ func TestChangedRuleKeepsLastComparison(t *testing.T) {
 		t.Errorf("after removing every rule: %d rules, %v", e.r.Rules(), e.r.LastCompared())
 	}
 }
+
+func TestMD5OfStopsWithTheContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := md5Of(ctx, strings.NewReader("x")); !errors.Is(err, context.Canceled) {
+		t.Errorf("md5Of after cancel: %v", err)
+	}
+}

@@ -173,7 +173,7 @@ func (r *Replicator) start(rule Rule, last int64) *worker {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &worker{rule: rule.identity(), pending: map[string]bool{}, ready: make(chan struct{}, 1), kick: make(chan struct{}, 1),
 		cancel: cancel, done: make(chan struct{}),
-		base: s3client.Client{Endpoint: u, VirtualHosted: rule.VirtualHosted, HTTP: r.http, Now: r.now}}
+		base: s3client.Client{Endpoint: u, VirtualHosted: rule.VirtualHosted, HTTP: r.http, Now: r.now, PageTimeout: time.Minute}}
 	w.signer.Store(signerOf(rule))
 	w.last.Store(last)
 	w.kick <- struct{}{} // compare once at start
@@ -484,7 +484,7 @@ func (r *Replicator) upload(ctx context.Context, c *s3client.Client, w *worker, 
 		sum := s3client.MD5(info.ETag)
 		if sum == nil {
 			var err error
-			if sum, err = md5Of(io.NewSectionReader(f, 0, info.Size)); err != nil {
+			if sum, err = md5Of(ctx, io.NewSectionReader(f, 0, info.Size)); err != nil {
 				return err
 			}
 		}
@@ -507,7 +507,7 @@ func (r *Replicator) upload(ctx context.Context, c *s3client.Client, w *worker, 
 	parts := make([]s3client.Part, len(sizes))
 	var off int64
 	for i, n := range sizes {
-		sum, err := md5Of(io.NewSectionReader(f, off, n))
+		sum, err := md5Of(ctx, io.NewSectionReader(f, off, n))
 		if err == nil {
 			err = retry(ctx, r.backoff, func() error {
 				pctx, cancel := deadline(ctx, n)
@@ -536,9 +536,22 @@ func (r *Replicator) upload(ctx context.Context, c *s3client.Client, w *worker, 
 	return nil
 }
 
-func md5Of(r io.Reader) ([]byte, error) {
+// ctxReader ends a read once ctx is done, so a stopping worker does not hash a large file on.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+func md5Of(ctx context.Context, r io.Reader) ([]byte, error) {
 	h := md5.New()
-	if _, err := io.Copy(h, r); err != nil {
+	if _, err := io.Copy(h, ctxReader{ctx, r}); err != nil {
 		return nil, err
 	}
 	return h.Sum(nil), nil

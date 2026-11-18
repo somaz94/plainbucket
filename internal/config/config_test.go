@@ -315,6 +315,7 @@ func TestBuckets(t *testing.T) {
 		"replicate empty secret":   "buckets: {uploads: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key-file: " + empty + "}]}}\n",
 		"replicate inline secret":  "buckets: {uploads: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key: x}]}}\n",
 		"replicate overlapping":    "buckets: {uploads: {replicate: [{endpoint: \"https://h\", bucket: b-1, prefix: a/, access-key: a, secret-key-file: " + secret + "}]}, videos: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}]}}\n",
+		"replicate case overlap":   "buckets: {uploads: {replicate: [{endpoint: \"https://H\", bucket: b-1, prefix: a/, access-key: a, secret-key-file: " + secret + "}]}, videos: {replicate: [{endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}]}}\n",
 		"replicate same id":        "buckets: {uploads: {replicate: [{id: x, endpoint: \"https://h\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}, {id: x, endpoint: \"https://g\", bucket: b-1, access-key: a, secret-key-file: " + secret + "}]}}\n",
 		"headers empty set":        "buckets: {www: {headers: [{prefix: a/}]}}\n",
 		"lifecycle twice":          "buckets: {ci-cache: {lifecycle: [{prefix: a/, expire-after: 1h}, {prefix: a/, delete-after: 1h}]}}\n",

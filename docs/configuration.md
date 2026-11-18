@@ -26,7 +26,7 @@ Each setting can be given as an environment variable or in a YAML file passed wi
 | `PLAINBUCKET_SCRUB_INTERVAL` | `scrub-interval` | `0` | How often every object is read again to find damaged data; `0` turns it off. See [Integrity Checks](#integrity-checks) |
 | `PLAINBUCKET_SCRUB_RATE` | `scrub-rate` | `33554432` | Bytes per second the integrity check may read; `0` for no limit |
 | `PLAINBUCKET_REPLICATE_INTERVAL` | `replicate-interval` | `1h` | How often each [replication](#replication) rule compares the source and target listings; at least `1m` |
-| `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut an upload that delivers less than 32 KiB in this long; `0` disables it |
+| `PLAINBUCKET_BODY_TIMEOUT` | `body-timeout` | `1m` | Cut a request body (uploads, POST forms, STS requests) that delivers less than 32 KiB in this long; `0` disables it |
 | `PLAINBUCKET_METRICS` | `metrics` | `false` | Serve Prometheus metrics at `GET /metrics` |
 | `PLAINBUCKET_BUCKET_METRICS` | `bucket-metrics` | `false` | Report the usage of every bucket in the metrics, not only of those with limits; see [Metrics](#metrics) |
 | `PLAINBUCKET_CONSOLE` | `console` | `false` | Serve the web console at `/_console/`; see [Web Console](#web-console) |
@@ -61,7 +61,7 @@ A running server re-reads its configuration on `SIGHUP` (`docker kill --signal=H
 
 - Taken over without a restart: the access keys (`access-key`, `secret-key`, `credentials`, `credentials-file`), the `buckets` map and `public-buckets`, `rate-limit` and `anonymous-rate-limit`, `min-free-space`, `read-only`, and the certificate files. A request already authenticated finishes with the key it was signed with.
 - Every other setting changes only on restart; the server logs which ones differ. Environment variables are read again too, but a process's environment does not change after it starts, so values set there need a restart.
-- A file that fails to load or validate leaves the running configuration as it was, and the error is logged.
+- A file that fails to load or validate leaves the running configuration as it was, and the error is logged. A file the new configuration names that does not exist yet, such as a Secret not mounted yet or a TLS certificate not written yet, is retried as soon as it appears.
 
 In Kubernetes, mount the credentials Secret and the TLS Secret as directories, not with `subPath`, so updates reach the files; the [Helm chart](../helm/plainbucket/README.md) does.
 
@@ -211,7 +211,7 @@ The background job applies both hourly, and at once when a write takes an evicti
 
 `trash-after` keeps the objects deleted from the bucket (`DeleteObject`, `DeleteObjects`, and the web console's delete, rename and move) restorable for that long. A deleted object leaves the bucket at once, so listings, reads and the bucket's usage and limits no longer see it, but its file and metadata move to the system directory instead of being removed. The web console lists a bucket's trash and restores or removes each entry; a restore never replaces an object that has since been written at the same key. Once the period ends the hourly background job removes the entry for good, as does `plainbucket fsck --repair`.
 
-Only deletes are kept: an overwrite replaces the object, and expiry and eviction under the bucket's limits remove objects for good. Trashed objects still take disk space until they are removed. Turning `trash-after` off keeps the entries already trashed until their own period ends.
+Only deletes are kept: an overwrite replaces the object, and expiry and eviction under the bucket's limits remove objects for good. Trashed objects still take disk space until they are removed. Turning `trash-after` off keeps the entries already trashed until their own period ends. A bucket whose objects are all in the trash counts as empty, and deleting it removes its trash with it, so a bucket later created with the same name starts with none.
 
 ### Response Headers
 
@@ -263,7 +263,7 @@ buckets:
 - The credential files are watched like `secret-key-file`: whatever refreshes them rewrites them, and the rule takes the new set over without dropping its queue and compares the listings at once, so a copy refused during the change is not left for an hour. Swap the files together where possible, as a Kubernetes Secret update does; a set written one file at a time is read again once the last file lands.
 - `id` names the rule in logs and metrics, `replicate-<n>` by default. `region` defaults to `us-east-1`.
 - Two rules may not write overlapping keys of one target bucket (the same target with prefixes where one starts the other): each would undo the other.
-- Each rule follows the bucket's writes, deletes, tag changes, trash restores and expiry as they happen, from a queue in memory that holds a thousand keys, each once however often it changes. It also compares the two listings, by size and ETag, when it starts and every `replicate-interval`, and copies what differs, which catches up after a full queue, a failed request, a restart, and on objects that were there before the rule. Each rule works on one key at a time, so changes and comparisons never race.
+- Each rule follows the bucket's writes, deletes, tag changes, trash restores and expiry as they happen, from a queue in memory that holds a thousand keys, each once however often it changes. It also compares the two listings, by size and ETag, when it starts and every `replicate-interval`, and copies what differs, which catches up after a full queue, a failed request, a restart, and on objects that were there before the rule. Each rule works on one key at a time, so changes and comparisons never race. Each page of the target's listing must arrive within a minute, or that comparison stops with a warning and the next one starts over.
 - A copy carries the data, `Content-Type`, user metadata, the stored headers (`Cache-Control` and the like) and tags. An object assembled from parts is uploaded in the same parts, so the target computes the same ETag; every piece carries its MD5 for the target to check. Over plain `http` that is the only integrity check, so prefer `https`. The copy also gets the user metadata `plainbucket-etag`, the source ETag, which lets a target that computes ETags differently (encryption at rest) still be recognized as current.
 - With `delete: true` a target key whose source key is gone is deleted, when the change is seen or at the next comparison; that includes keys removed by expiry or by eviction for `max-size`, and keys under the prefix that were only ever written to the target. Without it, the target keeps them, which makes it a copy deletes cannot reach. A source bucket that cannot be read, such as an unmounted volume, stops the comparison instead of deleting anything.
 - A comparison looks at sizes and ETags only, so a change to tags or metadata alone that the queue lost reaches the target when the object changes again. A key whose data matches has its tags read and written only when they differ, so two servers replicating to each other settle instead of echoing writes. Metadata values are compared after RFC 2047 decoding, so non-ASCII values that a target such as AWS S3 returns encoded count as the same.
@@ -281,13 +281,13 @@ Use a domain dedicated to plainbucket: with `example.com` configured, `www.examp
 
 ## Slow Uploads
 
-The server bounds how long it waits for request headers, but an object body can take as long as it needs, so large uploads over slow links work. What it does not accept is an upload that stops making progress: each window of `PLAINBUCKET_BODY_TIMEOUT` must deliver at least 32 KiB, or the connection is closed. This keeps a client that trickles a byte now and then from holding a connection and a staging file forever.
+The server bounds how long it waits for request headers, but an object body can take as long as it needs, so large uploads over slow links work. What it does not accept is an upload that stops making progress: each window of `PLAINBUCKET_BODY_TIMEOUT` must deliver at least 32 KiB, or the connection is closed. This keeps a client that trickles a byte now and then from holding a connection and a staging file forever. The same applies to POST form uploads and to STS request bodies; a stalled STS body fails with `400 IncompleteBody`.
 
 <br/>
 
 ## Free Space
 
-With `PLAINBUCKET_MIN_FREE_SPACE` set, a write that would leave less than that many bytes free on the filesystem holding the root is refused with `507 InsufficientStorage` before its body is stored. Every write counts: objects, parts, copies and POST uploads, and completing a multipart upload, which writes the object's size once more while it joins the parts. Writes in progress hold their size against each other, so parallel uploads cannot pass the minimum together. A body sent without a length is cut off with the same error once it would. Reads and deletes go on, so a full server can still be emptied.
+With `PLAINBUCKET_MIN_FREE_SPACE` set, a write that would leave less than that many bytes free on the filesystem holding the root is refused with `507 InsufficientStorage` before its body is stored. Every write counts: objects, parts, copies and POST uploads, and completing a multipart upload, which writes the object's size once more while it joins the parts. Writes in progress hold their size against each other, so parallel uploads cannot pass the minimum together. A body sent without a length holds what it has received so far against the other writes in progress, and is cut off with the same error once together they would pass the minimum. Reads and deletes go on, so a full server can still be emptied.
 
 A filesystem that fills up anyway (another writer, a quota, or no minimum set) gives the same `507` instead of an internal error. Every `507` is logged as a warning. On platforms where free space cannot be read, the minimum is not enforced and the server logs a warning at startup.
 

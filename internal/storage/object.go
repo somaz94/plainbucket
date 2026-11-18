@@ -92,6 +92,8 @@ func (s *Store) putMarker(bucket, key string, cond Conditions, tags []Tag) (Obje
 	if err := s.checkConditions(bucket, key, cond); err != nil {
 		return ObjectInfo{}, err
 	}
+	// From the directory's creation to its sidecar, so a delete pruning it sees one or the other.
+	defer s.lockDir(bucket, key)()
 	dir := s.dataPath(bucket, key)
 	p := s.rel(dir)
 	top, err := s.mkdirParent(filepath.Join(dir, "x"), dirPerm)

@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -127,7 +128,11 @@ func (s *Store) CreateBucketWithTags(name string, tags []Tag) error {
 	}
 	s.flushDir(".")
 	raw, _ := json.Marshal(bucketRecord{Created: s.now().UTC(), Tags: tags})
-	_ = s.writeFileAtomic(s.sys("buckets", name+".json"), raw)
+	if err := s.writeFileAtomic(s.sys("buckets", name+".json"), raw); err != nil && len(tags) > 0 {
+		_ = s.r.Remove(name) // still empty: writers wait on the lock held here
+		s.flushDir(".")
+		return fmt.Errorf("recording the bucket's tags: %w", err)
+	}
 	s.usageMu.Lock()
 	s.resetUsage(name, true) // listed in the usage before its first write
 	s.usageMu.Unlock()
@@ -137,8 +142,8 @@ func (s *Store) CreateBucketWithTags(name string, tags []Tag) error {
 // HeadBucket returns ErrNoSuchBucket unless the bucket exists.
 func (s *Store) HeadBucket(name string) error { return s.requireBucket(name) }
 
-// DeleteBucket removes an empty bucket with its metadata, in-progress uploads and records
-// of completed ones.
+// DeleteBucket removes an empty bucket with its metadata, trash, in-progress uploads and
+// records of completed ones.
 func (s *Store) DeleteBucket(name string) error {
 	if err := s.requireBucket(name); err != nil { // no lock entry for a non-bucket
 		return err
@@ -156,6 +161,8 @@ func (s *Store) DeleteBucket(name string) error {
 		return err
 	}
 	_ = os.RemoveAll(s.sys("meta", name))
+	// A bucket created later with the same name must not inherit the deleted objects.
+	_ = os.RemoveAll(s.trashDir(name))
 	_ = os.Remove(s.sys("buckets", name+".json"))
 	s.usageMu.Lock()
 	s.resetUsage(name, false)

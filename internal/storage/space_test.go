@@ -3,9 +3,11 @@ package storage
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeDisk reports free bytes for the store's filesystem; err fails the query.
@@ -135,5 +137,36 @@ func TestMinFree(t *testing.T) {
 	d.err = errors.New("statfs failed")
 	if _, err := s.PutObject("bkt", "f", strings.NewReader("x"), 1, PutOptions{}); err != nil {
 		t.Errorf("query failing: %v", err)
+	}
+}
+
+func TestMinFreeHoldsBodiesOfUnknownSizeTogether(t *testing.T) {
+	s := newStore(t)
+	s.statfs = (&fakeDisk{free: 110}).statfs
+	s.SetMinFree(100)
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.PutObject("bkt", "a", pr, -1, PutOptions{})
+		done <- err
+	}()
+	if _, err := pw.Write([]byte("123456")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; s.pending.Load() < 6; i++ {
+		if i > 500 {
+			t.Fatal("the first body was never counted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := s.PutObject("bkt", "b", strings.NewReader("123456"), -1, PutOptions{}); !errors.Is(err, ErrInsufficientStorage) {
+		t.Errorf("second body past the room both share: %v", err)
+	}
+	_ = pw.Close()
+	if err := <-done; err != nil {
+		t.Errorf("first body: %v", err)
+	}
+	if n := s.pending.Load(); n != 0 {
+		t.Errorf("pending after both = %d", n)
 	}
 }

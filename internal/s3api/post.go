@@ -39,6 +39,11 @@ func isPostUpload(r *http.Request, key string, q url.Values) bool {
 // postObject serves PostObject, the HTML form upload a presigned POST policy allows.
 // Only Signature Version 4 is accepted, and anonymous uploads never are.
 func (h *Handler) postObject(req *request) error {
+	// Through bodyReader, so a form that trickles in is cut at body-timeout like any upload.
+	req.r.Body = struct {
+		io.Reader
+		io.Closer
+	}{newBodyReader(req, h.opts.BodyTimeout), req.r.Body}
 	mr, err := req.r.MultipartReader()
 	if err != nil {
 		return s3err.MalformedPOSTRequest()

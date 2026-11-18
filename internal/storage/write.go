@@ -24,13 +24,15 @@ type Verifier func(md5 []byte) (map[string]string, error)
 // receive streams body (exactly size bytes when size >= 0) into a temporary file and
 // returns its path, MD5 and verified checksums. The caller removes the file.
 func (s *Store) receive(body io.Reader, size int64, verify Verifier) (string, []byte, map[string]string, error) {
-	release, room, err := s.reserve(size)
+	release, budget, err := s.reserve(size)
 	if err != nil {
 		return "", nil, nil, err
 	}
 	defer release()
-	if size < 0 && room >= 0 {
-		body = &roomReader{r: body, n: room}
+	if size < 0 && budget >= 0 {
+		rr := &roomReader{r: body, budget: budget, pending: &s.pending}
+		defer rr.release()
+		body = rr
 	}
 	tmp, err := os.CreateTemp(s.sys("tmp"), "upload-*")
 	if err != nil {
@@ -328,13 +330,17 @@ func (s *Store) mkdirParent(dst string, perm os.FileMode) (string, error) {
 func (s *Store) pruneEmptyParents(bucket, dir string) string {
 	stop := s.bucketPath(bucket)
 	for dir != stop && strings.HasPrefix(dir, stop+string(filepath.Separator)) {
-		if s.hasMarker(bucket, filepath.ToSlash(dir[len(stop)+1:])+"/") {
-			return dir
-		}
-		if s.r.Remove(s.rel(dir)) != nil {
+		if !s.removeUnmarked(bucket, filepath.ToSlash(dir[len(stop)+1:])+"/", dir) {
 			return dir
 		}
 		dir = filepath.Dir(dir)
 	}
 	return dir
+}
+
+// removeUnmarked removes dir unless it is an explicit marker, under the lock putMarker
+// holds, so a marker created meanwhile is either seen or recreates its directory.
+func (s *Store) removeUnmarked(bucket, dirKey, dir string) bool {
+	defer s.lockDir(bucket, dirKey)()
+	return !s.hasMarker(bucket, dirKey) && s.r.Remove(s.rel(dir)) == nil
 }

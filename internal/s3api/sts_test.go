@@ -245,7 +245,8 @@ func TestAssumeRoleRefuses(t *testing.T) {
 	r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AK")
 	var e stsErrorResponse
 	rec = httptest.NewRecorder()
-	if x.h.ServeHTTP(rec, r); rec.Code != http.StatusInternalServerError || xml.Unmarshal(rec.Body.Bytes(), &e) != nil || e.Error.Type != "Receiver" {
+	// A body that breaks off is the client's: 400, not a server fault.
+	if x.h.ServeHTTP(rec, r); rec.Code != http.StatusBadRequest || xml.Unmarshal(rec.Body.Bytes(), &e) != nil || e.Error.Code != "IncompleteBody" || e.Error.Type != "Sender" {
 		t.Errorf("unreadable body: %d %s", rec.Code, rec.Body.String())
 	}
 	big := roleForm("Policy", strings.Repeat("x", maxSTSBody))
