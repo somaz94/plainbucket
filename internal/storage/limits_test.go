@@ -556,3 +556,22 @@ func TestMeasureUsageBucketChurn(t *testing.T) {
 		}
 	}
 }
+
+func TestMeasureUsageKeepsTrackedFigureOnPartialWalk(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	s := newStore(t)
+	s.SetLimits(map[string]Limit{"bkt": {MaxSize: 100}})
+	put(t, s, "d/a", "12345")
+	s.MeasureUsage(context.Background())
+	dir := filepath.Join(s.root, "bkt", "d")
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	s.MeasureUsage(context.Background())
+	if u := s.AllBucketUsage()["bkt"]; u.Bytes != 5 {
+		t.Errorf("usage after a partial walk = %+v, want the tracked 5 bytes", u)
+	}
+}

@@ -362,6 +362,10 @@ func (d *Deletes) Flush() {
 
 // deleteObject is DeleteObjectIf with the directory flush handed to flush.
 func (s *Store) deleteObject(bucket, key string, cond DeleteConditions, flush func(dir string)) (removed bool, err error) {
+	// Checked before bucketLock too, so a name that is no bucket adds no lock entry.
+	if err := s.requireBucket(bucket); err != nil {
+		return false, err
+	}
 	bl := s.bucketLock(bucket)
 	bl.RLock()
 	defer bl.RUnlock()

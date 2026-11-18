@@ -226,3 +226,27 @@ func TestScrubMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestBodyDeadlineClearedAtEOF(t *testing.T) {
+	for _, size := range []int{0, minProgress} {
+		canceled := make(chan bool, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.ReadAll(newBodyReader(&request{w: w, r: r}, 100*time.Millisecond))
+			select {
+			case <-r.Context().Done():
+				canceled <- true
+			case <-time.After(300 * time.Millisecond):
+				canceled <- false
+			}
+		}))
+		t.Cleanup(srv.Close)
+		resp, err := http.Post(srv.URL, "application/octet-stream", bytes.NewReader(make([]byte, size)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if <-canceled {
+			t.Errorf("%d-byte body: request context canceled after the body was read", size)
+		}
+	}
+}

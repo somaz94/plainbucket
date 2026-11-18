@@ -16,9 +16,11 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -351,4 +353,22 @@ func TestServeChecksFlushAtStart(t *testing.T) {
 	eventually(t, "the warning", func() bool {
 		return strings.Contains(logs.String(), "acknowledged writes may not survive a power loss")
 	})
+}
+
+func TestStartupGate(t *testing.T) {
+	var open atomic.Bool
+	h := startupGate(&open, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	code := func(method, path string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec.Code
+	}
+	if code(http.MethodGet, "/healthz") != http.StatusOK || code(http.MethodPut, "/healthz") != http.StatusServiceUnavailable ||
+		code(http.MethodGet, "/readyz") != http.StatusServiceUnavailable || code(http.MethodPut, "/bkt/k") != http.StatusServiceUnavailable {
+		t.Error("a closed gate let through more than the /healthz probe")
+	}
+	open.Store(true)
+	if code(http.MethodPut, "/bkt/k") != http.StatusOK {
+		t.Error("an open gate refused a request")
+	}
 }

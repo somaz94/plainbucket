@@ -57,7 +57,8 @@ const minProgress = httpx.MinBodyProgress
 
 func newBodyReader(req *request, timeout time.Duration) *bodyReader {
 	b := &bodyReader{r: req.r.Body, timeout: timeout}
-	if timeout > 0 {
+	// An empty body has already started net/http's background read, which a deadline would cancel.
+	if timeout > 0 && req.r.ContentLength != 0 {
 		b.rc = http.NewResponseController(req.w)
 		if b.rc.SetReadDeadline(time.Now().Add(timeout)) != nil {
 			b.rc = nil // not a server connection, as in tests with a recorder
@@ -69,7 +70,11 @@ func newBodyReader(req *request, timeout time.Duration) *bodyReader {
 func (b *bodyReader) Read(p []byte) (int, error) {
 	n, err := b.r.Read(p)
 	if b.rc != nil {
-		if b.progress += n; b.progress >= minProgress {
+		if err == io.EOF {
+			// net/http starts its background read at EOF; a deadline left armed would cancel the request.
+			_ = b.rc.SetReadDeadline(time.Time{})
+			b.rc = nil
+		} else if b.progress += n; b.progress >= minProgress {
 			b.progress = 0
 			_ = b.rc.SetReadDeadline(time.Now().Add(b.timeout))
 		}

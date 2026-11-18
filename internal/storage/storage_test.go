@@ -696,3 +696,17 @@ func TestSyncErrorsAreReported(t *testing.T) {
 		t.Errorf("refusal after a listener was set reported %v", reported)
 	}
 }
+
+func TestNoLockEntryForMissingBucket(t *testing.T) {
+	s := newStore(t)
+	_ = s.DeleteObject("no-such", "k")
+	_ = s.SetTags("no-such", "k", nil)
+	_ = s.SetBucketTags("no-such", nil)
+	_ = s.DeleteBucket("no-such")
+	s.bucketMu.Lock()
+	_, ok := s.buckets["no-such"]
+	s.bucketMu.Unlock()
+	if ok {
+		t.Error("a missing bucket got a lock entry")
+	}
+}

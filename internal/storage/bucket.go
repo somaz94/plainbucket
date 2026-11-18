@@ -76,6 +76,9 @@ func (s *Store) BucketTags(bucket string) ([]Tag, error) {
 
 // SetBucketTags replaces the tags of bucket; nil removes them.
 func (s *Store) SetBucketTags(bucket string, tags []Tag) error {
+	if err := s.requireBucket(bucket); err != nil { // no lock entry for a non-bucket
+		return err
+	}
 	// Shared, not exclusive: a pending Lock behind a long RLock holder (SetTags hashing an
 	// edited object) would block every commit in the bucket. recordMu serializes updates.
 	bl := s.bucketLock(bucket)
@@ -137,6 +140,9 @@ func (s *Store) HeadBucket(name string) error { return s.requireBucket(name) }
 // DeleteBucket removes an empty bucket with its metadata, in-progress uploads and records
 // of completed ones.
 func (s *Store) DeleteBucket(name string) error {
+	if err := s.requireBucket(name); err != nil { // no lock entry for a non-bucket
+		return err
+	}
 	bl := s.bucketLock(name)
 	bl.Lock()
 	defer bl.Unlock()

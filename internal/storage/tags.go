@@ -14,6 +14,9 @@ type Tag struct {
 // SetTags replaces the tags of bucket/key; nil removes them. Only the sidecar changes,
 // and its modification time is kept: tagging an object does not count as using it.
 func (s *Store) SetTags(bucket, key string, tags []Tag) error {
+	if err := s.requireBucket(bucket); err != nil { // no lock entry for a non-bucket
+		return err
+	}
 	bl := s.bucketLock(bucket)
 	bl.RLock()
 	defer bl.RUnlock()

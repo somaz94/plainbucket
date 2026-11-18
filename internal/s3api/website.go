@@ -158,6 +158,7 @@ func (h *Handler) websiteKey(req *request) {
 		return
 	}
 	req.website = true
+	req.site = w
 	if req.key == "" || strings.HasSuffix(req.key, "/") {
 		req.key += w.Index
 	}
@@ -169,7 +170,7 @@ func (h *Handler) websiteNotFound(req *request, err error) error {
 	if !errors.Is(err, storage.ErrNoSuchKey) {
 		return err
 	}
-	w := h.policy(req.bucket).Website
+	w := req.site
 	if !strings.HasSuffix(req.key, "/"+w.Index) && req.key != w.Index {
 		if _, ierr := h.store.HeadObject(req.bucket, req.key+"/"+w.Index); ierr == nil {
 			http.Redirect(req.w, req.r, req.r.URL.EscapedPath()+"/", http.StatusFound)

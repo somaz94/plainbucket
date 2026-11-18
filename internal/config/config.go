@@ -188,14 +188,21 @@ func Load(configFile string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.CredentialsFile != "" {
+		var extra []Credential
+		if err := decodeYAML(cfg.CredentialsFile, &extra); err != nil {
+			return nil, fmt.Errorf("loading credentials file: %w", err)
+		}
+		cfg.Credentials = append(cfg.Credentials, extra...)
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
 	return cfg, nil
 }
 
-// LoadUnvalidated is Load without validation, for commands that need only the root or
-// the address and must work where the access keys are not visible.
+// LoadUnvalidated is Load without the credentials file and validation, for commands that
+// need only the root or the address and must work where the access keys are not visible.
 func LoadUnvalidated(configFile string) (*Config, error) {
 	cfg := Default()
 	if configFile != "" {
@@ -205,13 +212,6 @@ func LoadUnvalidated(configFile string) (*Config, error) {
 	}
 	if err := cfg.loadEnv(); err != nil {
 		return nil, fmt.Errorf("env: %w", err)
-	}
-	if cfg.CredentialsFile != "" {
-		var extra []Credential
-		if err := decodeYAML(cfg.CredentialsFile, &extra); err != nil {
-			return nil, fmt.Errorf("loading credentials file: %w", err)
-		}
-		cfg.Credentials = append(cfg.Credentials, extra...)
 	}
 	return cfg, nil
 }

@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/somaz94/plainbucket/internal/storage"
 )
 
 func websiteHarness(t *testing.T) *harness {
@@ -137,5 +139,16 @@ func TestCORS(t *testing.T) {
 	// Without a CORS rule, OPTIONS is not special.
 	if rec := pre("plain", "https://app.example.com", "GET", ""); rec.Code != http.StatusForbidden || rec.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Errorf("no CORS rule: %d %v", rec.Code, rec.Header())
+	}
+}
+
+func TestWebsiteSurvivesReload(t *testing.T) {
+	x := websiteHarness(t)
+	r := httptest.NewRequest(http.MethodGet, "http://pb.test/www/missing.png", nil)
+	req := &request{w: httptest.NewRecorder(), r: r, bucket: "www", key: "missing.png"}
+	x.h.websiteKey(req)
+	x.h.SetAccess([]Credential{{AccessKey: "AK", SecretKey: "SK"}}, nil, nil) // website removed
+	if err := x.h.websiteNotFound(req, storage.ErrNoSuchKey); err != nil {
+		t.Errorf("websiteNotFound after a reload: %v", err)
 	}
 }

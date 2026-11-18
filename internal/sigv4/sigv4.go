@@ -3,6 +3,7 @@
 package sigv4
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -290,8 +291,16 @@ func canonicalQuery(q url.Values, skip string) string {
 			pairs = append(pairs, uriEncode(k, true)+"="+uriEncode(v, true))
 		}
 	}
-	slices.Sort(pairs)
+	slices.SortFunc(pairs, compareQueryPairs)
 	return strings.Join(pairs, "&")
+}
+
+// compareQueryPairs orders encoded name=value pairs by name, then value, as AWS does:
+// a plain sort of the joined strings puts "a-b=" before "a=".
+func compareQueryPairs(x, y string) int {
+	xk, xv, _ := strings.Cut(x, "=")
+	yk, yv, _ := strings.Cut(y, "=")
+	return cmp.Or(strings.Compare(xk, yk), strings.Compare(xv, yv))
 }
 
 func canonicalHeaders(r *http.Request, signedHeaders string) string {

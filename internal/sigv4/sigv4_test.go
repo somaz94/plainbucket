@@ -266,6 +266,14 @@ func TestVerifyHeaderDateFallbackAndContentLength(t *testing.T) {
 	}
 }
 
+func TestCanonicalQueryOrdersByName(t *testing.T) {
+	// "-" sorts below "=", so ordering whole "name=value" strings would put a-b first.
+	q := url.Values{"a-b": {"2"}, "a": {"1", "0"}, "b": {""}}
+	if got, want := canonicalQuery(q, ""), "a=0&a=1&a-b=2&b="; got != want {
+		t.Errorf("canonicalQuery = %q, want %q", got, want)
+	}
+}
+
 func TestURIEncode(t *testing.T) {
 	if got := URIEncodePath("a b/ü+~"); got != "a%20b/%C3%BC%2B~" {
 		t.Errorf("URIEncodePath = %q", got)

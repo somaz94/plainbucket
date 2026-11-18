@@ -371,6 +371,10 @@ func TestLoadUnvalidated(t *testing.T) {
 	if _, err := LoadUnvalidated(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
 		t.Error("missing file accepted")
 	}
+	t.Setenv("PLAINBUCKET_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "absent.yaml"))
+	if _, err := LoadUnvalidated(""); err != nil {
+		t.Errorf("LoadUnvalidated read the credentials file: %v", err)
+	}
 }
 
 func TestRateLimits(t *testing.T) {

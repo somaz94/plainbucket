@@ -44,6 +44,18 @@ func encode(v string) string {
 	return strings.ReplaceAll(url.QueryEscape(v), "+", "%20")
 }
 
+// sortPairs orders encoded name=value pairs by name, then value, as AWS does.
+func sortPairs(pairs []string) {
+	sort.Slice(pairs, func(i, j int) bool {
+		ik, iv, _ := strings.Cut(pairs[i], "=")
+		jk, jv, _ := strings.Cut(pairs[j], "=")
+		if ik != jk {
+			return ik < jk
+		}
+		return iv < jv
+	})
+}
+
 // Sign sets X-Amz-Date, X-Amz-Content-Sha256 and an Authorization header covering host
 // and every x-amz-* header, and returns the signature.
 func (s Signer) Sign(r *http.Request, payload string, at time.Time) string {
@@ -65,7 +77,7 @@ func (s Signer) Sign(r *http.Request, payload string, at time.Time) string {
 			pairs = append(pairs, encode(k)+"="+encode(v))
 		}
 	}
-	sort.Strings(pairs)
+	sortPairs(pairs)
 
 	var canon strings.Builder
 	canon.WriteString(r.Method + "\n" + r.URL.EscapedPath() + "\n" + strings.Join(pairs, "&") + "\n")
@@ -105,7 +117,7 @@ func (s Signer) Presign(r *http.Request, at time.Time, expires int, extra map[st
 			pairs = append(pairs, encode(k)+"="+encode(v))
 		}
 	}
-	sort.Strings(pairs)
+	sortPairs(pairs)
 	canon := r.Method + "\n" + r.URL.EscapedPath() + "\n" + strings.Join(pairs, "&") + "\nhost:" + r.Host + "\n\nhost\nUNSIGNED-PAYLOAD"
 	sum := sha256.Sum256([]byte(canon))
 	sts := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hex.EncodeToString(sum[:])

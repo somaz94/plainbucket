@@ -75,10 +75,9 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 	} else if err != nil {
 		logger.Warn("could not lock the root; make sure no other plainbucket uses it", "err", err)
 	}
-	if limits := bucketLimits(cfg); len(limits) > 0 {
+	limits := bucketLimits(cfg)
+	if len(limits) > 0 {
 		store.SetLimits(limits)
-		// A refusing limit checks writes against this, so it must be real before the first one.
-		store.MeasureUsage(ctx)
 	}
 	store.SetMinFree(cfg.MinFreeSpace)
 	store.SetTrash(bucketTrash(cfg))
@@ -108,17 +107,6 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 	store.OnSyncError(syncErrorLog(logger, time.Minute))
 	store.CheckFlush()
 
-	janitorCtx, stopJanitor := context.WithCancel(context.Background())
-	var janitor sync.WaitGroup
-	janitor.Go(func() { store.RunJanitor(janitorCtx, janitorInterval, cfg.UploadExpiry, logger) })
-	if cfg.ScrubInterval > 0 {
-		janitor.Go(func() { runScrub(janitorCtx, store, cfg.ScrubInterval, cfg.ScrubRate, logger) })
-	}
-	defer func() {
-		stopJanitor()
-		janitor.Wait()
-	}()
-
 	handler := s3api.New(s3api.Options{
 		Store:         store,
 		Credentials:   credentials(cfg),
@@ -138,8 +126,9 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 
 		AnonymousRateLimit: rateLimit(cfg.AnonymousRateLimit),
 	})
+	var open atomic.Bool
 	srv := &http.Server{
-		Handler:           handler,
+		Handler:           startupGate(&open, handler),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
@@ -174,6 +163,25 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 			errCh <- srv.Serve(ln)
 		}
 	}()
+	if len(limits) > 0 {
+		// A refusing limit checks writes against this, so it must be real before the first one.
+		logger.Info("measuring bucket usage before accepting requests")
+		store.MeasureUsage(ctx)
+	}
+	if ctx.Err() == nil {
+		open.Store(true)
+	}
+	// After the startup walk, which the janitor's own first measurement would otherwise delay.
+	janitorCtx, stopJanitor := context.WithCancel(context.Background())
+	var janitor sync.WaitGroup
+	janitor.Go(func() { store.RunJanitor(janitorCtx, janitorInterval, cfg.UploadExpiry, logger) })
+	if cfg.ScrubInterval > 0 {
+		janitor.Go(func() { runScrub(janitorCtx, store, cfg.ScrubInterval, cfg.ScrubRate, logger) })
+	}
+	defer func() {
+		stopJanitor()
+		janitor.Wait()
+	}()
 
 	select {
 	case err := <-errCh:
@@ -192,6 +200,19 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, ln net.
 		logger.Info("server stopped")
 		return nil
 	}
+}
+
+// startupGate answers 503 to everything but the /healthz probe until open is set, so
+// liveness holds while the startup usage walk runs and no request precedes it.
+func startupGate(open *atomic.Bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if open.Load() || (r.URL.Path == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead)) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "starting", http.StatusServiceUnavailable)
+	})
 }
 
 // runScrub verifies every object once an interval has passed since the last completed

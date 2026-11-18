@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -183,6 +185,9 @@ func (s *Store) sweep(ctx context.Context, uploadExpiry time.Duration, act func(
 // sweepGoneRecord removes the record of a bucket that no longer exists, under the bucket
 // lock, so a bucket recreated and tagged meanwhile keeps its record.
 func (s *Store) sweepGoneRecord(bucket string, rm func(kind, path string)) {
+	if s.requireBucket(bucket) == nil {
+		return // live: an exclusive lock would queue every writer behind a long reader
+	}
 	bl := s.bucketLock(bucket)
 	bl.Lock()
 	defer bl.Unlock()
@@ -195,6 +200,9 @@ func (s *Store) sweepGoneRecord(bucket string, rm func(kind, path string)) {
 // bucket lock so a bucket recreated meanwhile keeps its new sidecars. gone reports that
 // the bucket is gone, removed that act removed its metadata.
 func (s *Store) sweepGoneBucket(bucket string, act func(kind, path string) bool) (gone, removed bool) {
+	if s.requireBucket(bucket) == nil {
+		return false, false
+	}
 	bl := s.bucketLock(bucket)
 	bl.Lock()
 	defer bl.Unlock()
@@ -270,6 +278,7 @@ func (s *Store) MeasureUsage(ctx context.Context) {
 		s.usageMu.Unlock()
 		return
 	}
+	partial := map[string]bool{} // buckets whose walk hit an unreadable directory
 	for _, b := range buckets {
 		var u Usage
 		root := s.bucketPath(b.Name)
@@ -277,7 +286,13 @@ func (s *Store) MeasureUsage(ctx context.Context) {
 			if ctx.Err() != nil {
 				return filepath.SkipAll
 			}
-			if err != nil || !d.Type().IsRegular() {
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					partial[b.Name] = true
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() {
 				return nil
 			}
 			fi, err := d.Info()
@@ -319,6 +334,13 @@ func (s *Store) MeasureUsage(ctx context.Context) {
 		u.Objects += d.Objects
 		u.Bytes += d.Bytes
 		per[b] = u
+	}
+	// A partial walk undercounts; the tracked figure, which has every change since the
+	// last full one, is closer.
+	for b := range partial {
+		if u, ok := s.bucketUsage[b]; ok {
+			per[b] = u
+		}
 	}
 	total.At = s.now()
 	s.usage.Store(&total)

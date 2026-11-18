@@ -146,10 +146,11 @@ type request struct {
 	id       string
 	auth     *sigv4.Auth
 	cred     *Credential
-	vhost    bool   // the bucket came from the Host header
-	readOnly bool   // the server-wide mode, read once per request
-	website  bool   // an unsigned read of a website bucket
-	op       string // the operation, when only the body names it
+	vhost    bool     // the bucket came from the Host header
+	readOnly bool     // the server-wide mode, read once per request
+	website  bool     // an unsigned read of a website bucket
+	site     *Website // its website policy, read once so a reload cannot remove it mid-request
+	op       string   // the operation, when only the body names it
 	bucket   string
 	key      string
 	q        url.Values
