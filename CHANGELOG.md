@@ -2,12 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased (2026-11-04)
+## Unreleased (2026-11-18)
+
+### Documentation
+
+- add a demo GIF of objects stored as plain files ([1dd9d57](https://github.com/somaz94/plainbucket/commit/1dd9d575d80b02e9f2a4a6724c2c78a23c4e12cc))
 
 ### Chores
 
+- **deps:** bump distroless/static-debian13 from `18f4cc2` to `25ac8f0` (#6) ([#6](https://github.com/somaz94/plainbucket/pull/6)) ([99923c2](https://github.com/somaz94/plainbucket/commit/99923c24e3e66820c8e608e74da636688683eb28))
+- **deps:** bump the compat-minor group in /compat with 6 updates (#8) ([#8](https://github.com/somaz94/plainbucket/pull/8)) ([fd89c30](https://github.com/somaz94/plainbucket/commit/fd89c30d832d018e21ef488b594f8d7f657753fa))
+- **deps:** bump the compat-minor group in /compat with 6 updates (#7) ([#7](https://github.com/somaz94/plainbucket/pull/7)) ([6dd7971](https://github.com/somaz94/plainbucket/commit/6dd7971a8ba0030a9515591c7f27b56c3576265d))
 - **deps:** bump distroless/static-debian13 from `d620678` to `18f4cc2` (#4) ([#4](https://github.com/somaz94/plainbucket/pull/4)) ([3516467](https://github.com/somaz94/plainbucket/commit/35164675cb6fefadd4d6c9a104e4eab5b7be1a6a))
 - **deps:** bump the compat-minor group in /compat with 3 updates (#5) ([#5](https://github.com/somaz94/plainbucket/pull/5)) ([30f718b](https://github.com/somaz94/plainbucket/commit/30f718ba4cc399bea26da7efd6dececad262d3e4))
+
+### Contributors
+
+- somaz
 
 <br/>
 
