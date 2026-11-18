@@ -2,7 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased (2026-11-18)
+## [v0.11.0](https://github.com/somaz94/plainbucket/compare/v0.10.0...v0.11.0) (2026-11-18)
+
+### Features
+
+- accept copy-source if-modified-since and if-unmodified-since ([68e7376](https://github.com/somaz94/plainbucket/commit/68e73769082289c65ca4468581bc6dc202c056f5))
+
+### Bug Fixes
+
+- harden body deadlines, query sort order, startup and bucket locks ([e797a46](https://github.com/somaz94/plainbucket/commit/e797a46be157f2e7fd2cffef5d7bdde5e46b124c))
 
 ### Documentation
 
@@ -10,6 +18,7 @@ All notable changes to this project will be documented in this file.
 
 ### Chores
 
+- bump version to v0.11.0 ([e7bbac4](https://github.com/somaz94/plainbucket/commit/e7bbac47fd6135532a5f528f82ea4747b6ed5de8))
 - **deps:** bump distroless/static-debian13 from `18f4cc2` to `25ac8f0` (#6) ([#6](https://github.com/somaz94/plainbucket/pull/6)) ([99923c2](https://github.com/somaz94/plainbucket/commit/99923c24e3e66820c8e608e74da636688683eb28))
 - **deps:** bump the compat-minor group in /compat with 6 updates (#8) ([#8](https://github.com/somaz94/plainbucket/pull/8)) ([fd89c30](https://github.com/somaz94/plainbucket/commit/fd89c30d832d018e21ef488b594f8d7f657753fa))
 - **deps:** bump the compat-minor group in /compat with 6 updates (#7) ([#7](https://github.com/somaz94/plainbucket/pull/7)) ([6dd7971](https://github.com/somaz94/plainbucket/commit/6dd7971a8ba0030a9515591c7f27b56c3576265d))
