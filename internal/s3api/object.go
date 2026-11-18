@@ -312,6 +312,21 @@ func (h *Handler) deleteObjects(req *request) error {
 	return nil
 }
 
+// copySourceConditions reads a copy's preconditions on its source; a malformed date is
+// ignored, as HTTP ignores one.
+func copySourceConditions(hdr http.Header) storage.CopyOptions {
+	date := func(name string) time.Time {
+		t, _ := http.ParseTime(hdr.Get(name))
+		return t
+	}
+	return storage.CopyOptions{
+		SrcIfMatch:           hdr.Get("X-Amz-Copy-Source-If-Match"),
+		SrcIfNoneMatch:       hdr.Get("X-Amz-Copy-Source-If-None-Match"),
+		SrcIfModifiedSince:   date("X-Amz-Copy-Source-If-Modified-Since"),
+		SrcIfUnmodifiedSince: date("X-Amz-Copy-Source-If-Unmodified-Since"),
+	}
+}
+
 func (h *Handler) copyObject(req *request) error {
 	srcBucket, srcKey, err := parseCopySource(req.r.Header.Get("X-Amz-Copy-Source"))
 	if err != nil {
@@ -320,10 +335,7 @@ func (h *Handler) copyObject(req *request) error {
 	if !req.mayRead(srcBucket) {
 		return s3err.AccessDenied("This access key may not access the source bucket.")
 	}
-	opts := storage.CopyOptions{
-		SrcIfMatch:     req.r.Header.Get("X-Amz-Copy-Source-If-Match"),
-		SrcIfNoneMatch: req.r.Header.Get("X-Amz-Copy-Source-If-None-Match"),
-	}
+	opts := copySourceConditions(req.r.Header)
 	switch strings.ToUpper(req.r.Header.Get("X-Amz-Metadata-Directive")) {
 	case "", "COPY":
 		if srcBucket == req.bucket && srcKey == req.key {

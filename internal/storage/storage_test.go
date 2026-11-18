@@ -357,6 +357,24 @@ func TestCopyObject(t *testing.T) {
 	if _, err := s.CopyObject(context.Background(), "bkt", "src", "bkt", "x", CopyOptions{SrcIfNoneMatch: src.ETag}); !errors.Is(err, ErrPreconditionFailed) {
 		t.Errorf("src if-none-match: %v", err)
 	}
+	at := src.ModTime.Truncate(time.Second)
+	for _, c := range []struct {
+		name string
+		o    CopyOptions
+		fail bool
+	}{
+		{"unmodified since before", CopyOptions{SrcIfUnmodifiedSince: at.Add(-time.Second)}, true},
+		{"unmodified since", CopyOptions{SrcIfUnmodifiedSince: at}, false},
+		{"modified since", CopyOptions{SrcIfModifiedSince: at}, true},
+		{"modified since before", CopyOptions{SrcIfModifiedSince: at.Add(-time.Second)}, false},
+		{"if-match wins", CopyOptions{SrcIfMatch: src.ETag, SrcIfUnmodifiedSince: at.Add(-time.Second)}, false},
+		{"if-none-match wins", CopyOptions{SrcIfNoneMatch: `"other"`, SrcIfModifiedSince: at}, false},
+	} {
+		_, err := s.CopyObject(context.Background(), "bkt", "src", "bkt", "x", c.o)
+		if errors.Is(err, ErrPreconditionFailed) != c.fail {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
 	if _, err := s.CopyObject(context.Background(), "bkt", "missing", "bkt", "x", CopyOptions{}); !errors.Is(err, ErrNoSuchKey) {
 		t.Errorf("missing source: %v", err)
 	}

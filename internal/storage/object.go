@@ -445,13 +445,29 @@ type CopyOptions struct {
 	Cond           Conditions // on the destination
 	SrcIfMatch     string
 	SrcIfNoneMatch string
+	// Zero: no condition. Compared at the second, as HTTP dates are.
+	SrcIfModifiedSince   time.Time
+	SrcIfUnmodifiedSince time.Time
 }
 
+// checkSource applies the source preconditions. As on S3, an ETag condition decides on its
+// own over the date condition it pairs with.
 func (o CopyOptions) checkSource(src ObjectInfo) error {
-	if o.SrcIfMatch != "" && trimETag(o.SrcIfMatch) != trimETag(src.ETag) {
+	mod := src.ModTime.Truncate(time.Second)
+	switch {
+	case o.SrcIfMatch != "":
+		if trimETag(o.SrcIfMatch) != trimETag(src.ETag) {
+			return ErrPreconditionFailed
+		}
+	case !o.SrcIfUnmodifiedSince.IsZero() && mod.After(o.SrcIfUnmodifiedSince):
 		return ErrPreconditionFailed
 	}
-	if o.SrcIfNoneMatch != "" && (o.SrcIfNoneMatch == "*" || trimETag(o.SrcIfNoneMatch) == trimETag(src.ETag)) {
+	switch {
+	case o.SrcIfNoneMatch != "":
+		if o.SrcIfNoneMatch == "*" || trimETag(o.SrcIfNoneMatch) == trimETag(src.ETag) {
+			return ErrPreconditionFailed
+		}
+	case !o.SrcIfModifiedSince.IsZero() && !mod.After(o.SrcIfModifiedSince):
 		return ErrPreconditionFailed
 	}
 	return nil

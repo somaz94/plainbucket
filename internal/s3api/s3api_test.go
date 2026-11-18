@@ -638,6 +638,10 @@ func TestCopyAPI(t *testing.T) {
 	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst?versionId=v2"}, "NotImplemented")
 	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/missing"}, "NoSuchKey")
 	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "X-Amz-Copy-Source-If-Match": `"nope"`}, "PreconditionFailed")
+	const past = "Mon, 01 Jan 2001 00:00:00 GMT"
+	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "X-Amz-Copy-Source-If-Unmodified-Since": past}, "PreconditionFailed")
+	x.mustDo(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "X-Amz-Copy-Source-If-Modified-Since": past}, http.StatusOK)
+	x.mustDo(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "X-Amz-Copy-Source-If-Unmodified-Since": "yesterday"}, http.StatusOK)
 	x.mustDo(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "If-None-Match": `"other"`}, http.StatusOK)
 	x.expectErr(http.MethodPut, "/bkt/x", nil, map[string]string{"X-Amz-Copy-Source": "bkt/dst", "If-None-Match": "*"}, "PreconditionFailed")
 

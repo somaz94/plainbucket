@@ -105,10 +105,7 @@ func (h *Handler) uploadPartCopy(req *request, n int) error {
 			return err
 		}
 	}
-	opts := storage.CopyOptions{
-		SrcIfMatch:     req.r.Header.Get("X-Amz-Copy-Source-If-Match"),
-		SrcIfNoneMatch: req.r.Header.Get("X-Amz-Copy-Source-If-None-Match"),
-	}
+	opts := copySourceConditions(req.r.Header)
 	part, err := h.store.PutPartCopy(req.r.Context(), srcBucket, srcKey, rng, req.bucket, req.key, req.q.Get("uploadId"), n, opts)
 	if err != nil {
 		return err
